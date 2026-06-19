@@ -1,0 +1,179 @@
+version: '3.8'
+
+# ============================================================
+# SABD Project 2 - Real-time Flight Analysis Stack
+# Kafka (KRaft) + Apache Flink + Kafka UI
+# ============================================================
+
+services:
+
+  # ----------------------------------------------------------
+  # Apache Kafka 3.7 in KRaft mode (no Zookeeper)
+  # Single-node broker+controller
+  # ----------------------------------------------------------
+  kafka:
+    image: bitnami/kafka:3.7
+    hostname: kafka
+    container_name: kafka
+    ports:
+      - "9092:9092"       # Internal (inter-container)
+      - "9094:9094"       # External (host access for debugging)
+    environment:
+      # KRaft identity
+      - KAFKA_CFG_NODE_ID=1
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+
+      # Quorum: single-node controller
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+
+      # Listeners
+      #   PLAINTEXT  → internal (other containers)
+      #   CONTROLLER → KRaft metadata replication (not exposed)
+      #   EXTERNAL   → host machine access
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+
+      # Cluster ID — fixed so volumes survive restarts.
+      # To regenerate: kafka-storage.sh random-uuid
+      - KAFKA_KRAFT_CLUSTER_ID=MkU3OEVBNTcwNTJENDM2Qk
+
+      # Topic defaults
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=false
+      - KAFKA_CFG_NUM_PARTITIONS=4
+      - KAFKA_CFG_DEFAULT_REPLICATION_FACTOR=1
+
+      # Log retention: 48 h (dataset replay takes < 1 h)
+      - KAFKA_CFG_LOG_RETENTION_HOURS=48
+    volumes:
+      - kafka_data:/bitnami/kafka
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+    networks:
+      - sabd-net
+
+  # ----------------------------------------------------------
+  # One-shot init container: creates the 'flights' topic
+  # ----------------------------------------------------------
+  kafka-init:
+    image: bitnami/kafka:3.7
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: >
+      kafka-topics.sh
+        --bootstrap-server kafka:9092
+        --create
+        --if-not-exists
+        --topic flights
+        --partitions 4
+        --replication-factor 1
+        --config retention.ms=172800000
+        --config max.message.bytes=2097152
+    networks:
+      - sabd-net
+    restart: "no"
+
+  # ----------------------------------------------------------
+  # Flight event producer
+  # Reads CSV dataset, sorts by event time, replays to Kafka
+  # ----------------------------------------------------------
+  producer:
+    build:
+      context: ./ingestion
+      dockerfile: Dockerfile
+    container_name: producer
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_TOPIC=flights
+      # Mount the dataset directory; expects *.csv files
+      - DATASET_PATH=/data
+      # Acceleration factor: 3600 → 1 event-hour = 1 wall-clock second
+      # With this factor, Q1 windows (1h) close every ~1s,
+      # Q2 windows (6h) every ~6s, Q3 windows (1d) every ~24s.
+      - ACCELERATION_FACTOR=3600
+    volumes:
+      - ./data:/data:ro
+    networks:
+      - sabd-net
+    restart: on-failure
+
+  # ----------------------------------------------------------
+  # Apache Flink — JobManager
+  # ----------------------------------------------------------
+  flink-jobmanager:
+    image: flink:1.20-java17
+    hostname: flink-jobmanager
+    container_name: flink-jobmanager
+    ports:
+      - "8081:8081"   # Flink Web UI
+    command: jobmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        jobmanager.memory.process.size: 1600m
+        rest.bind-port: 8081
+        metrics.reporters: slf4j
+    volumes:
+      - flink_checkpoints:/opt/flink/checkpoints
+      - ./Results:/opt/flink/results
+    networks:
+      - sabd-net
+
+  # ----------------------------------------------------------
+  # Apache Flink — TaskManager
+  # ----------------------------------------------------------
+  flink-taskmanager:
+    image: flink:1.20-java17
+    hostname: flink-taskmanager
+    container_name: flink-taskmanager
+    depends_on:
+      - flink-jobmanager
+    command: taskmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: flink-jobmanager
+        taskmanager.memory.process.size: 2048m
+        taskmanager.numberOfTaskSlots: 4
+        metrics.reporters: slf4j
+    volumes:
+      - flink_checkpoints:/opt/flink/checkpoints
+      - ./Results:/opt/flink/results
+    networks:
+      - sabd-net
+
+  # ----------------------------------------------------------
+  # Kafka UI — optional, useful for monitoring/debugging
+  # http://localhost:8080
+  # ----------------------------------------------------------
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=sabd-cluster
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - sabd-net
+
+volumes:
+  kafka_data:
+  flink_checkpoints:
+
+networks:
+  sabd-net:
+    driver: bridge
