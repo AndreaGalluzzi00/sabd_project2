@@ -82,28 +82,50 @@ services:
     restart: "no"
 
   # ----------------------------------------------------------
+  # Preprocessing stage (one-shot)
+  # Reads raw CSV, types fields + derives event_time + sorts
+  # globally, writes a single Parquet consumed by the producer.
+  # ----------------------------------------------------------
+  preprocess:
+    build:
+      context: ./preprocessing
+      dockerfile: Dockerfile
+    container_name: preprocess
+    environment:
+      - RAW_DATASET_PATH=/data
+      - PREPARED_PATH=/prepared/flights_prepared.parquet
+    volumes:
+      - ./data:/data:ro       # raw CSV dataset (read-only)
+      - prepared:/prepared    # prepared Parquet output (shared with producer)
+    networks:
+      - sabd-net
+    restart: "no"
+
+  # ----------------------------------------------------------
   # Flight event producer
-  # Reads CSV dataset, sorts by event time, replays to Kafka
+  # Reads the prepared (typed, sorted) dataset and replays it to Kafka
   # ----------------------------------------------------------
   producer:
     build:
-      context: ./ingestion
+      context: ./production
       dockerfile: Dockerfile
     container_name: producer
     depends_on:
       kafka-init:
         condition: service_completed_successfully
+      preprocess:
+        condition: service_completed_successfully
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - KAFKA_TOPIC=flights
-      # Mount the dataset directory; expects *.csv files
-      - DATASET_PATH=/data
+      # Consumes the typed, pre-sorted dataset from the preprocess stage
+      - PREPARED_PATH=/prepared/flights_prepared.parquet
       # Acceleration factor: 3600 → 1 event-hour = 1 wall-clock second
       # With this factor, Q1 windows (1h) close every ~1s,
       # Q2 windows (6h) every ~6s, Q3 windows (1d) every ~24s.
       - ACCELERATION_FACTOR=3600
     volumes:
-      - ./data:/data:ro
+      - prepared:/prepared:ro
     networks:
       - sabd-net
     restart: on-failure
@@ -173,6 +195,7 @@ services:
 volumes:
   kafka_data:
   flink_checkpoints:
+  prepared:
 
 networks:
   sabd-net:
