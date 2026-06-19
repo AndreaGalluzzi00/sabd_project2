@@ -20,113 +20,45 @@ logger = logging.getLogger(__name__)
 
 KAFKA_BOOTSTRAP_SERVERS: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 KAFKA_TOPIC: str = os.getenv("KAFKA_TOPIC", "flights")
-DATASET_PATH: str = os.getenv("DATASET_PATH", "/data")
+PREPARED_PATH: str = os.getenv("PREPARED_PATH", "/prepared/flights_prepared.parquet")
 ACCELERATION_FACTOR: float = float(os.getenv("ACCELERATION_FACTOR", "3600"))
 LOG_INTERVAL: int = int(os.getenv("LOG_INTERVAL", "100000"))
 FLUSH_INTERVAL: int = int(os.getenv("FLUSH_INTERVAL", "5000"))
 
-USECOLS = [
-    "YEAR", "MONTH", "DAY_OF_MONTH",
-    "OP_UNIQUE_CARRIER",
-    "ORIGIN_AIRPORT_ID", "DEST_AIRPORT_ID",
-    "CRS_DEP_TIME",
-    "DEP_DELAY", "ARR_DELAY",
-    "CANCELLED", "DIVERTED",
-    "CARRIER_DELAY", "WEATHER_DELAY", "NAS_DELAY",
-    "SECURITY_DELAY", "LATE_AIRCRAFT_DELAY",
-]
 
+def load_prepared(path: str) -> pd.DataFrame:
+    """Load the typed, globally-sorted dataset produced by the preprocess stage.
 
-def _compute_event_timestamps(df: pd.DataFrame) -> pd.Series:
-    crs = df["CRS_DEP_TIME"].fillna(0).astype(int)
-    crs = crs.where(crs != 2400, 0)
-
-    hours   = (crs // 100) % 24
-    minutes = crs % 100
-
-    year  = df["YEAR"].fillna(2025).astype(int)
-    month = df["MONTH"].fillna(1).astype(int).clip(1, 12)
-    day   = df["DAY_OF_MONTH"].fillna(1).astype(int).clip(1, 28)
-
-    dt_strings = (
-        year.astype(str).str.zfill(4) + "-" +
-        month.astype(str).str.zfill(2) + "-" +
-        day.astype(str).str.zfill(2) + " " +
-        hours.astype(str).str.zfill(2) + ":" +
-        minutes.astype(str).str.zfill(2)
-    )
-    timestamps = pd.to_datetime(dt_strings, format="%Y-%m-%d %H:%M", errors="coerce", utc=True)
-
-    fallback_str = (
-        year.astype(str).str.zfill(4) + "-" +
-        month.astype(str).str.zfill(2) + "-01 00:00"
-    )
-    fallback = pd.to_datetime(fallback_str, format="%Y-%m-%d %H:%M", errors="coerce", utc=True)
-    timestamps = timestamps.fillna(fallback)
-
-    return timestamps.astype("int64") // 10**9
-
-
-def load_dataset(path: str) -> pd.DataFrame:
+    Ordering and event_time (epoch ms) are established upstream; here we only
+    read the prepared Parquet and replay it — no parsing, typing or sorting.
+    """
     p = Path(path)
-    if p.is_dir():
-        csv_files = sorted(p.glob("*.csv"))
-        if not csv_files:
-            raise FileNotFoundError(f"No CSV files found in: {path}")
-    elif p.is_file():
-        csv_files = [p]
-    else:
-        raise FileNotFoundError(f"Dataset path not found: {path}")
-
-    chunks: list[pd.DataFrame] = []
-    for csv_file in csv_files:
-        logger.info("Reading %s …", csv_file.name)
-        df_chunk = pd.read_csv(
-            csv_file,
-            usecols=lambda c: c in USECOLS,
-            dtype=str,
-            encoding="utf-8",
-            on_bad_lines="skip",
+    if not p.is_file():
+        raise FileNotFoundError(
+            f"Prepared dataset not found: {path}. "
+            "Run the preprocessing stage first (it writes the sorted Parquet)."
         )
-        chunks.append(df_chunk)
-        logger.info("  → %d rows loaded so far", sum(len(c) for c in chunks))
 
-    df = pd.concat(chunks, ignore_index=True)
-    logger.info("Total rows loaded: %d", len(df))
+    logger.info("Loading prepared dataset %s …", path)
+    df = pd.read_parquet(path)
+    logger.info("Loaded %d prepared events", len(df))
+    if df.empty:
+        return df
 
-    int_cols   = ["YEAR", "MONTH", "DAY_OF_MONTH", "ORIGIN_AIRPORT_ID",
-                  "DEST_AIRPORT_ID", "CRS_DEP_TIME"]
-    float_cols = ["DEP_DELAY", "ARR_DELAY", "CANCELLED", "DIVERTED",
-                  "CARRIER_DELAY", "WEATHER_DELAY", "NAS_DELAY",
-                  "SECURITY_DELAY", "LATE_AIRCRAFT_DELAY"]
-
-    for col in int_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
-
-    for col in float_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    if "OP_UNIQUE_CARRIER" in df.columns:
-        df["OP_UNIQUE_CARRIER"] = df["OP_UNIQUE_CARRIER"].fillna("").str.strip()
-
-    logger.info("Computing event timestamps …")
-    df["event_time"] = _compute_event_timestamps(df)
-
-    logger.info("Sorting %d events by event time …", len(df))
-    df = df.sort_values("event_time", kind="stable").reset_index(drop=True)
-
-    t_first = datetime.fromtimestamp(int(df["event_time"].iloc[0]),  tz=timezone.utc)
-    t_last  = datetime.fromtimestamp(int(df["event_time"].iloc[-1]), tz=timezone.utc)
-    span_days = (int(df["event_time"].iloc[-1]) - int(df["event_time"].iloc[0])) / 86400
-    logger.info("Event range: %s → %s (%.1f days)", t_first, t_last, span_days)
+    first_ms = int(df["event_time"].iloc[0])
+    last_ms  = int(df["event_time"].iloc[-1])
+    span_days = (last_ms - first_ms) / 86_400_000
+    logger.info(
+        "Event range: %s → %s (%.1f days)",
+        datetime.fromtimestamp(first_ms / 1000, tz=timezone.utc),
+        datetime.fromtimestamp(last_ms / 1000, tz=timezone.utc),
+        span_days,
+    )
     logger.info(
         "Estimated replay duration at %gx: %.1f minutes",
         ACCELERATION_FACTOR,
         span_days * 86400 / ACCELERATION_FACTOR / 60,
     )
-
     return df
 
 
@@ -165,6 +97,11 @@ def create_producer(max_retries: int = 30, retry_interval: int = 5) -> KafkaProd
                 value_serializer=lambda v: json.dumps(v).encode("utf-8"),
                 acks="all",
                 retries=3,
+                # Guarantee in-partition ordering: with retries enabled, more than
+                # one in-flight request could let a later batch overtake a retried
+                # one, introducing *accidental* out-of-orderness. Replay is paced by
+                # the event-time schedule, so throughput is not the bottleneck here.
+                max_in_flight_requests_per_connection=1,
                 linger_ms=20,
                 batch_size=32768,
             )
@@ -193,7 +130,9 @@ def replay_events(producer: KafkaProducer, df: pd.DataFrame) -> None:
 
     sent = 0
     for i, row in df.iterrows():
-        target_wall = (int(event_times[i]) - first_ts) / ACCELERATION_FACTOR
+        # event_time is in ms; convert the elapsed event-time span to seconds,
+        # then compress by the acceleration factor (event-seconds per wall-second).
+        target_wall = ((int(event_times[i]) - first_ts) / 1000.0) / ACCELERATION_FACTOR
         wait = target_wall - (time.monotonic() - wall_start)
         if wait > 0.001:
             time.sleep(wait)
@@ -221,14 +160,14 @@ def replay_events(producer: KafkaProducer, df: pd.DataFrame) -> None:
 
 def main() -> None:
     logger.info("=== Flight Event Producer ===")
-    logger.info("  Dataset path  : %s", DATASET_PATH)
+    logger.info("  Prepared data : %s", PREPARED_PATH)
     logger.info("  Kafka brokers : %s", KAFKA_BOOTSTRAP_SERVERS)
     logger.info("  Topic         : %s", KAFKA_TOPIC)
     logger.info("  Acceleration  : %gx", ACCELERATION_FACTOR)
 
-    df = load_dataset(DATASET_PATH)
+    df = load_prepared(PREPARED_PATH)
     if df.empty:
-        logger.error("Dataset is empty — nothing to produce. Exiting.")
+        logger.error("Prepared dataset is empty — nothing to produce. Exiting.")
         sys.exit(1)
 
     producer = create_producer()

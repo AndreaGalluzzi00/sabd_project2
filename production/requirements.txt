@@ -1,0 +1,5 @@
+# Flight event producer dependencies
+# Ranges kept reproducible but recent enough for Kafka 3.7 broker compatibility.
+pandas>=2.0,<3
+kafka-python>=2.1,<3
+pyarrow>=14
