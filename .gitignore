@@ -1,0 +1,31 @@
+# Dataset (large files, not tracked)
+data/
+!data/.gitkeep
+
+# Query results (generated at runtime)
+Results/**/*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Java / Maven / Gradle
+target/
+build/
+*.class
+*.jar
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Docker
+.docker/
+
+# OS
+.DS_Store
+Thumbs.db
