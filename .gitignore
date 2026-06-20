@@ -5,6 +5,9 @@ data/
 # Query results (generated at runtime)
 Results/**/*.csv
 
+# Savepoints
+flink-savepoints/
+
 # Python
 __pycache__/
 *.py[cod]
