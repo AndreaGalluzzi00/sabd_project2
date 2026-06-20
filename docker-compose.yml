@@ -195,6 +195,7 @@ services:
       - KAFKA_TOPIC=flights
       - PREPARED_PATH=/prepared/flights_prepared.parquet
       - ACCELERATION_FACTOR=57600
+      - OUT_OF_ORDER_WINDOW=0
     volumes:
       - prepared:/prepared:ro
     networks:

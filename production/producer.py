@@ -126,7 +126,22 @@ def replay_events(producer: KafkaProducer, df: pd.DataFrame) -> None:
     first_ts    = int(event_times[0])
     wall_start  = time.monotonic()
 
-    logger.info("Replay started: %d events, factor=%gx", n, ACCELERATION_FACTOR)
+    logger.info(
+        "Replay started: %d events, factor=%gx, out-of-order window=%d",
+        n, ACCELERATION_FACTOR, OUT_OF_ORDER_WINDOW,
+    )
+
+    # Optional shuffle: permute row indices within non-overlapping windows of
+    # size OUT_OF_ORDER_WINDOW.  The pacing array (event_times) stays sorted so
+    # wall-clock timing is unchanged; only the event_time embedded in each
+    # payload is displaced, creating genuine event-time out-of-orderness.
+    if OUT_OF_ORDER_WINDOW > 1:
+        indices = list(range(n))
+        for w in range(0, n, OUT_OF_ORDER_WINDOW):
+            chunk = indices[w : w + OUT_OF_ORDER_WINDOW]
+            random.shuffle(chunk)
+            indices[w : w + OUT_OF_ORDER_WINDOW] = chunk
+        df = df.iloc[indices].reset_index(drop=True)
 
     sent = 0
     for i, row in df.iterrows():
@@ -177,10 +192,11 @@ def topic_has_messages() -> bool:
 
 def main() -> None:
     logger.info("=== Flight Event Producer ===")
-    logger.info("  Prepared data : %s", PREPARED_PATH)
-    logger.info("  Kafka brokers : %s", KAFKA_BOOTSTRAP_SERVERS)
-    logger.info("  Topic         : %s", KAFKA_TOPIC)
-    logger.info("  Acceleration  : %gx", ACCELERATION_FACTOR)
+    logger.info("  Prepared data      : %s", PREPARED_PATH)
+    logger.info("  Kafka brokers      : %s", KAFKA_BOOTSTRAP_SERVERS)
+    logger.info("  Topic              : %s", KAFKA_TOPIC)
+    logger.info("  Acceleration       : %gx", ACCELERATION_FACTOR)
+    logger.info("  Out-of-order window: %d events", OUT_OF_ORDER_WINDOW)
 
     if topic_has_messages():
         logger.info("Topic '%s' already has messages — skipping production.", KAFKA_TOPIC)

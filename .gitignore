@@ -18,6 +18,9 @@ build/
 *.class
 *.jar
 
+# Claude Code
+.claude/
+
 # IDE
 .idea/
 .vscode/
