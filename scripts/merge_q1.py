@@ -32,6 +32,7 @@ def main() -> None:
                     rows.append(line)
 
     # Sort by window_start, then airline
+    rows = list(dict.fromkeys(rows))  # remove duplicates, preserve order
     rows.sort(key=lambda r: (r.split(",")[0], r.split(",")[2]))
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as out:
