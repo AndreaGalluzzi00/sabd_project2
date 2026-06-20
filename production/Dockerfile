@@ -14,4 +14,4 @@ ENV PREPARED_PATH=/prepared/flights_prepared.parquet \
     KAFKA_TOPIC=flights \
     ACCELERATION_FACTOR=3600
 
-CMD ["python", "producer.py"]
+ENTRYPOINT ["python", "producer.py"]
