@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose:*)",
+      "Bash(curl -s \"https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kafka/maven-metadata.xml\")",
+      "Bash(python scripts/merge_q1.py)",
+      "Bash(python -c ':*)",
+      "Bash(ls Results/q1/*.inprogress)"
+    ]
+  }
+}

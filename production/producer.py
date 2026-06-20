@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
-from kafka import KafkaProducer
+from kafka import KafkaConsumer, KafkaProducer, TopicPartition
 from kafka.errors import KafkaError, NoBrokersAvailable
 
 logging.basicConfig(
@@ -158,12 +158,33 @@ def replay_events(producer: KafkaProducer, df: pd.DataFrame) -> None:
     )
 
 
+def topic_has_messages() -> bool:
+    """Return True if the Kafka topic already contains messages."""
+    try:
+        consumer = KafkaConsumer(bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS)
+        partitions = consumer.partitions_for_topic(KAFKA_TOPIC)
+        if not partitions:
+            consumer.close()
+            return False
+        tps = [TopicPartition(KAFKA_TOPIC, p) for p in partitions]
+        end_offsets = consumer.end_offsets(tps)
+        consumer.close()
+        return sum(end_offsets.values()) > 0
+    except Exception as exc:
+        logger.warning("Could not check topic offsets: %s — proceeding with production.", exc)
+        return False
+
+
 def main() -> None:
     logger.info("=== Flight Event Producer ===")
     logger.info("  Prepared data : %s", PREPARED_PATH)
     logger.info("  Kafka brokers : %s", KAFKA_BOOTSTRAP_SERVERS)
     logger.info("  Topic         : %s", KAFKA_TOPIC)
     logger.info("  Acceleration  : %gx", ACCELERATION_FACTOR)
+
+    if topic_has_messages():
+        logger.info("Topic '%s' already has messages — skipping production.", KAFKA_TOPIC)
+        return
 
     df = load_prepared(PREPARED_PATH)
     if df.empty:
