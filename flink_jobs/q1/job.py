@@ -9,6 +9,7 @@ Output schema:
     window_start, window_end, airline, num_flights, completed, cancelled,
     diverted, dep_delay_mean, cancellation_rate, late_departure_rate
 """
+import argparse
 import logging
 import os
 import sys
@@ -27,16 +28,27 @@ KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 KAFKA_TOPIC     = os.getenv("KAFKA_TOPIC", "flights")
 RESULTS_PATH    = os.getenv("RESULTS_PATH", "/opt/flink/results/q1")
 
-# Bounded out-of-orderness in event time.
-# Events are globally pre-sorted by the producer; with 4 Kafka partitions
-# (round-robin), consecutive events may land on different partitions and
-# arrive slightly out-of-order at Flink.  30 s of event-time slack is more
-# than enough to absorb this — at 57 600× acceleration it corresponds to
-# only ~0.5 ms of wall-clock delay before a window closes.
-WATERMARK_DELAY = os.getenv("WATERMARK_DELAY_SECONDS", "30")
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Q1 Flink job")
+    parser.add_argument(
+        "--watermark-delay",
+        type=int,
+        default=int(os.getenv("WATERMARK_DELAY_SECONDS", "30")),
+        metavar="SECONDS",
+        help=(
+            "Bounded out-of-orderness watermark delay in event-time seconds. "
+            "Config A (strict): 30  — Config B (permissive): 40. "
+            "Falls back to WATERMARK_DELAY_SECONDS env var (default: 30)."
+        ),
+    )
+    return parser.parse_args()
 
 
 def main() -> None:
+    args  = parse_args()
+    watermark_delay = args.watermark_delay
+
     env   = StreamExecutionEnvironment.get_execution_environment()
     env.set_parallelism(4)
     env.enable_checkpointing(10_000)  # ogni 10s → finalizza i file CSV sul sink
@@ -44,7 +56,7 @@ def main() -> None:
 
     logger.info("Q1 | Kafka: %s  topic: %s", KAFKA_BOOTSTRAP, KAFKA_TOPIC)
     logger.info("Q1 | Results path: %s", RESULTS_PATH)
-    logger.info("Q1 | Watermark delay: %s s (event time)", WATERMARK_DELAY)
+    logger.info("Q1 | Watermark delay: %d s (event time)", watermark_delay)
 
     # ── Source: Kafka 'flights' topic ────────────────────────────────────────
     # Only the fields needed for Q1 are declared; unknown JSON keys are ignored.
@@ -56,7 +68,7 @@ def main() -> None:
             cancelled   DOUBLE,
             diverted    DOUBLE,
             rowtime     AS TO_TIMESTAMP_LTZ(event_time, 3),
-            WATERMARK FOR rowtime AS rowtime - INTERVAL '{WATERMARK_DELAY}' SECOND
+            WATERMARK FOR rowtime AS rowtime - INTERVAL '{watermark_delay}' SECOND
         ) WITH (
             'connector'                    = 'kafka',
             'topic'                        = '{KAFKA_TOPIC}',

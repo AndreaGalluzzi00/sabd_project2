@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import json
 import logging
 import os
@@ -25,11 +26,29 @@ PREPARED_PATH: str = os.getenv("PREPARED_PATH", "/prepared/flights_prepared.parq
 ACCELERATION_FACTOR: float = float(os.getenv("ACCELERATION_FACTOR", "57600"))
 LOG_INTERVAL: int = int(os.getenv("LOG_INTERVAL", "100000"))
 FLUSH_INTERVAL: int = int(os.getenv("FLUSH_INTERVAL", "5000"))
-# Number of consecutive events to shuffle before sending (0 = disabled).
-# Creates intentional out-of-orderness bounded by the event-time span of the
-# window.  Must be paired with a matching WATERMARK_DELAY_SECONDS in the Flink
-# job so that late events are not silently dropped.
-OUT_OF_ORDER_WINDOW: int = int(os.getenv("OUT_OF_ORDER_WINDOW", "0"))
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Flight event producer")
+    parser.add_argument(
+        "--holdback-probability",
+        type=float,
+        default=0.0,
+        metavar="P",
+        help="Fraction of events to delay (0.0 = disabled, e.g. 0.05 = 5%%)",
+    )
+    parser.add_argument(
+        "--holdback-delay",
+        type=float,
+        default=35.0,
+        metavar="D",
+        help=(
+            "Event-time seconds to subtract from event_time of held-back events "
+            "(default: 35). Must be > watermark delay (Config A: 30s, Config B: 40s) "
+            "to guarantee the event arrives LATE and is discarded by Flink."
+        ),
+    )
+    return parser.parse_args()
 
 
 def load_prepared(path: str) -> pd.DataFrame:
@@ -125,7 +144,12 @@ def create_producer(max_retries: int = 30, retry_interval: int = 5) -> KafkaProd
     raise RuntimeError(f"Could not connect to Kafka after {max_retries} attempts")
 
 
-def replay_events(producer: KafkaProducer, df: pd.DataFrame) -> None:
+def replay_events(
+    producer: KafkaProducer,
+    df: pd.DataFrame,
+    holdback_prob: float = 0.0,
+    holdback_delay: float = 35.0,
+) -> None:
     n = len(df)
     if n == 0:
         logger.warning("No events to replay.")
@@ -135,33 +159,30 @@ def replay_events(producer: KafkaProducer, df: pd.DataFrame) -> None:
     first_ts    = int(event_times[0])
     wall_start  = time.monotonic()
 
+    delay_ms = int(holdback_delay * 1000)  # convert event-time seconds → milliseconds
+
     logger.info(
-        "Replay started: %d events, factor=%gx, out-of-order window=%d",
-        n, ACCELERATION_FACTOR, OUT_OF_ORDER_WINDOW,
+        "Replay started: %d events, factor=%gx, holdback prob=%.2f, "
+        "event-time offset=-%ds (%dms)",
+        n, ACCELERATION_FACTOR, holdback_prob, int(holdback_delay), delay_ms,
     )
 
-    # Optional shuffle: permute row indices within non-overlapping windows of
-    # size OUT_OF_ORDER_WINDOW.  The pacing array (event_times) stays sorted so
-    # wall-clock timing is unchanged; only the event_time embedded in each
-    # payload is displaced, creating genuine event-time out-of-orderness.
-    if OUT_OF_ORDER_WINDOW > 1:
-        indices = list(range(n))
-        for w in range(0, n, OUT_OF_ORDER_WINDOW):
-            chunk = indices[w : w + OUT_OF_ORDER_WINDOW]
-            random.shuffle(chunk)
-            indices[w : w + OUT_OF_ORDER_WINDOW] = chunk
-        df = df.iloc[indices].reset_index(drop=True)
-
+    held_total = 0
     sent = 0
+
     for i, row in df.iterrows():
-        # event_time is in ms; convert the elapsed event-time span to seconds,
-        # then compress by the acceleration factor (event-seconds per wall-second).
+        # Pace by original event-time position (wall-clock).
         target_wall = ((int(event_times[i]) - first_ts) / 1000.0) / ACCELERATION_FACTOR
         wait = target_wall - (time.monotonic() - wall_start)
         if wait > 0.001:
             time.sleep(wait)
 
         payload = _row_to_payload(row)
+        if holdback_prob > 0.0 and random.random() < holdback_prob:
+            # Backdate the event_time so it arrives LATE w.r.t. the Flink watermark.
+            payload["event_time"] -= delay_ms
+            held_total += 1
+
         producer.send(KAFKA_TOPIC, value=payload)
         sent += 1
 
@@ -178,7 +199,8 @@ def replay_events(producer: KafkaProducer, df: pd.DataFrame) -> None:
     producer.flush()
     total = time.monotonic() - wall_start
     logger.info(
-        "Replay complete: %d events in %.1f s (avg %.0f ev/s)", sent, total, sent / total
+        "Replay complete: %d events in %.1f s (avg %.0f ev/s) — backdated: %d (%.1f%%)",
+        sent, total, sent / total, held_total, held_total / n * 100,
     )
 
 
@@ -200,12 +222,21 @@ def topic_has_messages() -> bool:
 
 
 def main() -> None:
+    args = parse_args()
+
     logger.info("=== Flight Event Producer ===")
     logger.info("  Prepared data      : %s", PREPARED_PATH)
     logger.info("  Kafka brokers      : %s", KAFKA_BOOTSTRAP_SERVERS)
     logger.info("  Topic              : %s", KAFKA_TOPIC)
     logger.info("  Acceleration       : %gx", ACCELERATION_FACTOR)
-    logger.info("  Out-of-order window: %d events", OUT_OF_ORDER_WINDOW)
+    if args.holdback_probability > 0.0:
+        logger.info(
+            "  Hold-back          : %.0f%% of events, event-time offset=-%ds (backdated)",
+            args.holdback_probability * 100,
+            int(args.holdback_delay),
+        )
+    else:
+        logger.info("  Hold-back          : disabled")
 
     if topic_has_messages():
         logger.info("Topic '%s' already has messages — skipping production.", KAFKA_TOPIC)
@@ -218,7 +249,7 @@ def main() -> None:
 
     producer = create_producer()
     try:
-        replay_events(producer, df)
+        replay_events(producer, df, args.holdback_probability, args.holdback_delay)
     finally:
         producer.close()
         logger.info("Producer closed.")

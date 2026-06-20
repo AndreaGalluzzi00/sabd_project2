@@ -215,7 +215,6 @@ services:
       - KAFKA_TOPIC=flights
       - PREPARED_PATH=/prepared/flights_prepared.parquet
       - ACCELERATION_FACTOR=57600
-      - OUT_OF_ORDER_WINDOW=0
     volumes:
       - prepared:/prepared:ro
     networks:
@@ -244,6 +243,7 @@ services:
         until curl -sf http://flink-jobmanager:8081/overview > /dev/null; do sleep 2; done &&
         echo 'Submitting Q1 job...' &&
         flink run -d -m flink-jobmanager:8081 -py /opt/flink/jobs/q1/job.py
+          -- --watermark-delay $${WATERMARK_DELAY_SECONDS}
       "
     volumes:
       - ./Results:/opt/flink/results
