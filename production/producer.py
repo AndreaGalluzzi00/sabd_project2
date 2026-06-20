@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import random
 import sys
 import time
 from datetime import datetime, timezone
@@ -21,9 +22,14 @@ logger = logging.getLogger(__name__)
 KAFKA_BOOTSTRAP_SERVERS: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
 KAFKA_TOPIC: str = os.getenv("KAFKA_TOPIC", "flights")
 PREPARED_PATH: str = os.getenv("PREPARED_PATH", "/prepared/flights_prepared.parquet")
-ACCELERATION_FACTOR: float = float(os.getenv("ACCELERATION_FACTOR", "3600"))
+ACCELERATION_FACTOR: float = float(os.getenv("ACCELERATION_FACTOR", "57600"))
 LOG_INTERVAL: int = int(os.getenv("LOG_INTERVAL", "100000"))
 FLUSH_INTERVAL: int = int(os.getenv("FLUSH_INTERVAL", "5000"))
+# Number of consecutive events to shuffle before sending (0 = disabled).
+# Creates intentional out-of-orderness bounded by the event-time span of the
+# window.  Must be paired with a matching WATERMARK_DELAY_SECONDS in the Flink
+# job so that late events are not silently dropped.
+OUT_OF_ORDER_WINDOW: int = int(os.getenv("OUT_OF_ORDER_WINDOW", "0"))
 
 
 def load_prepared(path: str) -> pd.DataFrame:
@@ -92,6 +98,9 @@ def _row_to_payload(row: "pd.Series") -> dict:
 def create_producer(max_retries: int = 30, retry_interval: int = 5) -> KafkaProducer:
     for attempt in range(1, max_retries + 1):
         try:
+
+            # TODO: Controllare retries, max_in_flight_requests_per_connection per l'out-of-order "accidentale"
+
             producer = KafkaProducer(
                 bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
                 value_serializer=lambda v: json.dumps(v).encode("utf-8"),

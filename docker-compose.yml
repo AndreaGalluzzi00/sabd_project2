@@ -10,6 +10,13 @@
 #   docker compose run --rm preprocess
 #   docker compose run --rm producer
 #   docker compose run --rm flink-job-q1
+#
+# Chiusura pulita del job Q1 (DOPO che il producer ha finito il replay):
+#   docker exec flink-jobmanager flink stop --drain -p /tmp/sp <JOB_ID>
+#   python scripts/merge_q1.py   # unisce i part file in q1.csv
+#
+# NOTA: ./flink-savepoints deve esistere prima di 'docker compose up'.
+#   Se eliminata, usare -p /tmp/sp come path alternativo nel comando sopra.
 # ============================================================
 name: sabd_project2
 
@@ -53,6 +60,13 @@ services:
       - KAFKA_NUM_PARTITIONS=4
       - KAFKA_DEFAULT_REPLICATION_FACTOR=1
 
+      # Single broker: i topic INTERNI devono avere RF=1. Col default (RF=3)
+      # la creazione di __consumer_offsets fallisce e ogni operazione sui
+      # consumer group va in TimeoutException su FIND_COORDINATOR.
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+
       # Log retention: 48 h (dataset replay takes < 1 h)
       - KAFKA_LOG_RETENTION_HOURS=48
     volumes:
@@ -84,8 +98,12 @@ services:
         jobmanager.memory.process.size: 1600m
         rest.bind-port: 8081
         metrics.reporters: slf4j
+        # Richiesto da 'flink stop --drain' (vedi scripts/stop_q1.sh).
+        # Volume condiviso JM/TM così il savepoint è scrivibile da tutti.
+        state.savepoints.dir: file:///opt/flink/savepoints
     volumes:
       - ./Results:/opt/flink/results
+      - ./flink-savepoints:/opt/flink/savepoints
     networks:
       - sabd-net
 
@@ -107,8 +125,10 @@ services:
         taskmanager.memory.process.size: 2048m
         taskmanager.numberOfTaskSlots: 4
         metrics.reporters: slf4j
+        state.savepoints.dir: file:///opt/flink/savepoints
     volumes:
       - ./Results:/opt/flink/results
+      - ./flink-savepoints:/opt/flinksavepoints/
     networks:
       - sabd-net
 
