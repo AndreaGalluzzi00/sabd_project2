@@ -1,13 +1,3 @@
-#!/usr/bin/env python3
-"""
-Preprocessing stage (one-shot, offline).
-
-Reads the raw flight CSV dataset, cleans and types the fields, derives a logical
-event_time (epoch ms) from YEAR/MONTH/DAY_OF_MONTH/CRS_DEP_TIME, sorts the whole
-dataset by event_time, and writes a single typed, ordered Parquet file. The
-replay producer then consumes this prepared file directly, without re-parsing
-or re-sorting on every run.
-"""
 import logging
 import os
 import sys
@@ -141,6 +131,11 @@ def main() -> None:
     logger.info("=== Flight Dataset Preprocessing ===")
     logger.info("  Raw dataset   : %s", RAW_DATASET_PATH)
     logger.info("  Prepared file : %s", PREPARED_PATH)
+
+    out = Path(PREPARED_PATH)
+    if out.exists():
+        logger.info("Prepared file already exists — skipping preprocessing.")
+        return
 
     df = load_and_prepare(RAW_DATASET_PATH)
     if df.empty:
