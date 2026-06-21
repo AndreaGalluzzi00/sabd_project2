@@ -2,72 +2,63 @@
 # SABD Project 2 - Real-time Flight Analysis Stack
 # Kafka (KRaft) + Apache Flink + Kafka UI
 #
-# Infrastruttura (avvio automatico):
+# Infrastruttura:
 #   docker compose up -d
 #
-# Moduli manuali (lanciare nell'ordine indicato):
+# Moduli manuali:
 #   docker compose run --rm kafka-init
 #   docker compose run --rm preprocess
-#   docker compose run --rm producer
 #   docker compose run --rm flink-job-q1
+#   docker compose run --rm producer
 #
-# Chiusura pulita del job Q1 (DOPO che il producer ha finito il replay):
-#   docker exec flink-jobmanager flink stop --drain -p /tmp/sp <JOB_ID>
-#   python scripts/merge_q1.py   # unisce i part file in q1.csv
+# Chiusura pulita del job Q1, dopo che il producer ha finito:
+#   docker exec flink-jobmanager flink list -r
+#   docker exec flink-jobmanager flink stop --drain -p /opt/flink/savepoints <JOB_ID>
+#   python scripts/merge_q1.py
 #
-# NOTA: ./flink-savepoints deve esistere prima di 'docker compose up'.
-#   Se eliminata, usare -p /tmp/sp come path alternativo nel comando sopra.
+# Configurazione applicativa:
+#   config/base.yml
+#
+# Il compose monta ./config dentro i container in /config.
+# I servizi Python/Flink leggono CONFIG_PATH=/config/base.yml.
 # ============================================================
+
 name: sabd_project2
 
 services:
 
   # ----------------------------------------------------------
-  # Apache Kafka 3.7 in KRaft mode (no Zookeeper)
-  # Single-node broker+controller
+  # Apache Kafka 3.7 in KRaft mode
+  # Single-node broker + controller
   # ----------------------------------------------------------
   kafka:
     image: apache/kafka:3.7.0
     hostname: kafka
     container_name: kafka
     ports:
-      - "9092:9092"       # Internal (inter-container)
-      - "9094:9094"       # External (host access for debugging)
+      - "9092:9092"
+      - "9094:9094"
     environment:
-      # KRaft identity
       - KAFKA_NODE_ID=1
       - KAFKA_PROCESS_ROLES=broker,controller
-
-      # Quorum: single-node controller
       - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
 
-      # Listeners
-      #   PLAINTEXT  → internal (other containers)
-      #   CONTROLLER → KRaft metadata replication (not exposed)
-      #   EXTERNAL   → host machine access
       - KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
       - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
       - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
       - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
       - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
 
-      # Cluster ID — fixed so volumes survive restarts.
-      # To regenerate: kafka-storage.sh random-uuid
       - CLUSTER_ID=MkU3OEVBNTcwNTJENDM2Qk
 
-      # Topic defaults
       - KAFKA_AUTO_CREATE_TOPICS_ENABLE=false
       - KAFKA_NUM_PARTITIONS=4
       - KAFKA_DEFAULT_REPLICATION_FACTOR=1
 
-      # Single broker: i topic INTERNI devono avere RF=1. Col default (RF=3)
-      # la creazione di __consumer_offsets fallisce e ogni operazione sui
-      # consumer group va in TimeoutException su FIND_COORDINATOR.
       - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
       - KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
       - KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
 
-      # Log retention: 48 h (dataset replay takes < 1 h)
       - KAFKA_LOG_RETENTION_HOURS=48
     volumes:
       - kafka_data:/var/lib/kafka/data
@@ -81,45 +72,47 @@ services:
       - sabd-net
 
   # ----------------------------------------------------------
-  # Apache Flink — JobManager
+  # Apache Flink - JobManager
   # ----------------------------------------------------------
   flink-jobmanager:
     build:
-      context: ./flink_jobs
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: flink_jobs/Dockerfile
     hostname: flink-jobmanager
     container_name: flink-jobmanager
     ports:
-      - "8081:8081"   # Flink Web UI
+      - "8081:8081"
     command: jobmanager
     environment:
+      CONFIG_PATH: /config/base.yml
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
         jobmanager.memory.process.size: 1600m
         rest.bind-port: 8081
         metrics.reporters: slf4j
-        # Richiesto da 'flink stop --drain' (vedi scripts/stop_q1.sh).
-        # Volume condiviso JM/TM così il savepoint è scrivibile da tutti.
         state.savepoints.dir: file:///opt/flink/savepoints
     volumes:
+      - ./config:/config:ro
       - ./Results:/opt/flink/results
       - ./flink-savepoints:/opt/flink/savepoints
+      - ./flink-checkpoints:/opt/flink/checkpoints
     networks:
       - sabd-net
 
   # ----------------------------------------------------------
-  # Apache Flink — TaskManager
+  # Apache Flink - TaskManager
   # ----------------------------------------------------------
   flink-taskmanager:
     build:
-      context: ./flink_jobs
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: flink_jobs/Dockerfile
     hostname: flink-taskmanager
     container_name: flink-taskmanager
     depends_on:
       - flink-jobmanager
     command: taskmanager
     environment:
+      CONFIG_PATH: /config/base.yml
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
         taskmanager.memory.process.size: 2048m
@@ -127,13 +120,15 @@ services:
         metrics.reporters: slf4j
         state.savepoints.dir: file:///opt/flink/savepoints
     volumes:
+      - ./config:/config:ro
       - ./Results:/opt/flink/results
-      - ./flink-savepoints:/opt/flinksavepoints/
+      - ./flink-savepoints:/opt/flink/savepoints
+      - ./flink-checkpoints:/opt/flink/checkpoints
     networks:
       - sabd-net
 
   # ----------------------------------------------------------
-  # Kafka UI — monitoring/debugging
+  # Kafka UI - monitoring/debugging
   # http://localhost:8080
   # ----------------------------------------------------------
   kafka-ui:
@@ -151,12 +146,11 @@ services:
       - sabd-net
 
   # ==========================================================
-  # MODULI MANUALI — profile: manual
-  # Lanciare con: docker compose run --rm <servizio>
+  # MODULI MANUALI - profile: manual
   # ==========================================================
 
   # ----------------------------------------------------------
-  # [1] Crea il topic 'flights' su Kafka
+  # [1] Crea il topic flights su Kafka
   # ----------------------------------------------------------
   kafka-init:
     image: apache/kafka:3.7.0
@@ -180,18 +174,18 @@ services:
     restart: "no"
 
   # ----------------------------------------------------------
-  # [2] Preprocessing: CSV → Parquet ordinato
+  # [2] Preprocessing: CSV -> Parquet ordinato per event_time
   # ----------------------------------------------------------
   preprocess:
     build:
-      context: ./preprocessing
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: preprocessing/Dockerfile
     container_name: preprocess
     profiles: ["manual"]
     environment:
-      - RAW_DATASET_PATH=/data/raw/project-2-data
-      - PREPARED_PATH=/prepared/flights_prepared.parquet
+      CONFIG_PATH: /config/base.yml
     volumes:
+      - ./config:/config:ro
       - ./data:/data:ro
       - prepared:/prepared
     networks:
@@ -199,54 +193,51 @@ services:
     restart: "no"
 
   # ----------------------------------------------------------
-  # [3] Producer: replay eventi su Kafka
-  # ----------------------------------------------------------
-  producer:
-    build:
-      context: ./production
-      dockerfile: Dockerfile
-    container_name: producer
-    profiles: ["manual"]
-    depends_on:
-      kafka:
-        condition: service_healthy
-    environment:
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-      - KAFKA_TOPIC=flights
-      - PREPARED_PATH=/prepared/flights_prepared.parquet
-      - ACCELERATION_FACTOR=57600
-    volumes:
-      - prepared:/prepared:ro
-    networks:
-      - sabd-net
-    restart: "no"
-
-  # ----------------------------------------------------------
-  # [4] Flink Q1: sottomette il job PyFlink al cluster
+  # [3] Flink Q1: sottomette il job PyFlink al cluster
   # ----------------------------------------------------------
   flink-job-q1:
     build:
-      context: ./flink_jobs
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: flink_jobs/Dockerfile
     container_name: flink-job-q1
     profiles: ["manual"]
     depends_on:
       - flink-taskmanager
     environment:
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-      - KAFKA_TOPIC=flights
-      - RESULTS_PATH=/opt/flink/results/q1
-      - WATERMARK_DELAY_SECONDS=30
+      CONFIG_PATH: /config/base.yml
     command: >
       bash -c "
         echo 'Waiting for Flink JobManager...' &&
         until curl -sf http://flink-jobmanager:8081/overview > /dev/null; do sleep 2; done &&
         echo 'Submitting Q1 job...' &&
         flink run -d -m flink-jobmanager:8081 -py /opt/flink/jobs/q1/job.py
-          -- --watermark-delay $${WATERMARK_DELAY_SECONDS}
       "
     volumes:
+      - ./config:/config:ro
       - ./Results:/opt/flink/results
+      - ./flink-savepoints:/opt/flink/savepoints
+      - ./flink-checkpoints:/opt/flink/checkpoints
+    networks:
+      - sabd-net
+    restart: "no"
+
+  # ----------------------------------------------------------
+  # [4] Producer: replay eventi su Kafka
+  # ----------------------------------------------------------
+  producer:
+    build:
+      context: .
+      dockerfile: production/Dockerfile
+    container_name: producer
+    profiles: ["manual"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      CONFIG_PATH: /config/base.yml
+    volumes:
+      - ./config:/config:ro
+      - prepared:/prepared:ro
     networks:
       - sabd-net
     restart: "no"

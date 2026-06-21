@@ -1,0 +1,41 @@
+paths:
+  raw_dataset_path: "/data/raw/project-2-data"
+  prepared_path: "/prepared/flights_prepared.parquet"
+
+  # Path visto dentro il container Flink
+  q1_results_path: "/opt/flink/results/q1"
+
+  # Path visto dall'host, usato da scripts/merge_q1.py
+  q1_results_host_path: "Results/q1"
+  q1_merged_output_host_path: "Results/q1.csv"
+
+kafka:
+  bootstrap_servers: "kafka:9092"
+  topic: "flights"
+
+preprocessing:
+  numeric_missing_policy: "null"  # "null" oppure "zero"
+
+producer:
+  acceleration_factor: 57600
+  log_interval: 100000
+  flush_interval: 5000
+  skip_if_topic_has_messages: true
+  holdback_probability: 0.0
+  holdback_delay: 35.0
+  retries: 3
+  linger_ms: 20
+  batch_size: 32768
+  max_in_flight_requests_per_connection: 1
+  acks: "all"
+
+flink:
+  parallelism: 4
+  checkpoint_interval_ms: 10000
+  consumer_group: "flink-flight-analysis"
+
+spark:
+  consumer_group: "spark-flight-analysis"
+
+q1:
+  watermark_delay_seconds: 30

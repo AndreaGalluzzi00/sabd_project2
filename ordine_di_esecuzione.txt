@@ -1,0 +1,21 @@
+docker compose build
+docker compose up -d
+
+docker exec flink-jobmanager flink list -r
+docker exec flink-jobmanager flink cancel <JOB_ID>
+
+Remove-Item -Recurse -Force .\Results\q1 -ErrorAction SilentlyContinue
+Remove-Item -Force .\Results\q1.csv -ErrorAction SilentlyContinue
+
+docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --delete --topic flights
+docker compose run --rm kafka-init
+
+docker compose run --rm preprocess
+docker compose run --rm flink-job-q1
+docker exec flink-jobmanager flink list -r
+docker compose run --rm producer
+
+docker exec flink-jobmanager flink list -r
+docker exec flink-jobmanager flink stop --drain -p /opt/flink/savepoints <JOB_ID>
+
+python .\scripts\merge_q1.py

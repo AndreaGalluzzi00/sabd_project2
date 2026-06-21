@@ -1,10 +1,10 @@
 import logging
-import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-
+from common.config import load_config
 import pandas as pd
+from dataclasses import dataclass
 
 logging.basicConfig(
     level=logging.INFO,
@@ -13,8 +13,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-RAW_DATASET_PATH: str = os.getenv("RAW_DATASET_PATH", "/data")
-PREPARED_PATH: str = os.getenv("PREPARED_PATH", "/prepared/flights_prepared.parquet")
 
 USECOLS = [
     "YEAR", "MONTH", "DAY_OF_MONTH",
@@ -26,7 +24,23 @@ USECOLS = [
     "CARRIER_DELAY", "WEATHER_DELAY", "NAS_DELAY",
     "SECURITY_DELAY", "LATE_AIRCRAFT_DELAY",
 ]
+@dataclass(frozen=True)
+class PreprocessConfig:
+    raw_dataset_path: str
+    prepared_path: str
+    numeric_missing_policy: str
 
+def load_preprocess_config() -> PreprocessConfig:
+    cfg = load_config()
+
+    return PreprocessConfig(
+        raw_dataset_path=cfg["paths"]["raw_dataset_path"],
+        prepared_path=cfg["paths"]["prepared_path"],
+        numeric_missing_policy=cfg.get("preprocessing", {}).get(
+            "numeric_missing_policy",
+            "null",
+        ),
+    )
 
 def _compute_event_timestamps(df: pd.DataFrame) -> pd.Series:
     crs = df["CRS_DEP_TIME"].fillna(0).astype(int)
@@ -61,7 +75,7 @@ def _compute_event_timestamps(df: pd.DataFrame) -> pd.Series:
     return timestamps.astype("int64") // 10**6  # epoch milliseconds (Flink convention)
 
 
-def load_and_prepare(path: str) -> pd.DataFrame:
+def load_and_prepare(path: str, numeric_missing_policy: str) -> pd.DataFrame:
     p = Path(path)
     if p.is_dir():
         csv_files = sorted(p.glob("*.csv"))
@@ -105,6 +119,16 @@ def load_and_prepare(path: str) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
+            if numeric_missing_policy == "zero":
+                df[col] = df[col].fillna(0.0)
+            elif numeric_missing_policy == "null":
+                pass
+            else:
+                raise ValueError(
+                    "Invalid numeric_missing_policy. "
+                    "Allowed values are: 'null', 'zero'."
+                )
+
     if "OP_UNIQUE_CARRIER" in df.columns:
         df["OP_UNIQUE_CARRIER"] = df["OP_UNIQUE_CARRIER"].fillna("").str.strip()
 
@@ -128,21 +152,23 @@ def load_and_prepare(path: str) -> pd.DataFrame:
 
 
 def main() -> None:
-    logger.info("=== Flight Dataset Preprocessing ===")
-    logger.info("  Raw dataset   : %s", RAW_DATASET_PATH)
-    logger.info("  Prepared file : %s", PREPARED_PATH)
+    cfg = load_preprocess_config()
 
-    out = Path(PREPARED_PATH)
+    logger.info("=== Flight Dataset Preprocessing ===")
+    logger.info(" Raw dataset   : %s", cfg.raw_dataset_path)
+    logger.info(" Prepared file : %s", cfg.prepared_path)
+    logger.info(" Missing policy: %s", cfg.numeric_missing_policy)
+
+    out = Path(cfg.prepared_path)
     if out.exists():
         logger.info("Prepared file already exists — skipping preprocessing.")
         return
 
-    df = load_and_prepare(RAW_DATASET_PATH)
+    df = load_and_prepare(path=cfg.raw_dataset_path,numeric_missing_policy=cfg.numeric_missing_policy)
     if df.empty:
         logger.error("Dataset is empty — nothing to prepare. Exiting.")
         sys.exit(1)
 
-    out = Path(PREPARED_PATH)
     out.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out, index=False)
     logger.info("Wrote %d prepared events → %s", len(df), out)

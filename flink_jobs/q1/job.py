@@ -9,54 +9,78 @@ Output schema:
     window_start, window_end, airline, num_flights, completed, cancelled,
     diverted, dep_delay_mean, cancellation_rate, late_departure_rate
 """
-import argparse
-import logging
-import os
-import sys
 
+from __future__ import annotations
+
+import logging
+import sys
+from dataclasses import dataclass
+
+from common.config import load_config
 from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.table import StreamTableEnvironment
+
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     stream=sys.stdout,
 )
+
 logger = logging.getLogger(__name__)
 
-KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
-KAFKA_TOPIC     = os.getenv("KAFKA_TOPIC", "flights")
-RESULTS_PATH    = os.getenv("RESULTS_PATH", "/opt/flink/results/q1")
+
+@dataclass(frozen=True)
+class Q1RuntimeConfig:
+    kafka_bootstrap: str
+    kafka_topic: str
+    kafka_consumer_group: str
+
+    results_path: str
+
+    parallelism: int
+    checkpoint_interval_ms: int
+    watermark_delay_seconds: int
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Q1 Flink job")
-    parser.add_argument(
-        "--watermark-delay",
-        type=int,
-        default=int(os.getenv("WATERMARK_DELAY_SECONDS", "30")),
-        metavar="SECONDS",
-        help=(
-            "Bounded out-of-orderness watermark delay in event-time seconds. "
-            "Config A (strict): 30  — Config B (permissive): 40. "
-            "Falls back to WATERMARK_DELAY_SECONDS env var (default: 30)."
-        ),
+def load_q1_runtime_config() -> Q1RuntimeConfig:
+    cfg = load_config()
+
+    return Q1RuntimeConfig(
+        kafka_bootstrap=cfg["kafka"]["bootstrap_servers"],
+        kafka_topic=cfg["kafka"]["topic"],
+        kafka_consumer_group=cfg["flink"]["consumer_group"],
+
+        results_path=cfg["paths"]["q1_results_path"],
+
+        parallelism=int(cfg["flink"]["parallelism"]),
+        checkpoint_interval_ms=int(cfg["flink"]["checkpoint_interval_ms"]),
+        watermark_delay_seconds=int(cfg["q1"]["watermark_delay_seconds"]),
     )
-    return parser.parse_args()
 
 
 def main() -> None:
-    args  = parse_args()
-    watermark_delay = args.watermark_delay
+    runtime_cfg = load_q1_runtime_config()
 
-    env   = StreamExecutionEnvironment.get_execution_environment()
-    env.set_parallelism(4)
-    env.enable_checkpointing(10_000)  # ogni 10s → finalizza i file CSV sul sink
+    env = StreamExecutionEnvironment.get_execution_environment()
+    env.set_parallelism(runtime_cfg.parallelism)
+    env.enable_checkpointing(runtime_cfg.checkpoint_interval_ms)
+
     t_env = StreamTableEnvironment.create(env)
 
-    logger.info("Q1 | Kafka: %s  topic: %s", KAFKA_BOOTSTRAP, KAFKA_TOPIC)
-    logger.info("Q1 | Results path: %s", RESULTS_PATH)
-    logger.info("Q1 | Watermark delay: %d s (event time)", watermark_delay)
+    logger.info(
+        "Q1 | Kafka: %s topic: %s",
+        runtime_cfg.kafka_bootstrap,
+        runtime_cfg.kafka_topic,
+    )
+    logger.info("Q1 | Consumer group: %s", runtime_cfg.kafka_consumer_group)
+    logger.info("Q1 | Results path: %s", runtime_cfg.results_path)
+    logger.info("Q1 | Parallelism: %d", runtime_cfg.parallelism)
+    logger.info("Q1 | Checkpoint interval: %d ms", runtime_cfg.checkpoint_interval_ms)
+    logger.info(
+        "Q1 | Watermark delay: %d s (event time)",
+        runtime_cfg.watermark_delay_seconds,
+    )
 
     # ── Source: Kafka 'flights' topic ────────────────────────────────────────
     # Only the fields needed for Q1 are declared; unknown JSON keys are ignored.
@@ -68,19 +92,19 @@ def main() -> None:
             cancelled   DOUBLE,
             diverted    DOUBLE,
             rowtime     AS TO_TIMESTAMP_LTZ(event_time, 3),
-            WATERMARK FOR rowtime AS rowtime - INTERVAL '{watermark_delay}' SECOND
+            WATERMARK FOR rowtime AS rowtime - INTERVAL '{runtime_cfg.watermark_delay_seconds}' SECOND
         ) WITH (
             'connector'                    = 'kafka',
-            'topic'                        = '{KAFKA_TOPIC}',
-            'properties.bootstrap.servers' = '{KAFKA_BOOTSTRAP}',
-            'properties.group.id'          = 'flink-q1',
+            'topic'                        = '{runtime_cfg.kafka_topic}',
+            'properties.bootstrap.servers' = '{runtime_cfg.kafka_bootstrap}',
+            'properties.group.id'          = '{runtime_cfg.kafka_consumer_group}',
             'scan.startup.mode'            = 'earliest-offset',
             'format'                       = 'json',
             'json.ignore-parse-errors'     = 'true'
         )
     """)
 
-    # ── Sink: CSV files under /opt/flink/results/q1/ ────────────────────────
+    # ── Sink: CSV files under configured result path ─────────────────────────
     t_env.execute_sql(f"""
         CREATE TABLE q1_results (
             window_start        TIMESTAMP(3),
@@ -95,7 +119,7 @@ def main() -> None:
             late_departure_rate DOUBLE
         ) WITH (
             'connector'                              = 'filesystem',
-            'path'                                   = '{RESULTS_PATH}',
+            'path'                                   = '{runtime_cfg.results_path}',
             'format'                                 = 'csv',
             'sink.rolling-policy.rollover-interval'  = '10 s',
             'sink.rolling-policy.check-interval'     = '5 s'
@@ -146,7 +170,7 @@ def main() -> None:
     """)
 
     logger.info("Q1 | Job submitted successfully.")
-    sys.exit(0)  # forza la chiusura del gateway py4j
+    sys.exit(0)
 
 
 if __name__ == "__main__":
