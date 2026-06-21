@@ -17,13 +17,17 @@ from kafka import KafkaConsumer, KafkaProducer, TopicPartition
 from kafka.errors import KafkaError, NoBrokersAvailable
 
 from common.config import load_config
-
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    stream=sys.stdout,
+from flink_runtime import (
+    FlinkRuntimeConfig,
+    build_flink_runtime_config,
+    create_table_environment,
 )
+import logging
+
+from common.logging_utils import configure_logging
+
+
+configure_logging()
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +37,7 @@ logger = logging.getLogger(__name__)
 class ProducerConfig:
     kafka_bootstrap_servers: str
     kafka_topic: str
-    prepared_path: str
+    prepared_path: Path
 
     acceleration_factor: float
     log_interval: int
@@ -61,7 +65,7 @@ def load_producer_config() -> ProducerConfig:
     return ProducerConfig(
         kafka_bootstrap_servers=kafka_cfg["bootstrap_servers"],
         kafka_topic=kafka_cfg["topic"],
-        prepared_path=paths_cfg["prepared_path"],
+        prepared_path=Path(paths_cfg["prepared_path"]),
 
         acceleration_factor=float(producer_cfg["acceleration_factor"]),
         log_interval=int(producer_cfg["log_interval"]),
@@ -71,20 +75,17 @@ def load_producer_config() -> ProducerConfig:
         holdback_probability=float(producer_cfg["holdback_probability"]),
         holdback_delay=float(producer_cfg["holdback_delay"]),
 
-        kafka_acks=str(producer_cfg.get("acks")),
-        kafka_retries=int(producer_cfg.get("retries")),
-        kafka_linger_ms=int(producer_cfg.get("linger_ms")),
-        kafka_batch_size=int(producer_cfg.get("batch_size")),
+        kafka_acks=str(producer_cfg["acks"]),
+        kafka_retries=int(producer_cfg["retries"]),
+        kafka_linger_ms=int(producer_cfg["linger_ms"]),
+        kafka_batch_size=int(producer_cfg["batch_size"]),
         kafka_max_in_flight_requests_per_connection=int(
-            producer_cfg.get("max_in_flight_requests_per_connection")
-        ),
+            producer_cfg["max_in_flight_requests_per_connection"])
     )
 
 
-def load_prepared(path: str, acceleration_factor: float) -> pd.DataFrame:
-    prepared_path = Path(path)
-
-    if not prepared_path.is_file():
+def load_prepared(path: Path, acceleration_factor: float) -> pd.DataFrame:
+    if not path.is_file():
         raise FileNotFoundError(
             f"Prepared dataset not found: {path}. "
             "Run the preprocessing stage first."
@@ -149,8 +150,11 @@ def _row_to_payload(row: pd.Series) -> dict[str, Any]:
     }
 
 
-def create_producer(cfg: ProducerConfig,max_retries: int = 30, retry_interval: int = 5) -> KafkaProducer:
-
+def create_producer(
+    cfg: ProducerConfig,
+    max_retries: int = 30,
+    retry_interval: int = 5,
+) -> KafkaProducer:
     for attempt in range(1, max_retries + 1):
         try:
             producer = KafkaProducer(
