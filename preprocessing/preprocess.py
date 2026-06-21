@@ -129,7 +129,7 @@ def sort_by_event_time(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_event_time(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
+
 
     logger.info("Computing event timestamps …")
     df["event_time"] = _compute_event_timestamps(df)
@@ -140,7 +140,6 @@ def normalize_columns(
     df: pd.DataFrame,
     numeric_missing_policy: str,
 ) -> pd.DataFrame:
-    df = df.copy()
 
     for col in INT_COLS:
         if col in df.columns:
