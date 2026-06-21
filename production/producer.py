@@ -27,7 +27,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-"Configurazione di producer"
+
 
 @dataclass(frozen=True)
 class ProducerConfig:
