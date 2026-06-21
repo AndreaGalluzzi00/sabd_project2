@@ -18,18 +18,10 @@ from kafka import KafkaConsumer, KafkaProducer, TopicPartition
 from kafka.errors import KafkaError, NoBrokersAvailable
 
 from common.config import load_config
-from flink_runtime import (
-    FlinkRuntimeConfig,
-    build_flink_runtime_config,
-    create_table_environment,
-)
-import logging
-
 from common.logging_utils import configure_logging
 
 
 configure_logging()
-
 logger = logging.getLogger(__name__)
 
 
