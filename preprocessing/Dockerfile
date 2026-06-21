@@ -2,14 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies first (layer cache)
-COPY requirements.txt .
+COPY preprocessing/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY preprocess.py .
+COPY common /app/common
+COPY preprocessing/preprocess.py .
 
-# Raw dataset (read-only) and prepared output volume are mounted at runtime
-ENV RAW_DATASET_PATH=/data \
-    PREPARED_PATH=/prepared/flights_prepared.parquet
+ENV PYTHONPATH=/app
+ENV CONFIG_PATH=/config/base.yml
 
 CMD ["python", "preprocess.py"]

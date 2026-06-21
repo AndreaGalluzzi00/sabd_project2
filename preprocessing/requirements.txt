@@ -1,3 +1,4 @@
 # Preprocessing stage dependencies
 pandas>=2.0,<3
 pyarrow>=14
+PyYAML

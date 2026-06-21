@@ -2,16 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies first (layer cache)
-COPY requirements.txt .
+COPY production/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY producer.py .
+COPY common /app/common
+COPY production/producer.py .
 
-# Prepared dataset volume is mounted at runtime (see docker-compose volumes)
-ENV PREPARED_PATH=/prepared/flights_prepared.parquet \
-    KAFKA_BOOTSTRAP_SERVERS=kafka:9092 \
-    KAFKA_TOPIC=flights \
-    ACCELERATION_FACTOR=3600
+ENV PYTHONPATH=/app
+ENV CONFIG_PATH=/config/base.yml
 
-ENTRYPOINT ["python", "producer.py"]
+CMD ["python", "producer.py"]
