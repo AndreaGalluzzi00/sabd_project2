@@ -21,8 +21,19 @@ producer:
   log_interval: 100000
   flush_interval: 5000
   skip_if_topic_has_messages: true
+
+  # Iniezione di out-of-orderness: NON modifica l'event_time, ritarda la consegna.
+  #   holdback_probability: frazione di eventi a cui viene ritardato l'invio
+  #   holdback_delay:       ritardo MAX di consegna in secondi di event-time
+  #                         (= bound di out-of-orderness da confrontare col watermark)
   holdback_probability: 0.0
   holdback_delay: 35.0
+
+  # A fine replay invia un marker con event_time nel futuro a OGNI partizione:
+  # spinge il watermark oltre l'ultima finestra → l'ultima finestra viene drenata
+  # senza 'flink stop --drain'. Il marker (airline=__EOS__, cancelled/diverted=1)
+  # è escluso da tutte le query.
+  emit_end_of_stream: true
   retries: 3
   linger_ms: 20
   batch_size: 32768
