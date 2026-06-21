@@ -16,6 +16,6 @@ docker exec flink-jobmanager flink list -r
 docker compose run --rm producer
 
 docker exec flink-jobmanager flink list -r
-docker exec flink-jobmanager flink stop --drain -p /opt/flink/savepoints <JOB_ID>
+docker exec flink-jobmanager flink stop --drain   <JOB_ID>
 
 python .\scripts\merge_q1.py
