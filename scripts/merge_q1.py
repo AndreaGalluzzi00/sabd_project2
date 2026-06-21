@@ -3,20 +3,19 @@
 
 from __future__ import annotations
 
-import glob
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-# Permette allo script di importare common.config anche se viene lanciato come:
+# Allow importing common.config when running:
 # python scripts/merge_q1.py
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# Se lo script gira sull'host, CONFIG_PATH di default deve puntare al config locale.
-# Dentro i container invece viene passato /config/base.yml dal docker-compose.
+# Local scripts use config/base.yml by default.
+# Docker containers override CONFIG_PATH with /config/base.yml.
 os.environ.setdefault("CONFIG_PATH", str(PROJECT_ROOT / "config" / "base.yml"))
 
 from common.config import load_config  # noqa: E402
@@ -24,17 +23,18 @@ from common.config import load_config  # noqa: E402
 
 HEADER = (
     "window_start,window_end,airline,num_flights,completed,"
-    "cancelled,diverted,dep_delay_mean,cancellation_rate,late_departure_rate"
+    "cancelled_count,diverted_count,dep_delay_mean,"
+    "cancellation_rate,late_departure_rate"
 )
 
 
-def resolve_project_path(path_value: str) -> Path:
-    """
-    Resolve a path from config.
+@dataclass(frozen=True)
+class MergeConfig:
+    results_dir: Path
+    output_file: Path
 
-    If the path is absolute, keep it.
-    If the path is relative, interpret it relative to the project root.
-    """
+
+def resolve_project_path(path_value: str) -> Path:
     path = Path(path_value)
 
     if path.is_absolute():
@@ -43,52 +43,80 @@ def resolve_project_path(path_value: str) -> Path:
     return PROJECT_ROOT / path
 
 
-def load_merge_paths() -> tuple[Path, Path]:
+def load_merge_config() -> MergeConfig:
     cfg = load_config()
-
     paths_cfg = cfg["paths"]
 
-    results_dir = resolve_project_path(paths_cfg["q1_results_host_path"])
-    output_file = resolve_project_path(paths_cfg["q1_merged_output_host_path"])
+    return MergeConfig(
+        results_dir=resolve_project_path(paths_cfg["q1_results_host_path"]),
+        output_file=resolve_project_path(paths_cfg["q1_merged_output_host_path"]),
+    )
 
-    return results_dir, output_file
+
+def find_finalized_part_files(results_dir: Path) -> list[Path]:
+    part_files = sorted(results_dir.glob("part-*"))
+
+    return [
+        path
+        for path in part_files
+        if ".inprogress" not in path.name
+    ]
 
 
-def main() -> None:
-    results_dir, output_file = load_merge_paths()
-
-    part_files = sorted(glob.glob(str(results_dir / "part-*")))
-    part_files = [path for path in part_files if ".inprogress" not in path]
-
-    if not part_files:
-        print(f"No finalized part files found in {results_dir}")
-        sys.exit(1)
-
-    print(f"Found {len(part_files)} part file(s) in {results_dir} — merging...")
-
+def read_rows(part_files: list[Path]) -> list[str]:
     rows: list[str] = []
 
     for path in part_files:
-        with open(path, encoding="utf-8") as file:
+        with path.open("r", encoding="utf-8") as file:
             for line in file:
                 line = line.strip()
+
                 if line:
                     rows.append(line)
 
+    return rows
+
+
+def sort_rows(rows: list[str]) -> list[str]:
     # Remove duplicates while preserving first occurrence.
-    rows = list(dict.fromkeys(rows))
+    unique_rows = list(dict.fromkeys(rows))
 
     # Sort by window_start, then airline.
-    rows.sort(key=lambda row: (row.split(",")[0], row.split(",")[2]))
+    unique_rows.sort(key=lambda row: (row.split(",")[0], row.split(",")[2]))
 
+    return unique_rows
+
+
+def write_output(rows: list[str], output_file: Path) -> None:
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(output_file, "w", encoding="utf-8") as out:
+    with output_file.open("w", encoding="utf-8") as out:
         out.write(HEADER + "\n")
+
         for row in rows:
             out.write(row + "\n")
 
-    print(f"Written {len(rows)} rows → {output_file}")
+
+def main() -> None:
+    cfg = load_merge_config()
+
+    part_files = find_finalized_part_files(cfg.results_dir)
+
+    if not part_files:
+        print(f"No finalized part files found in {cfg.results_dir}")
+        sys.exit(1)
+
+    print(f"Found {len(part_files)} part file(s) in {cfg.results_dir} — merging...")
+
+    rows = read_rows(part_files)
+    rows = sort_rows(rows)
+
+    write_output(
+        rows=rows,
+        output_file=cfg.output_file,
+    )
+
+    print(f"Written {len(rows)} rows → {cfg.output_file}")
 
 
 if __name__ == "__main__":
