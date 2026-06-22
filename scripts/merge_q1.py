@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
-"""Merge all Q1 part files into a single sorted CSV."""
 
 from __future__ import annotations
 
-import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from merge_utils import (
+    add_experiment_name_to_output_file,
+    configure_config_path,
+    get_experiment_name,
+    parse_experiment_args,
+    resolve_project_path,
+)
 
-# Allow importing common.config when running:
-# python scripts/merge_q1.py
-sys.path.insert(0, str(PROJECT_ROOT))
+ARGS = parse_experiment_args(
+    description="Merge all Q1 part files into a single sorted CSV."
+)
 
-# Local scripts use config/base.yml by default.
-# Docker containers override CONFIG_PATH with /config/base.yml.
-os.environ.setdefault("CONFIG_PATH", str(PROJECT_ROOT / "config" / "base.yml"))
+CONFIG_PATH = configure_config_path(ARGS.experiment)
 
 from common.config import load_config  # noqa: E402
 
@@ -34,22 +36,23 @@ class MergeConfig:
     output_file: Path
 
 
-def resolve_project_path(path_value: str) -> Path:
-    path = Path(path_value)
-
-    if path.is_absolute():
-        return path
-
-    return PROJECT_ROOT / path
-
-
 def load_merge_config() -> MergeConfig:
     cfg = load_config()
     paths_cfg = cfg["paths"]
 
+    experiment_name = get_experiment_name(cfg)
+
+    results_dir = resolve_project_path(paths_cfg["q1_results_host_path"])
+
+    output_file = resolve_project_path(paths_cfg["q1_merged_output_host_path"])
+    output_file = add_experiment_name_to_output_file(
+        output_file=output_file,
+        experiment_name=experiment_name,
+    )
+
     return MergeConfig(
-        results_dir=resolve_project_path(paths_cfg["q1_results_host_path"]),
-        output_file=resolve_project_path(paths_cfg["q1_merged_output_host_path"]),
+        results_dir=results_dir,
+        output_file=output_file,
     )
 
 
@@ -98,6 +101,8 @@ def write_output(rows: list[str], output_file: Path) -> None:
 
 
 def main() -> None:
+    print(f"Using config: {CONFIG_PATH}")
+
     cfg = load_merge_config()
 
     part_files = find_finalized_part_files(cfg.results_dir)
