@@ -1,0 +1,20 @@
+extends: "../base.yml"
+
+experiment:
+  name: "03_ooo_late_loss"
+  output_dir_host: "Results/experiments"
+  producer_log_path: "/opt/flink/results/experiments/03_ooo_late_loss/producer.log"
+
+paths:
+  q1_results_path: "/opt/flink/results/experiments/03_ooo_late_loss/part_files"
+  q1_results_host_path: "Results/experiments/03_ooo_late_loss/part_files"
+  q1_merged_output_host_path: "Results/experiments/03_ooo_late_loss/q1.csv"
+
+producer:
+  holdback_probability: 0.3
+  holdback_delay: 120.0
+  holdback_distribution: "exponential"
+  holdback_mean_seconds: 40.0
+
+q1:
+  watermark_delay_seconds: 30

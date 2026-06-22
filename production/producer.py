@@ -19,18 +19,36 @@ from kafka.errors import KafkaError, NoBrokersAvailable
 
 from common.config import load_config
 from common.logging_utils import configure_logging
+from holdback_distribution import (
+    sample_holdback_delay_seconds,
+    validate_holdback_distribution,
+)
 
 
 configure_logging()
 logger = logging.getLogger(__name__)
 
+def add_file_logging(log_path: Path) -> None:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
 
+    file_handler = logging.FileHandler(
+        log_path,
+        mode="w",
+        encoding="utf-8",
+    )
+
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    )
+
+    logging.getLogger().addHandler(file_handler)
 
 @dataclass(frozen=True)
 class ProducerConfig:
     kafka_bootstrap_servers: str
     kafka_topic: str
     prepared_path: Path
+    producer_log_path: Path | None
 
     acceleration_factor: float
     log_interval: int
@@ -39,6 +57,9 @@ class ProducerConfig:
 
     holdback_probability: float
     holdback_delay: float
+    holdback_distribution: str
+    holdback_mean_seconds: float
+    random_seed: int | None
 
     emit_end_of_stream: bool
 
@@ -49,18 +70,42 @@ class ProducerConfig:
     kafka_max_in_flight_requests_per_connection: int
 
 
-def load_producer_config() -> ProducerConfig:
+def validate_producer_config(cfg: ProducerConfig) -> None:
+    if cfg.acceleration_factor <= 0:
+        raise ValueError("acceleration_factor must be greater than zero")
 
+    if cfg.flush_interval <= 0:
+        raise ValueError("flush_interval must be greater than zero")
+
+    if cfg.log_interval <= 0:
+        raise ValueError("log_interval must be greater than zero")
+
+    if not 0.0 <= cfg.holdback_probability <= 1.0:
+        raise ValueError("holdback_probability must be between 0 and 1")
+
+    validate_holdback_distribution(
+        distribution=cfg.holdback_distribution,
+        max_delay_seconds=cfg.holdback_delay,
+        mean_seconds=cfg.holdback_mean_seconds,
+    )
+
+
+def load_producer_config() -> ProducerConfig:
     cfg = load_config()
 
     kafka_cfg = cfg["kafka"]
     paths_cfg = cfg["paths"]
     producer_cfg = cfg["producer"]
+    experiment_cfg = cfg.get("experiment", {})
+    producer_log_path = experiment_cfg.get("producer_log_path")
 
-    return ProducerConfig(
+    random_seed = producer_cfg.get("random_seed")
+
+    producer_config = ProducerConfig(
         kafka_bootstrap_servers=kafka_cfg["bootstrap_servers"],
         kafka_topic=kafka_cfg["topic"],
         prepared_path=Path(paths_cfg["prepared_path"]),
+        producer_log_path=Path(producer_log_path) if producer_log_path else None,
 
         acceleration_factor=float(producer_cfg["acceleration_factor"]),
         log_interval=int(producer_cfg["log_interval"]),
@@ -69,6 +114,14 @@ def load_producer_config() -> ProducerConfig:
 
         holdback_probability=float(producer_cfg["holdback_probability"]),
         holdback_delay=float(producer_cfg["holdback_delay"]),
+        holdback_distribution=str(producer_cfg["holdback_distribution"]),
+        holdback_mean_seconds=float(
+            producer_cfg.get(
+                "holdback_mean_seconds",
+                float(producer_cfg["holdback_delay"]) / 3.0,
+            )
+        ),
+        random_seed=int(random_seed) if random_seed is not None else None,
 
         emit_end_of_stream=bool(producer_cfg.get("emit_end_of_stream", True)),
 
@@ -77,8 +130,14 @@ def load_producer_config() -> ProducerConfig:
         kafka_linger_ms=int(producer_cfg["linger_ms"]),
         kafka_batch_size=int(producer_cfg["batch_size"]),
         kafka_max_in_flight_requests_per_connection=int(
-            producer_cfg["max_in_flight_requests_per_connection"])
+            producer_cfg["max_in_flight_requests_per_connection"]
+        ),
     )
+
+    validate_producer_config(producer_config)
+
+    return producer_config
+
 
 
 def load_prepared(path: Path, acceleration_factor: float) -> pd.DataFrame:
@@ -238,49 +297,54 @@ def replay_events(
     df: pd.DataFrame,
     cfg: ProducerConfig,
 ) -> None:
-
     n = len(df)
 
     if n == 0:
         logger.warning("No events to replay.")
         return
 
-    if cfg.acceleration_factor <= 0:
-        raise ValueError("acceleration_factor must be greater than zero")
-
     event_times = df["event_time"].to_numpy()
 
     first_ts = int(event_times[0])
     wall_start = time.monotonic()
 
-    # Out-of-orderness is simulated by DELAYING DELIVERY, never by altering
+    # Out-of-orderness is simulated by delaying delivery, not by modifying
     # event_time. A held-back event keeps its true event_time but is sent later,
-    # so it lands further ahead in the Kafka log → genuine out-of-order arrival.
-    # The delay is drawn uniformly in [0, holdback_delay]; holdback_delay is thus
-    # the maximum out-of-orderness bound to compare against the watermark delay W:
-    #   W >= bound → late events still land in the CORRECT window (complete, +latency)
-    #   W <  bound → some events arrive after the watermark and are dropped (incomplete)
-    max_delay_wall = cfg.holdback_delay / cfg.acceleration_factor
-
+    # so it may appear after newer events in the Kafka log.
+    #
+    # holdback_delay is expressed in event-time seconds and represents the
+    # maximum out-of-orderness bound to compare with the Flink watermark:
+    #   watermark >= bound -> delayed events still land in the correct window
+    #   watermark <  bound -> some events may arrive too late and be dropped
     logger.info(
         "Replay started: %d events, factor=%gx, out-of-order prob=%.2f, "
-        "max delivery delay=%ds (event time)",
+        "distribution=%s, max delivery delay=%ds (event time)",
         n,
         cfg.acceleration_factor,
         cfg.holdback_probability,
+        cfg.holdback_distribution,
         int(cfg.holdback_delay),
     )
 
-    # Min-heap of held-back events ordered by scheduled wall-clock send time.
-    # Entries are (scheduled_wall, seq, payload); seq breaks ties so the heap
-    # never has to compare payload dicts.
     held_buffer: list[tuple[float, int, dict[str, Any]]] = []
+
     held_total = 0
-    seq = 0
     sent = 0
+    seq = 0
+
+    max_emitted_event_time = -1
+    out_of_order_emitted = 0
 
     def dispatch(payload: dict[str, Any]) -> None:
-        nonlocal sent
+        nonlocal sent, max_emitted_event_time, out_of_order_emitted
+
+        event_time = int(payload["event_time"])
+
+        if event_time < max_emitted_event_time:
+            out_of_order_emitted += 1
+        else:
+            max_emitted_event_time = event_time
+
         producer.send(cfg.kafka_topic, value=payload)
         sent += 1
 
@@ -305,18 +369,27 @@ def replay_events(
             (int(event_times[index]) - first_ts) / 1000.0
         ) / cfg.acceleration_factor
 
-        # Emit any held-back events whose delayed send time has arrived, in
-        # order, before the next in-order event.
         while held_buffer and held_buffer[0][0] <= target_wall:
-            sched_wall, _, late_payload = heapq.heappop(held_buffer)
-            _sleep_until(wall_start, sched_wall)
-            dispatch(late_payload)
+            scheduled_wall, _, delayed_payload = heapq.heappop(held_buffer)
+            _sleep_until(wall_start, scheduled_wall)
+            dispatch(delayed_payload)
 
-        payload = _row_to_payload(row)  # event_time left untouched
+        payload = _row_to_payload(row)
 
         if cfg.holdback_probability > 0.0 and random.random() < cfg.holdback_probability:
-            delay = random.uniform(0.0, max_delay_wall)
-            heapq.heappush(held_buffer, (target_wall + delay, seq, payload))
+            delay_event_seconds = sample_holdback_delay_seconds(
+                distribution=cfg.holdback_distribution,
+                max_delay_seconds=cfg.holdback_delay,
+                mean_seconds=cfg.holdback_mean_seconds,
+            )
+
+            delay_wall_seconds = delay_event_seconds / cfg.acceleration_factor
+
+            heapq.heappush(
+                held_buffer,
+                (target_wall + delay_wall_seconds, seq, payload),
+            )
+
             seq += 1
             held_total += 1
             continue
@@ -324,11 +397,10 @@ def replay_events(
         _sleep_until(wall_start, target_wall)
         dispatch(payload)
 
-    # Drain events still held back after the last in-order event.
     while held_buffer:
-        sched_wall, _, late_payload = heapq.heappop(held_buffer)
-        _sleep_until(wall_start, sched_wall)
-        dispatch(late_payload)
+        scheduled_wall, _, delayed_payload = heapq.heappop(held_buffer)
+        _sleep_until(wall_start, scheduled_wall)
+        dispatch(delayed_payload)
 
     producer.flush()
 
@@ -344,6 +416,12 @@ def replay_events(
         held_total / n * 100,
     )
 
+    logger.info(
+        "Out-of-order emitted: %d events (%.2f%% of emitted events)",
+        out_of_order_emitted,
+        out_of_order_emitted / sent * 100 if sent > 0 else 0.0,
+    )
+
 
 # Event time well beyond the dataset (year 2200) carried by the end-of-stream
 # markers. Sending one marker per partition pushes every per-partition watermark
@@ -355,14 +433,7 @@ END_OF_STREAM_EVENT_TIME_MS = int(
 
 
 def emit_end_of_stream_markers(producer: KafkaProducer, cfg: ProducerConfig) -> None:
-    """Append a future-dated marker as the LAST record of every partition.
-
-    Correctness depends on the marker being the highest offset on each partition:
-    any real event read after it would fall below the (now max) watermark and be
-    dropped as late. We therefore flush all real events first (with acks=all they
-    are durably in the log), then send one marker per partition, then flush again.
-    Combined with max_in_flight_requests_per_connection=1 this guarantees ordering.
-    """
+    """Append a future-dated marker as the last record of every partition."""
     partitions = producer.partitions_for(cfg.kafka_topic)
 
     if not partitions:
@@ -372,12 +443,8 @@ def emit_end_of_stream_markers(producer: KafkaProducer, cfg: ProducerConfig) -> 
         )
         return
 
-    # Ensure every real event is acknowledged before any marker is enqueued.
     producer.flush()
 
-    # Marker excluded by every query: airline outside the Q1/Q3 carrier list and
-    # flagged cancelled+diverted so the "non cancellati e non deviati" filters of
-    # Q2/Q3 drop it too. Its event_time only drives the watermark.
     marker = {
         "event_time": END_OF_STREAM_EVENT_TIME_MS,
         "airline": "__EOS__",
@@ -401,6 +468,15 @@ def emit_end_of_stream_markers(producer: KafkaProducer, cfg: ProducerConfig) -> 
 def main() -> None:
     cfg = load_producer_config()
 
+    if cfg.producer_log_path is not None:
+        add_file_logging(cfg.producer_log_path)
+        logger.info("Producer log   : %s", cfg.producer_log_path)
+
+
+    if cfg.random_seed is not None:
+        random.seed(cfg.random_seed)
+        logger.info("Random seed    : %d", cfg.random_seed)
+
     logger.info("=== Flight Event Producer ===")
     logger.info(" Prepared data : %s", cfg.prepared_path)
     logger.info(" Kafka brokers : %s", cfg.kafka_bootstrap_servers)
@@ -415,6 +491,10 @@ def main() -> None:
             cfg.holdback_probability * 100,
             int(cfg.holdback_delay),
         )
+        logger.info(" Holdback dist : %s", cfg.holdback_distribution)
+
+        if cfg.holdback_distribution == "exponential":
+            logger.info(" Holdback mean : %.1f s", cfg.holdback_mean_seconds)
     else:
         logger.info(" Out-of-order  : disabled")
 
@@ -430,7 +510,10 @@ def main() -> None:
         )
         return
 
-    df = load_prepared(path=cfg.prepared_path,acceleration_factor=cfg.acceleration_factor)
+    df = load_prepared(
+        path=cfg.prepared_path,
+        acceleration_factor=cfg.acceleration_factor,
+    )
 
     if df.empty:
         logger.error("Prepared dataset is empty — nothing to produce. Exiting.")
@@ -439,10 +522,17 @@ def main() -> None:
     producer = create_producer(cfg)
 
     try:
-        replay_events(producer=producer,df=df,cfg=cfg)
+        replay_events(
+            producer=producer,
+            df=df,
+            cfg=cfg,
+        )
 
         if cfg.emit_end_of_stream:
-            emit_end_of_stream_markers(producer=producer, cfg=cfg)
+            emit_end_of_stream_markers(
+                producer=producer,
+                cfg=cfg,
+            )
     finally:
         producer.close()
 
