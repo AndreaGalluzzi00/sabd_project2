@@ -134,6 +134,7 @@ def add_event_time(df: pd.DataFrame) -> pd.DataFrame:
     logger.info("Computing event timestamps …")
     df["event_time"] = _compute_event_timestamps(df)
 
+    return df
 
 
 def normalize_columns(
@@ -155,6 +156,7 @@ def normalize_columns(
     if "OP_UNIQUE_CARRIER" in df.columns:
         df["OP_UNIQUE_CARRIER"] = df["OP_UNIQUE_CARRIER"].fillna("").str.strip()
 
+    return df
 
 
 def read_raw_dataset(csv_files: list[Path]) -> pd.DataFrame:
@@ -179,6 +181,7 @@ def read_raw_dataset(csv_files: list[Path]) -> pd.DataFrame:
 
     logger.info("Total rows loaded: %d", len(df))
 
+    return df
 
 
 def discover_csv_files(raw_dataset_path: Path) -> list[Path]:
@@ -206,7 +209,7 @@ def load_and_prepare(
     df = read_raw_dataset(csv_files)
     normalize_columns(df, numeric_missing_policy)
     add_event_time(df)
-    sort_by_event_time(df)
+    df = sort_by_event_time(df)
     log_event_range(df)
 
     return df

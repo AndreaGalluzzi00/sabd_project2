@@ -19,3 +19,49 @@ docker exec flink-jobmanager flink list -r
 docker exec flink-jobmanager flink stop --drain   <JOB_ID>
 
 python .\scripts\merge_q1.py
+
+
+ESPERIMENTO 1
+
+EXP=01_baseline; CFG=/config/experiments/${EXP}.yml
+
+docker compose run --rm -e CONFIG_PATH=$CFG flink-job-q1
+docker compose run --rm -e CONFIG_PATH=$CFG producer
+docker exec flink-jobmanager flink list -r          # ripeti finché NON c'è più nessun job RUNNING
+CONFIG_PATH=config/experiments/${EXP}.yml python scripts/merge_q1.py
+
+ESPERIMENTO 2
+
+EXP=02_ooo_safe; CFG=/config/experiments/${EXP}.yml
+
+docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --delete --topic flights --if-exists
+sleep 3
+docker compose run --rm kafka-init
+docker compose run --rm -e CONFIG_PATH=$CFG flink-job-q1
+docker compose run --rm -e CONFIG_PATH=$CFG producer
+docker exec flink-jobmanager flink list -r          # attendi: nessun RUNNING
+CONFIG_PATH=config/experiments/${EXP}.yml python scripts/merge_q1.py
+
+ESPERIMENTO 3
+
+EXP=03_ooo_late_loss; CFG=/config/experiments/${EXP}.yml
+
+docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --delete --topic flights --if-exists
+sleep 3
+docker compose run --rm kafka-init
+docker compose run --rm -e CONFIG_PATH=$CFG flink-job-q1
+docker compose run --rm -e CONFIG_PATH=$CFG producer
+docker exec flink-jobmanager flink list -r          # attendi: nessun RUNNING
+CONFIG_PATH=config/experiments/${EXP}.yml python scripts/merge_q1.py
+
+ESPERIMENTO 4
+
+EXP=04_ooo_uniform_late_loss; CFG=/config/experiments/${EXP}.yml
+
+docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --delete --topic flights --if-exists
+sleep 3
+docker compose run --rm kafka-init
+docker compose run --rm -e CONFIG_PATH=$CFG flink-job-q1
+docker compose run --rm -e CONFIG_PATH=$CFG producer
+docker exec flink-jobmanager flink list -r          # attendi: nessun RUNNING
+CONFIG_PATH=config/experiments/${EXP}.yml python scripts/merge_q1.py

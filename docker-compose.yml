@@ -78,6 +78,7 @@ services:
     build:
       context: .
       dockerfile: flink_jobs/Dockerfile
+    platform: linux/amd64
     hostname: flink-jobmanager
     container_name: flink-jobmanager
     ports:
@@ -106,6 +107,7 @@ services:
     build:
       context: .
       dockerfile: flink_jobs/Dockerfile
+    platform: linux/amd64
     hostname: flink-taskmanager
     container_name: flink-taskmanager
     depends_on:
@@ -199,6 +201,7 @@ services:
     build:
       context: .
       dockerfile: flink_jobs/Dockerfile
+    platform: linux/amd64
     container_name: flink-job-q1
     profiles: ["manual"]
     depends_on:

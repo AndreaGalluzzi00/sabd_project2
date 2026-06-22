@@ -1,4 +1,6 @@
-FROM flink:1.20-java17
+# PyFlink (apache-flink) non pubblica wheel Linux aarch64: forziamo amd64.
+# Su Apple Silicon gira via Rosetta (abilitare in Docker Desktop).
+FROM --platform=linux/amd64 flink:1.20-java17
 
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
