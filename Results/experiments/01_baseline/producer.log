@@ -1,0 +1,58 @@
+2026-06-22 12:09:40,516 [INFO] Producer log   : /opt/flink/results/experiments/01_baseline/producer.log
+2026-06-22 12:09:40,517 [INFO] Random seed    : 42
+2026-06-22 12:09:40,517 [INFO] === Flight Event Producer ===
+2026-06-22 12:09:40,517 [INFO]  Prepared data : /prepared/flights_prepared.parquet
+2026-06-22 12:09:40,518 [INFO]  Kafka brokers : kafka:9092
+2026-06-22 12:09:40,518 [INFO]  Topic         : flights
+2026-06-22 12:09:40,518 [INFO]  Acceleration  : 57600x
+2026-06-22 12:09:40,519 [INFO]  Flush every   : 5000 events
+2026-06-22 12:09:40,519 [INFO]  Log every     : 100000 events
+2026-06-22 12:09:40,519 [INFO]  Out-of-order  : disabled
+2026-06-22 12:09:40,519 [INFO]  End-of-stream : marker per partition
+2026-06-22 12:09:40,522 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=bootstrap-0 host=kafka:9092 <connecting> [IPv4 ('172.19.0.2', 9092)]>: connecting to kafka:9092 [('172.19.0.2', 9092) IPv4]
+2026-06-22 12:09:40,523 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=bootstrap-0 host=kafka:9092 <checking_api_versions_recv> [IPv4 ('172.19.0.2', 9092)]>: Broker version identified as 2.6
+2026-06-22 12:09:40,524 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=bootstrap-0 host=kafka:9092 <connected> [IPv4 ('172.19.0.2', 9092)]>: Connection complete.
+2026-06-22 12:09:40,526 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=1 host=kafka:9092 <connecting> [IPv4 ('172.19.0.2', 9092)]>: connecting to kafka:9092 [('172.19.0.2', 9092) IPv4]
+2026-06-22 12:09:40,527 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=1 host=kafka:9092 <connected> [IPv4 ('172.19.0.2', 9092)]>: Connection complete.
+2026-06-22 12:09:40,527 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=bootstrap-0 host=kafka:9092 <connected> [IPv4 ('172.19.0.2', 9092)]>: Closing connection. 
+2026-06-22 12:09:40,629 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=1 host=kafka:9092 <connected> [IPv4 ('172.19.0.2', 9092)]>: Closing connection. 
+2026-06-22 12:09:40,629 [INFO] Loading prepared dataset /prepared/flights_prepared.parquet …
+2026-06-22 12:09:40,927 [INFO] Loaded 2229453 prepared events
+2026-06-22 12:09:40,928 [INFO] Event range: 2025-01-01 00:10:00+00:00 → 2025-04-30 23:59:00+00:00 (120.0 days)
+2026-06-22 12:09:40,928 [INFO] Estimated replay duration at 57600x: 3.0 minutes
+2026-06-22 12:09:40,930 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=bootstrap-0 host=kafka:9092 <connecting> [IPv4 ('172.19.0.2', 9092)]>: connecting to kafka:9092 [('172.19.0.2', 9092) IPv4]
+2026-06-22 12:09:40,931 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=bootstrap-0 host=kafka:9092 <checking_api_versions_recv> [IPv4 ('172.19.0.2', 9092)]>: Broker version identified as 2.6
+2026-06-22 12:09:40,931 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=bootstrap-0 host=kafka:9092 <connected> [IPv4 ('172.19.0.2', 9092)]>: Connection complete.
+2026-06-22 12:09:41,034 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=1 host=kafka:9092 <connecting> [IPv4 ('172.19.0.2', 9092)]>: connecting to kafka:9092 [('172.19.0.2', 9092) IPv4]
+2026-06-22 12:09:41,034 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=1 host=kafka:9092 <connected> [IPv4 ('172.19.0.2', 9092)]>: Connection complete.
+2026-06-22 12:09:41,034 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=bootstrap-0 host=kafka:9092 <connected> [IPv4 ('172.19.0.2', 9092)]>: Closing connection. 
+2026-06-22 12:09:41,035 [INFO] Connected to Kafka (kafka:9092), topic 'flights'
+2026-06-22 12:09:41,036 [INFO] Replay started: 2229453 events, factor=57600x, out-of-order prob=0.00, distribution=exponential, max delivery delay=120s (event time)
+2026-06-22 12:09:57,538 [INFO] Sent 100000 / 2229453  (4.5%)  elapsed=16.5s  throughput=6059 ev/s
+2026-06-22 12:10:12,097 [INFO] Sent 200000 / 2229453  (9.0%)  elapsed=31.1s  throughput=6438 ev/s
+2026-06-22 12:10:26,681 [INFO] Sent 300000 / 2229453  (13.5%)  elapsed=45.6s  throughput=6572 ev/s
+2026-06-22 12:10:40,895 [INFO] Sent 400000 / 2229453  (17.9%)  elapsed=59.9s  throughput=6682 ev/s
+2026-06-22 12:10:55,340 [INFO] Sent 500000 / 2229453  (22.4%)  elapsed=74.3s  throughput=6729 ev/s
+2026-06-22 12:11:10,207 [INFO] Sent 600000 / 2229453  (26.9%)  elapsed=89.2s  throughput=6728 ev/s
+2026-06-22 12:11:24,819 [INFO] Sent 700000 / 2229453  (31.4%)  elapsed=103.8s  throughput=6744 ev/s
+2026-06-22 12:11:39,305 [INFO] Sent 800000 / 2229453  (35.9%)  elapsed=118.3s  throughput=6764 ev/s
+2026-06-22 12:11:53,913 [INFO] Sent 900000 / 2229453  (40.4%)  elapsed=132.9s  throughput=6773 ev/s
+2026-06-22 12:12:08,824 [INFO] Sent 1000000 / 2229453  (44.9%)  elapsed=147.8s  throughput=6766 ev/s
+2026-06-22 12:12:23,327 [INFO] Sent 1100000 / 2229453  (49.3%)  elapsed=162.3s  throughput=6778 ev/s
+2026-06-22 12:12:37,724 [INFO] Sent 1200000 / 2229453  (53.8%)  elapsed=176.7s  throughput=6791 ev/s
+2026-06-22 12:12:53,358 [INFO] Sent 1300000 / 2229453  (58.3%)  elapsed=192.3s  throughput=6759 ev/s
+2026-06-22 12:13:08,281 [INFO] Sent 1400000 / 2229453  (62.8%)  elapsed=207.3s  throughput=6755 ev/s
+2026-06-22 12:13:22,526 [INFO] Sent 1500000 / 2229453  (67.3%)  elapsed=221.5s  throughput=6772 ev/s
+2026-06-22 12:13:36,735 [INFO] Sent 1600000 / 2229453  (71.8%)  elapsed=235.7s  throughput=6788 ev/s
+2026-06-22 12:13:50,948 [INFO] Sent 1700000 / 2229453  (76.3%)  elapsed=249.9s  throughput=6802 ev/s
+2026-06-22 12:14:05,267 [INFO] Sent 1800000 / 2229453  (80.7%)  elapsed=264.2s  throughput=6812 ev/s
+2026-06-22 12:14:19,524 [INFO] Sent 1900000 / 2229453  (85.2%)  elapsed=278.5s  throughput=6822 ev/s
+2026-06-22 12:14:33,711 [INFO] Sent 2000000 / 2229453  (89.7%)  elapsed=292.7s  throughput=6833 ev/s
+2026-06-22 12:14:47,896 [INFO] Sent 2100000 / 2229453  (94.2%)  elapsed=306.9s  throughput=6843 ev/s
+2026-06-22 12:15:02,131 [INFO] Sent 2200000 / 2229453  (98.7%)  elapsed=321.1s  throughput=6851 ev/s
+2026-06-22 12:15:06,295 [INFO] Replay complete: 2229453 events in 325.3 s (avg 6854 ev/s) — delayed: 0 (0.0%)
+2026-06-22 12:15:06,296 [INFO] Out-of-order emitted: 0 events (0.00% of emitted events)
+2026-06-22 12:15:06,690 [INFO] End-of-stream markers sent to 4 partition(s) (event_time=2200-01-01 00:00:00+00:00) — final event-time windows will flush at the next checkpoint.
+2026-06-22 12:15:06,690 [INFO] <KafkaProducer client_id=kafka-python-producer-1 transactional_id=None>: Closing the Kafka producer with 9223372036.0 secs timeout.
+2026-06-22 12:15:06,691 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=1 host=kafka:9092 <connected> [IPv4 ('172.19.0.2', 9092)]>: Closing connection. 
+2026-06-22 12:15:06,691 [INFO] Producer closed.

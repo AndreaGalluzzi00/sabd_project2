@@ -1,10 +1,15 @@
+experiment:
+  name: "base"
+  output_dir_host: "Results"
+  producer_log_path: "/opt/flink/results/producer.log"
+
 paths:
   raw_dataset_path: "/data/raw/project-2-data"
   prepared_path: "/prepared/flights_prepared.parquet"
 
+
   # Path visto dentro il container Flink
   q1_results_path: "/opt/flink/results/q1"
-
   # Path visto dall'host, usato da scripts/merge_q1.py
   q1_results_host_path: "Results/q1"
   q1_merged_output_host_path: "Results/q1.csv"
@@ -26,8 +31,20 @@ producer:
   #   holdback_probability: frazione di eventi a cui viene ritardato l'invio
   #   holdback_delay:       ritardo MAX di consegna in secondi di event-time
   #                         (= bound di out-of-orderness da confrontare col watermark)
-  holdback_probability: 0.1
+  holdback_probability: 0.3
   holdback_delay: 120.0
+  random_seed: 42
+
+  # Distribution used to delay held-back events:
+  #   uniform     -> random delay in [0, holdback_delay]
+  #   exponential -> many small delays, few large delays
+  holdback_distribution: "exponential"
+
+  # Used only when holdback_distribution = "exponential".
+  # Average artificial delay in event-time seconds.
+  # Recommended: around holdback_delay / 3 -> se non messo lo calcola in automatico
+  holdback_mean_seconds: 40.0
+
 
   # A fine replay invia un marker con event_time nel futuro a OGNI partizione:
   # spinge il watermark oltre l'ultima finestra → l'ultima finestra viene drenata
@@ -49,4 +66,4 @@ spark:
   consumer_group: "spark-flight-analysis"
 
 q1:
-  watermark_delay_seconds: 30
+  watermark_delay_seconds: 180

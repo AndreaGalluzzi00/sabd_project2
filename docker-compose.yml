@@ -209,6 +209,8 @@ services:
       bash -c "
         echo 'Waiting for Flink JobManager...' &&
         until curl -sf http://flink-jobmanager:8081/overview > /dev/null; do sleep 2; done &&
+        echo 'Preparing Q1 output directory...' &&
+        python -c \"from pathlib import Path; from common.config import load_config; p = Path(load_config()['paths']['q1_results_path']); p.mkdir(parents=True, exist_ok=True); print(f'Q1 output directory ready: {p}')\" &&
         echo 'Submitting Q1 job...' &&
         flink run -d -m flink-jobmanager:8081 -py /opt/flink/jobs/q1/job.py
       "
@@ -238,6 +240,7 @@ services:
     volumes:
       - ./config:/config:ro
       - prepared:/prepared:ro
+      - ./Results:/opt/flink/results
     networks:
       - sabd-net
     restart: "no"
