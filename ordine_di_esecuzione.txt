@@ -7,7 +7,7 @@ docker exec flink-jobmanager flink cancel <JOB_ID>
 Remove-Item -Recurse -Force .\Results\q1 -ErrorAction SilentlyContinue
 Remove-Item -Force .\Results\q1.csv -ErrorAction SilentlyContinue
 
-docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --delete --topic flights
+docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --delete --topic flights --if-exist
 docker compose run --rm kafka-init
 
 docker compose run --rm preprocess
@@ -21,15 +21,33 @@ docker exec flink-jobmanager flink stop --drain   <JOB_ID>
 python .\scripts\merge_q1.py
 
 
-ESPERIMENTO 1
+ESPERIMENTO 1 ATTENZIONE SOLO PER ESPERIMENTO 1 HO MESSO ENTRAMBE LE VERSIONI
+
+LINUX
 
 EXP=01_baseline; CFG=/config/experiments/${EXP}.yml
 
 docker compose run --rm -e CONFIG_PATH=$CFG flink-job-q1
 docker compose run --rm -e CONFIG_PATH=$CFG producer
 docker exec flink-jobmanager flink list -r          # ripeti finché NON c'è più nessun job RUNNING
-CONFIG_PATH=config/experiments/${EXP}.yml python scripts/merge_q1.py
+python scripts/merge_q1.py --exp oppure --e oppure --experiment
 
+
+POWERSHELL
+
+$EXP = "01_baseline"
+$CFG = "/config/experiments/$EXP.yml"
+
+docker exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --delete --topic flights --if-exists
+Start-Sleep -Seconds 3
+docker compose run --rm kafka-init
+
+docker compose run --rm -e "CONFIG_PATH=$CFG" flink-job-q1
+docker compose run --rm -e "CONFIG_PATH=$CFG" producer
+
+docker exec flink-jobmanager flink list -r
+
+python .\scripts\merge_q1.py --exp $EXP
 ESPERIMENTO 2
 
 EXP=02_ooo_safe; CFG=/config/experiments/${EXP}.yml
@@ -40,7 +58,7 @@ docker compose run --rm kafka-init
 docker compose run --rm -e CONFIG_PATH=$CFG flink-job-q1
 docker compose run --rm -e CONFIG_PATH=$CFG producer
 docker exec flink-jobmanager flink list -r          # attendi: nessun RUNNING
-CONFIG_PATH=config/experiments/${EXP}.yml python scripts/merge_q1.py
+python scripts/merge_q1.py --exp oppure --e oppure --experiment
 
 ESPERIMENTO 3
 
@@ -52,7 +70,7 @@ docker compose run --rm kafka-init
 docker compose run --rm -e CONFIG_PATH=$CFG flink-job-q1
 docker compose run --rm -e CONFIG_PATH=$CFG producer
 docker exec flink-jobmanager flink list -r          # attendi: nessun RUNNING
-CONFIG_PATH=config/experiments/${EXP}.yml python scripts/merge_q1.py
+python scripts/merge_q1.py --exp oppure --e oppure --experiment
 
 ESPERIMENTO 4
 
@@ -64,4 +82,4 @@ docker compose run --rm kafka-init
 docker compose run --rm -e CONFIG_PATH=$CFG flink-job-q1
 docker compose run --rm -e CONFIG_PATH=$CFG producer
 docker exec flink-jobmanager flink list -r          # attendi: nessun RUNNING
-CONFIG_PATH=config/experiments/${EXP}.yml python scripts/merge_q1.py
+python scripts/merge_q1.py --exp oppure --e oppure --experiment
