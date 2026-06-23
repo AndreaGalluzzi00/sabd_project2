@@ -62,6 +62,12 @@ flink:
   checkpoint_interval_ms: 10000
   consumer_group: "flink-flight-analysis"
 
+  # Intervallo di emissione periodica del watermark (pipeline.auto-watermark-interval).
+  # In event-time il "salto cieco" tra due watermark vale interval_ms/1000 * accelerazione:
+  # a 57600x, 200ms -> ~11520 s (3.2h) -> schiaccia d e il disordine. Tenere 1ms negli
+  # esperimenti di completezza per rendere trascurabile questo gap (G ≈ 58 s).
+  auto_watermark_interval_ms: 200
+
 spark:
   consumer_group: "spark-flight-analysis"
 

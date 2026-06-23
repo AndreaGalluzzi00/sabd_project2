@@ -1,0 +1,31 @@
+extends: "../base.yml"
+
+# Watermark "aggressive": ritardo massimo ammesso (d) << disordine massimo iniettato (D).
+# Gli eventi ritardati oltre il budget vengono scartati come late -> completezza < 100%,
+# a fronte di latenza del risultato bassa. Stesso disordine e stesso seed di 05_wm_safe,
+# così il confronto isola il solo effetto del watermark.
+#
+# Perdita attesa (uniform, G trascurabile):
+#   loss = p * (D - d)^2 / (2 * D * W)
+#        = 0.3 * (3600 - 300)^2 / (2 * 3600 * 3600) ~ 12.6%
+
+experiment:
+  name: "06_wm_aggressive"
+  output_dir_host: "Results/experiments"
+  producer_log_path: "/opt/flink/results/experiments/06_wm_aggressive/producer.log"
+
+paths:
+  q1_results_path: "/opt/flink/results/experiments/06_wm_aggressive/part_files"
+  q1_results_host_path: "Results/experiments/06_wm_aggressive/part_files"
+  q1_merged_output_host_path: "Results/experiments/06_wm_aggressive/q1.csv"
+
+producer:
+  holdback_probability: 0.3
+  holdback_delay: 3600.0          # stesso disordine di 05_wm_safe
+  holdback_distribution: "uniform"
+
+flink:
+  auto_watermark_interval_ms: 1   # G trascurabile -> d è la vera manopola
+
+q1:
+  watermark_delay_seconds: 300    # d << D -> perdita attesa ~12.6%
