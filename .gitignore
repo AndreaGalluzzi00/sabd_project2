@@ -1,10 +1,3 @@
-# Dataset (large files, not tracked)
-data/
-!data/.gitkeep
-
-# Query results (generated at runtime)
-Results/**/*.csv
-
 # Savepoints
 flink-savepoints/
 
