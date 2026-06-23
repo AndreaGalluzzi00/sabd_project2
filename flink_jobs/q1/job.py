@@ -45,9 +45,26 @@ def load_q1_config() -> Q1Config:
         watermark_delay_seconds=int(cfg["q1"]["watermark_delay_seconds"]),
     )
 
+def sql_watermark_interval(seconds: int) -> str:
+    if seconds < 0:
+        raise ValueError("watermark_delay_seconds must be >= 0")
+
+    if seconds == 0:
+        return "INTERVAL '0' SECOND"
+
+    if seconds % 3600 == 0:
+        hours = seconds // 3600
+        return f"INTERVAL '{hours}' HOUR"
+
+    if seconds % 60 == 0:
+        minutes = seconds // 60
+        return f"INTERVAL '{minutes}' MINUTE"
+
+    return f"INTERVAL '{seconds}' SECOND"
+
 def main() -> None:
     q1_cfg = load_q1_config()
-
+    watermark_interval = sql_watermark_interval(q1_cfg.watermark_delay_seconds)
     t_env = create_table_environment(q1_cfg)
 
     logger.info(
@@ -74,7 +91,7 @@ def main() -> None:
             cancelled   DOUBLE,
             diverted    DOUBLE,
             rowtime     AS TO_TIMESTAMP_LTZ(event_time, 3),
-            WATERMARK FOR rowtime AS rowtime - INTERVAL '{q1_cfg.watermark_delay_seconds}' SECOND
+            WATERMARK FOR rowtime AS rowtime - {watermark_interval}
         ) WITH (
             'connector'                    = 'kafka',
             'topic'                        = '{q1_cfg.kafka_topic}',
