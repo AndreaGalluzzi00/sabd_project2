@@ -1,0 +1,27 @@
+extends: "../base.yml"
+
+# Watermark "safe": ritardo massimo ammesso (d) >= disordine massimo iniettato (D).
+# Tutti gli eventi fuori ordine rientrano nella loro finestra -> completezza ~100%,
+# a costo di latenza del risultato alta (la finestra chiude ~d secondi dopo, in event-time).
+# Da confrontare con 06_wm_aggressive a parità di disordine e seed.
+
+experiment:
+  name: "05_wm_safe"
+  output_dir_host: "Results/experiments"
+  producer_log_path: "/opt/flink/results/experiments/05_wm_safe/producer.log"
+
+paths:
+  q1_results_path: "/opt/flink/results/experiments/05_wm_safe/part_files"
+  q1_results_host_path: "Results/experiments/05_wm_safe/part_files"
+  q1_merged_output_host_path: "Results/experiments/05_wm_safe/q1.csv"
+
+producer:
+  holdback_probability: 0.3
+  holdback_delay: 3600.0          # disordine uniforme in [0, 3600] s di event-time
+  holdback_distribution: "uniform"
+
+flink:
+  auto_watermark_interval_ms: 1   # G = 1ms * accel ~ 58 s -> trascurabile vs d
+
+q1:
+  watermark_delay_seconds: 3600   # d >= D -> perdita attesa ~0%

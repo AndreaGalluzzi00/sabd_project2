@@ -25,6 +25,12 @@ Esecuzione esperimento 3:
 Esecuzione esperimento 4:
     .\scripts\run_experiment.ps1 -e 04_ooo_uniform_late_loss
 
+Esecuzione esperimento 5 (watermark safe, completezza ~100%):
+    .\scripts\run_experiment.ps1 -e 05_wm_safe
+
+Esecuzione esperimento 6 (watermark aggressive, perdita attesa ~12.6%):
+    .\scripts\run_experiment.ps1 -e 06_wm_aggressive
+
 Se il preprocessing è già stato eseguito:
     .\scripts\run_experiment.ps1 -e 02_ooo_safe -NoPreprocess
 
@@ -45,6 +51,8 @@ Esecuzione consigliata di tutti gli esperimenti:
     .\scripts\run_experiment.ps1 -e 02_ooo_safe -NoPreprocess
     .\scripts\run_experiment.ps1 -e 03_ooo_late_loss -NoPreprocess
     .\scripts\run_experiment.ps1 -e 04_ooo_uniform_late_loss -NoPreprocess
+    .\scripts\run_experiment.ps1 -e 05_wm_safe -NoPreprocess
+    .\scripts\run_experiment.ps1 -e 06_wm_aggressive -NoPreprocess
 
 Parametri disponibili:
     -e / -Exp              Nome dell'esperimento dentro config/experiments.
