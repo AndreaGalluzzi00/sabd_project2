@@ -1,6 +1,9 @@
 # Savepoints
 flink-savepoints/
 
+# Runtime-generated configs
+config/runtime/
+
 # Python
 __pycache__/
 *.py[cod]

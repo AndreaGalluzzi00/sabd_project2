@@ -6,7 +6,7 @@ Eseguire i comandi dalla root del progetto, cioè dalla cartella in cui si trova
 Prima esecuzione:
     docker compose build
     docker compose up -d
-
+    docker compose --profile dashboard-influx --profile dashboard-timescale up -d
     docker exec flink-jobmanager flink list -r
     docker exec flink-jobmanager flink cancel <JOB_ID>
 
@@ -43,6 +43,13 @@ Per cambiare il tempo di attesa prima del merge automatico:
 Per disattivare il merge automatico:
     .\scripts\run_experiment.ps1 -e 02_ooo_safe -NoPreprocess -NoMerge
 
+Esecuzione flusso completo CSV + InfluxDB + TimescaleDB + Grafana:
+    .\scripts\run_experiment.ps1 -e 05_wm_safe -NoPreprocess -FullFlow
+
+Esecuzione con un solo backend dashboard:
+    .\scripts\run_experiment.ps1 -e 05_wm_safe -NoPreprocess -DashboardInflux
+    .\scripts\run_experiment.ps1 -e 05_wm_safe -NoPreprocess -DashboardTimescale
+
 Merge manuale:
     python .\scripts\merge_q1.py --exp 02_ooo_safe
 
@@ -61,6 +68,10 @@ Parametri disponibili:
     -NoCleanResults        Non cancella la cartella dei part file prima del run.
     -NoMerge               Non esegue il merge automatico.
     -MergeDelaySeconds     Numero di secondi da attendere prima del merge. Default: 25.
+    -FullFlow              Avvia entrambi i backend dashboard e abilita i sink runtime.
+    -DashboardInflux       Avvia/abilita solo InfluxDB via Kafka+Telegraf.
+    -DashboardTimescale    Avvia/abilita solo TimescaleDB via JDBC.
+    -NoCleanDashboard      Non pulisce lo stato dashboard prima della run.
 #>
 
 param(
@@ -71,6 +82,11 @@ param(
     [switch]$NoResetTopic,
     [switch]$NoCleanResults,
     [switch]$NoMerge,
+
+    [switch]$FullFlow,
+    [switch]$DashboardInflux,
+    [switch]$DashboardTimescale,
+    [switch]$NoCleanDashboard,
 
     [int]$MergeDelaySeconds = 25
 )
@@ -147,11 +163,174 @@ function Initialize-Q1ResultsDirectory {
     New-Item -ItemType Directory -Force -Path $ResultsHostPath | Out-Null
 }
 
+function New-DashboardRuntimeConfig {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ConfigPathHost,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Label,
+
+        [Parameter(Mandatory = $true)]
+        [bool]$EnableInflux,
+
+        [Parameter(Mandatory = $true)]
+        [bool]$EnableTimescale
+    )
+
+    $RuntimeDir = "config/runtime"
+    New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
+
+    $SafeLabel = $Label -replace "[^A-Za-z0-9_.-]", "_"
+    $RuntimeFileName = "$SafeLabel.full-flow.yml"
+    $RuntimeHostPath = Join-Path $RuntimeDir $RuntimeFileName
+
+    $BaseFileName = Split-Path $ConfigPathHost -Leaf
+    if ($ConfigPathHost -like "config/experiments/*") {
+        $ExtendsPath = "../experiments/$BaseFileName"
+    }
+    else {
+        $ExtendsPath = "../base.yml"
+    }
+
+    $InfluxEnabled = if ($EnableInflux) { "true" } else { "false" }
+    $TimescaleEnabled = if ($EnableTimescale) { "true" } else { "false" }
+
+    $RuntimeConfig = @"
+extends: "$ExtendsPath"
+
+dashboard:
+  influx:
+    enabled: $InfluxEnabled
+  timescale:
+    enabled: $TimescaleEnabled
+"@
+
+    Set-Content -Path $RuntimeHostPath -Value $RuntimeConfig -Encoding UTF8
+
+    return @{
+        HostPath = $RuntimeHostPath
+        ContainerPath = "/config/runtime/$RuntimeFileName"
+    }
+}
+
+function Get-DashboardProfileArgs {
+    param(
+        [Parameter(Mandatory = $true)]
+        [bool]$EnableInflux,
+
+        [Parameter(Mandatory = $true)]
+        [bool]$EnableTimescale
+    )
+
+    $ProfileArgs = @()
+
+    if ($EnableInflux) {
+        $ProfileArgs += @("--profile", "dashboard-influx")
+    }
+
+    if ($EnableTimescale) {
+        $ProfileArgs += @("--profile", "dashboard-timescale")
+    }
+
+    return $ProfileArgs
+}
+
+function Start-DashboardStack {
+    param(
+        [Parameter(Mandatory = $true)]
+        [bool]$EnableInflux,
+
+        [Parameter(Mandatory = $true)]
+        [bool]$EnableTimescale
+    )
+
+    $ProfileArgs = Get-DashboardProfileArgs `
+        -EnableInflux $EnableInflux `
+        -EnableTimescale $EnableTimescale
+
+    Write-Host ""
+    Write-Host "Starting infrastructure/dashboard profiles..."
+    Write-Host ("Profiles: " + ($ProfileArgs -join " "))
+
+    Invoke-Checked {
+        docker compose @ProfileArgs up -d
+    }
+}
+
+function Reset-KafkaTopic {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Topic
+    )
+
+    Invoke-Checked {
+        docker exec kafka /opt/kafka/bin/kafka-topics.sh `
+            --bootstrap-server kafka:9092 `
+            --delete `
+            --topic $Topic `
+            --if-exists
+    }
+}
+
+function Ensure-KafkaTopic {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Topic,
+
+        [int]$Partitions = 4,
+
+        [int]$ReplicationFactor = 1
+    )
+
+    Invoke-Checked {
+        docker exec kafka /opt/kafka/bin/kafka-topics.sh `
+            --bootstrap-server kafka:9092 `
+            --create `
+            --if-not-exists `
+            --topic $Topic `
+            --partitions $Partitions `
+            --replication-factor $ReplicationFactor
+    }
+}
+
+function Wait-TimescaleDb {
+    for ($Attempt = 1; $Attempt -le 30; $Attempt++) {
+        docker exec sabd2-timescaledb pg_isready -U sabd -d sabd | Out-Null
+
+        if ($LASTEXITCODE -eq 0) {
+            return
+        }
+
+        Start-Sleep -Seconds 2
+    }
+
+    throw "TimescaleDB non pronto dopo 60 secondi."
+}
+
+function Clear-TimescaleQ1Results {
+    Write-Host ""
+    Write-Host "Cleaning TimescaleDB q1_results..."
+
+    Wait-TimescaleDb
+
+    Invoke-Checked {
+        docker exec sabd2-timescaledb psql `
+            -U sabd `
+            -d sabd `
+            -c "TRUNCATE TABLE q1_results;"
+    }
+}
+
 Assert-ProjectRoot
 
 if ($MergeDelaySeconds -lt 0) {
     throw "MergeDelaySeconds non può essere negativo."
 }
+
+$EnableInflux = [bool]($FullFlow -or $DashboardInflux)
+$EnableTimescale = [bool]($FullFlow -or $DashboardTimescale)
+$DashboardEnabled = [bool]($EnableInflux -or $EnableTimescale)
 
 if ([string]::IsNullOrWhiteSpace($Exp)) {
     $CfgHost = "config/base.yml"
@@ -172,6 +351,20 @@ else {
     $MergeArgs = @("--exp", $Exp)
 }
 
+$SubmitCfgHost = $CfgHost
+$SubmitCfgContainer = $CfgContainer
+
+if ($DashboardEnabled) {
+    $RuntimeCfg = New-DashboardRuntimeConfig `
+        -ConfigPathHost $CfgHost `
+        -Label $Label `
+        -EnableInflux $EnableInflux `
+        -EnableTimescale $EnableTimescale
+
+    $SubmitCfgHost = $RuntimeCfg.HostPath
+    $SubmitCfgContainer = $RuntimeCfg.ContainerPath
+}
+
 $Q1ResultsHostPath = Get-Q1ResultsHostPath -ConfigPathHost $CfgHost
 
 Initialize-Q1ResultsDirectory `
@@ -182,19 +375,36 @@ Write-Host ""
 Write-Host "========================================"
 Write-Host "Running Q1 experiment: $Label"
 Write-Host "Config host         : $CfgHost"
-Write-Host "Config inside Docker: $CfgContainer"
+Write-Host "Submit config host  : $SubmitCfgHost"
+Write-Host "Config inside Docker: $SubmitCfgContainer"
+if ($DashboardEnabled) {
+    Write-Host "Dashboard InfluxDB  : $EnableInflux"
+    Write-Host "Dashboard Timescale : $EnableTimescale"
+}
+else {
+    Write-Host "Dashboard sinks     : disabled"
+}
 Write-Host "========================================"
 Write-Host ""
+
+if ($DashboardEnabled) {
+    Start-DashboardStack `
+        -EnableInflux $EnableInflux `
+        -EnableTimescale $EnableTimescale
+
+    if ($EnableTimescale -and -not $NoCleanDashboard) {
+        Clear-TimescaleQ1Results
+    }
+}
 
 if (-not $NoResetTopic) {
     Write-Host "Reset Kafka topic flights..."
 
-    Invoke-Checked {
-        docker exec kafka /opt/kafka/bin/kafka-topics.sh `
-            --bootstrap-server kafka:9092 `
-            --delete `
-            --topic flights `
-            --if-exists
+    Reset-KafkaTopic -Topic "flights"
+
+    if ($EnableInflux) {
+        Write-Host "Reset Kafka topic q1_results..."
+        Reset-KafkaTopic -Topic "q1_results"
     }
 
     Start-Sleep -Seconds 3
@@ -202,9 +412,17 @@ if (-not $NoResetTopic) {
     Invoke-Checked {
         docker compose run --rm kafka-init
     }
+
+    if ($EnableInflux) {
+        Ensure-KafkaTopic -Topic "q1_results" -Partitions 4 -ReplicationFactor 1
+    }
 }
 else {
     Write-Host "Kafka topic reset skipped."
+
+    if ($EnableInflux) {
+        Ensure-KafkaTopic -Topic "q1_results" -Partitions 4 -ReplicationFactor 1
+    }
 }
 
 if (-not $NoPreprocess) {
@@ -227,7 +445,7 @@ Write-Host "Submitting Flink Q1 job..."
 
 Invoke-Checked {
     docker compose run --rm `
-        -e CONFIG_PATH=$CfgContainer `
+        -e CONFIG_PATH=$SubmitCfgContainer `
         flink-job-q1
 }
 
@@ -236,7 +454,7 @@ Write-Host "Running producer..."
 
 Invoke-Checked {
     docker compose run --rm `
-        -e CONFIG_PATH=$CfgContainer `
+        -e CONFIG_PATH=$SubmitCfgContainer `
         producer
 }
 

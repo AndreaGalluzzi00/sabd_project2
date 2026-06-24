@@ -34,11 +34,19 @@ def _load_yaml_file(config_path: Path) -> dict[str, Any]:
         return yaml.safe_load(file) or {}
 
 
-def load_config() -> dict[str, Any]:
-    config_path = Path(os.getenv("CONFIG_PATH", DEFAULT_CONFIG_PATH)).resolve()
+def _load_config_with_extends(
+    config_path: Path,
+    seen: set[Path] | None = None,
+) -> dict[str, Any]:
+    config_path = config_path.resolve()
+    seen = set() if seen is None else set(seen)
 
+    if config_path in seen:
+        chain = " -> ".join(str(path) for path in [*seen, config_path])
+        raise ValueError(f"Cyclic config extends detected: {chain}")
+
+    seen.add(config_path)
     cfg = _load_yaml_file(config_path)
-
     extends_path = cfg.pop("extends", None)
 
     if extends_path is None:
@@ -49,6 +57,15 @@ def load_config() -> dict[str, Any]:
     if not extends_path.is_absolute():
         extends_path = config_path.parent / extends_path
 
-    base_cfg = _load_yaml_file(extends_path.resolve())
+    base_cfg = _load_config_with_extends(
+        config_path=extends_path,
+        seen=seen,
+    )
 
     return deep_merge(base_cfg, cfg)
+
+
+def load_config() -> dict[str, Any]:
+    config_path = Path(os.getenv("CONFIG_PATH", DEFAULT_CONFIG_PATH)).resolve()
+
+    return _load_config_with_extends(config_path)
