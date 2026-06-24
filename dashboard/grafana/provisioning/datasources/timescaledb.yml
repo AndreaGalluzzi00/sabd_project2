@@ -1,0 +1,18 @@
+# Datasource TimescaleDB (Postgres + estensione time-series) provisionato.
+# Va in errore solo se il container timescaledb non è attivo (profilo non avviato).
+apiVersion: 1
+
+datasources:
+  - name: TimescaleDB
+    type: postgres
+    uid: timescaledb-flights
+    access: proxy
+    url: timescaledb:5432
+    user: sabd
+    jsonData:
+      database: sabd
+      sslmode: disable
+      timescaledb: true
+      postgresVersion: 1600
+    secureJsonData:
+      password: sabd

@@ -34,15 +34,38 @@ class Q1Config(FlinkRuntimeConfig):
     results_path: str
     watermark_delay_seconds: int
 
+    # Optional live dashboard sinks (Grafana). Two independent backends:
+    #   - InfluxDB via Kafka -> Telegraf
+    #   - TimescaleDB via native Flink JDBC sink
+    # Both disabled by default so the certified CSV pipeline runs unchanged.
+    influx_enabled: bool
+    influx_results_topic: str
+
+    timescale_enabled: bool
+    timescale_url: str
+    timescale_table: str
+    timescale_username: str
+    timescale_password: str
+
 
 def load_q1_config() -> Q1Config:
     cfg = load_config()
     flink_cfg = build_flink_runtime_config(cfg)
+    dashboard_cfg = cfg.get("dashboard", {})
+    influx_cfg = dashboard_cfg.get("influx", {})
+    timescale_cfg = dashboard_cfg.get("timescale", {})
 
     return Q1Config(
         **asdict(flink_cfg),
         results_path=cfg["paths"]["q1_results_path"],
         watermark_delay_seconds=int(cfg["q1"]["watermark_delay_seconds"]),
+        influx_enabled=bool(influx_cfg.get("enabled", False)),
+        influx_results_topic=str(influx_cfg.get("results_topic", "q1_results")),
+        timescale_enabled=bool(timescale_cfg.get("enabled", False)),
+        timescale_url=str(timescale_cfg.get("url", "")),
+        timescale_table=str(timescale_cfg.get("table", "q1_results")),
+        timescale_username=str(timescale_cfg.get("username", "")),
+        timescale_password=str(timescale_cfg.get("password", "")),
     )
 
 def sql_watermark_interval(seconds: int) -> str:
@@ -125,14 +148,16 @@ def main() -> None:
         )
     """)
 
-    # ── Q1 aggregation ───────────────────────────────────────────────────────
+    # ── Q1 aggregation (single source of truth for every sink) ───────────────
+    # Computed once as a view. The CSV sink (certified output) and the optional
+    # Kafka sink (dashboard) both read identical rows from it, so the live
+    # dashboard can never diverge from the delivered CSV.
     # Watermark semantics:
     #   - COALESCE(cancelled, 0.0) treats missing values as "not cancelled"
     #   - AVG ignores NULL dep_delay rows automatically (standard SQL)
     #   - dep_delay > 15 is FALSE for NULL dep_delay (treated as not late)
-    logger.info("Q1 | Submitting job …")
     t_env.execute_sql("""
-        INSERT INTO q1_results
+        CREATE TEMPORARY VIEW q1_agg AS
         SELECT
             window_start,
             window_end,
@@ -167,6 +192,83 @@ def main() -> None:
         WHERE airline IN ('AA', 'DL', 'UA', 'WN')
         GROUP BY window_start, window_end, airline
     """)
+
+    # ── Optional dashboard sink #1: InfluxDB via Kafka topic ─────────────────
+    # Append-only (windowing TVF output), so the plain 'kafka' connector applies.
+    # Telegraf consumes this topic and ships it to InfluxDB. Timestamps use the
+    # SQL standard ('2025-01-01 08:00:00'); window bounds fall on whole seconds.
+    if q1_cfg.influx_enabled:
+        logger.info(
+            "Q1 | InfluxDB sink ENABLED → Kafka topic '%s'",
+            q1_cfg.influx_results_topic,
+        )
+        t_env.execute_sql(f"""
+            CREATE TABLE q1_results_kafka (
+                window_start        TIMESTAMP(3),
+                window_end          TIMESTAMP(3),
+                airline             STRING,
+                num_flights         BIGINT,
+                completed           BIGINT,
+                cancelled           BIGINT,
+                diverted            BIGINT,
+                dep_delay_mean      DOUBLE,
+                cancellation_rate   DOUBLE,
+                late_departure_rate DOUBLE
+            ) WITH (
+                'connector'                     = 'kafka',
+                'topic'                         = '{q1_cfg.influx_results_topic}',
+                'properties.bootstrap.servers'  = '{q1_cfg.kafka_bootstrap}',
+                'format'                        = 'json',
+                'json.timestamp-format.standard' = 'SQL'
+            )
+        """)
+
+    # ── Optional dashboard sink #2: TimescaleDB via native JDBC ──────────────
+    # PRIMARY KEY (window_start, airline) NOT ENFORCED → the JDBC connector runs
+    # in upsert mode (INSERT ... ON CONFLICT DO UPDATE), so re-running the job is
+    # idempotent. The target table must already exist (see dashboard/timescaledb).
+    if q1_cfg.timescale_enabled:
+        logger.info(
+            "Q1 | TimescaleDB sink ENABLED → %s (table '%s')",
+            q1_cfg.timescale_url,
+            q1_cfg.timescale_table,
+        )
+        t_env.execute_sql(f"""
+            CREATE TABLE q1_results_jdbc (
+                window_start        TIMESTAMP(3),
+                window_end          TIMESTAMP(3),
+                airline             STRING,
+                num_flights         BIGINT,
+                completed           BIGINT,
+                cancelled           BIGINT,
+                diverted            BIGINT,
+                dep_delay_mean      DOUBLE,
+                cancellation_rate   DOUBLE,
+                late_departure_rate DOUBLE,
+                PRIMARY KEY (window_start, airline) NOT ENFORCED
+            ) WITH (
+                'connector'  = 'jdbc',
+                'url'        = '{q1_cfg.timescale_url}',
+                'table-name' = '{q1_cfg.timescale_table}',
+                'username'   = '{q1_cfg.timescale_username}',
+                'password'   = '{q1_cfg.timescale_password}'
+            )
+        """)
+
+    if not (q1_cfg.influx_enabled or q1_cfg.timescale_enabled):
+        logger.info("Q1 | Dashboard sinks disabled (CSV-only run).")
+
+    # ── Submit: CSV sink always, dashboard sinks only when enabled ───────────
+    # One StatementSet → one Flink job: the Kafka source is read once and the
+    # aggregation fans out to every sink (keeps the stop --drain / EOS workflow).
+    logger.info("Q1 | Submitting job …")
+    stmt_set = t_env.create_statement_set()
+    stmt_set.add_insert_sql("INSERT INTO q1_results SELECT * FROM q1_agg")
+    if q1_cfg.influx_enabled:
+        stmt_set.add_insert_sql("INSERT INTO q1_results_kafka SELECT * FROM q1_agg")
+    if q1_cfg.timescale_enabled:
+        stmt_set.add_insert_sql("INSERT INTO q1_results_jdbc SELECT * FROM q1_agg")
+    stmt_set.execute()
 
     logger.info("Q1 | Job submitted successfully.")
     sys.exit(0)

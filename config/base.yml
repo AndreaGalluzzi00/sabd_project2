@@ -73,3 +73,24 @@ spark:
 
 q1:
   watermark_delay_seconds: 180
+
+# Visualizzazione real-time su Grafana (Opzionale 1 della specifica).
+# Due backend ALTERNATIVI e indipendenti, attivabili uno, l'altro o entrambi:
+#   - influx:    Q1 -> topic Kafka -> Telegraf -> InfluxDB   (time-series nativo)
+#   - timescale: Q1 -> sink JDBC   -> TimescaleDB            (SQL, connettore Flink nativo)
+# Il sink CSV resta SEMPRE attivo: le dashboard sono consumatori paralleli e non
+# sostituiscono l'output certificato. Tutti i sink leggono la stessa vista q1_agg,
+# quindi CSV/InfluxDB/TimescaleDB non possono divergere.
+# Default: entrambi false → pipeline invariata.
+dashboard:
+  influx:
+    enabled: false
+    # NB: con enabled=true il topic DEVE esistere (vedi servizio dashboard-init).
+    results_topic: "q1_results"
+  timescale:
+    enabled: false
+    # NB: con enabled=true la tabella DEVE esistere (init in dashboard/timescaledb/).
+    url: "jdbc:postgresql://timescaledb:5432/sabd"
+    table: "q1_results"
+    username: "sabd"
+    password: "sabd"

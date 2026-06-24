@@ -248,9 +248,158 @@ services:
       - sabd-net
     restart: "no"
 
+  # ==========================================================
+  # DASHBOARD REAL-TIME (Opzionale 1)
+  # Due backend ALTERNATIVI, attivabili separatamente o insieme:
+  #
+  #   profile dashboard-influx     (time-series nativo)
+  #     Flink Q1 --(topic q1_results)--> Telegraf --> InfluxDB --> Grafana
+  #
+  #   profile dashboard-timescale  (SQL, sink JDBC nativo di Flink)
+  #     Flink Q1 --(JDBC)--> TimescaleDB --> Grafana
+  #
+  # Grafana è condiviso (in entrambi i profili) e provisiona entrambe le
+  # dashboard/datasource: confronto fianco a fianco per la presentazione.
+  #
+  #   docker compose --profile dashboard-influx up -d
+  #   docker compose --profile dashboard-timescale up -d
+  #   docker compose --profile dashboard-influx --profile dashboard-timescale up -d
+  #
+  # Grafana: http://localhost:3000 (admin/admin) · InfluxDB: :8086 (admin/admin12345)
+  # TimescaleDB: :5432 (sabd/sabd). Credenziali SOLO per uso locale/demo.
+  # ==========================================================
+
+  # ----------------------------------------------------------
+  # [D0] Crea il topic dei risultati Q1 consumato da Telegraf
+  # ----------------------------------------------------------
+  dashboard-init:
+    image: apache/kafka:3.7.0
+    container_name: dashboard-init
+    profiles: ["dashboard-influx"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: >
+      /opt/kafka/bin/kafka-topics.sh
+        --bootstrap-server kafka:9092
+        --create
+        --if-not-exists
+        --topic q1_results
+        --partitions 4
+        --replication-factor 1
+    networks:
+      - sabd-net
+    restart: "no"
+
+  # ----------------------------------------------------------
+  # [D1] InfluxDB 2.x - time-series store delle metriche di query
+  # Retention infinita (0s): l'event-time del replay è nel 2025,
+  # una retention finita scarterebbe i punti perché già "vecchi".
+  # ----------------------------------------------------------
+  influxdb:
+    image: influxdb:2.7
+    container_name: influxdb
+    profiles: ["dashboard-influx"]
+    ports:
+      - "8086:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=admin12345
+      - DOCKER_INFLUXDB_INIT_ORG=sabd
+      - DOCKER_INFLUXDB_INIT_BUCKET=flights
+      - DOCKER_INFLUXDB_INIT_RETENTION=0s
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=sabd-dev-token-please-change
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks:
+      - sabd-net
+
+  # ----------------------------------------------------------
+  # [D2] Telegraf - consuma q1_results da Kafka e scrive su InfluxDB
+  # ----------------------------------------------------------
+  telegraf:
+    image: telegraf:1.30
+    container_name: telegraf
+    profiles: ["dashboard-influx"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+    environment:
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=sabd-dev-token-please-change
+      - INFLUX_ORG=sabd
+      - INFLUX_BUCKET=flights
+    volumes:
+      - ./dashboard/telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+    networks:
+      - sabd-net
+    restart: unless-stopped
+
+  # ----------------------------------------------------------
+  # [D3] TimescaleDB - store SQL (Postgres + estensione time-series).
+  # L'init in /docker-entrypoint-initdb.d crea tabella + hypertable al
+  # primo avvio (il sink JDBC di Flink NON crea tabelle).
+  # ----------------------------------------------------------
+  timescaledb:
+    image: timescale/timescaledb:2.15.3-pg16
+    container_name: timescaledb
+    profiles: ["dashboard-timescale"]
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=sabd
+      - POSTGRES_PASSWORD=sabd
+      - POSTGRES_DB=sabd
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+      - ./dashboard/timescaledb/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sabd -d sabd"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks:
+      - sabd-net
+
+  # ----------------------------------------------------------
+  # [D4] Grafana - condiviso da entrambi i profili.
+  # Provisiona i due datasource (InfluxDB/Flux + TimescaleDB/SQL) e le due
+  # dashboard. Niente depends_on sui DB: un datasource non raggiungibile dà
+  # solo errore sui pannelli relativi, non blocca l'avvio.
+  # ----------------------------------------------------------
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: grafana
+    profiles: ["dashboard-influx", "dashboard-timescale"]
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./dashboard/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./dashboard/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - sabd-net
+
 volumes:
   kafka_data:
   prepared:
+  influxdb_data:
+  grafana_data:
+  timescaledb_data:
 
 networks:
   sabd-net:
