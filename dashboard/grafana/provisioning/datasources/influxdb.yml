@@ -1,0 +1,18 @@
+# Datasource InfluxDB (Flux) provisionato automaticamente.
+# Il token DEVE coincidere con DOCKER_INFLUXDB_INIT_ADMIN_TOKEN del servizio influxdb.
+apiVersion: 1
+
+datasources:
+  - name: InfluxDB
+    type: influxdb
+    uid: influxdb-flights
+    access: proxy
+    url: http://influxdb:8086
+    isDefault: true
+    jsonData:
+      version: Flux
+      organization: sabd
+      defaultBucket: flights
+      tlsSkipVerify: true
+    secureJsonData:
+      token: sabd-dev-token-please-change
