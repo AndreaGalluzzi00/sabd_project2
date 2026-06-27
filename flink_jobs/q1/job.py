@@ -120,9 +120,10 @@ def main() -> None:
             'topic'                        = '{q1_cfg.kafka_topic}',
             'properties.bootstrap.servers' = '{q1_cfg.kafka_bootstrap}',
             'properties.group.id'          = '{q1_cfg.kafka_consumer_group}',
-            'scan.startup.mode'            = 'earliest-offset',
-            'format'                       = 'json',
-            'json.ignore-parse-errors'     = 'true'
+            'scan.startup.mode'                        = 'earliest-offset',
+            'format'                                   = 'avro-confluent',
+            'avro-confluent.schema-registry.url'       = 'http://schema-registry:8081',
+            'avro-confluent.schema-registry.subject'   = 'flights-value'
         )
     """)
 
@@ -134,8 +135,8 @@ def main() -> None:
             airline             STRING,
             num_flights         BIGINT,
             completed           BIGINT,
-            cancelled_count     BIGINT,
-            diverted_count      BIGINT,
+            cancelled           BIGINT,
+            diverted            BIGINT,
             dep_delay_mean      DOUBLE,
             cancellation_rate   DOUBLE,
             late_departure_rate DOUBLE
@@ -149,6 +150,14 @@ def main() -> None:
     """)
 
     # ── Q1 aggregation (single source of truth for every sink) ───────────────
+    # Filter the target airlines before windowing so Flink does not assign
+    # events from irrelevant carriers to tumbling windows only to discard them.
+    t_env.execute_sql("""
+        CREATE TEMPORARY VIEW flights_q1 AS
+        SELECT * FROM flights
+        WHERE airline IN ('AA', 'DL', 'UA', 'WN')
+    """)
+
     # Computed once as a view. The CSV sink (certified output) and the optional
     # Kafka sink (dashboard) both read identical rows from it, so the live
     # dashboard can never diverge from the delivered CSV.
@@ -168,9 +177,9 @@ def main() -> None:
             COUNT(*) FILTER (WHERE COALESCE(cancelled, 0.0) < 0.5
                              AND   COALESCE(diverted,  0.0) < 0.5) AS completed,
 
-            COUNT(*) FILTER (WHERE COALESCE(cancelled, 0.0) >= 0.5) AS cancelled_count,
+            COUNT(*) FILTER (WHERE COALESCE(cancelled, 0.0) >= 0.5) AS cancelled,
 
-            COUNT(*) FILTER (WHERE COALESCE(diverted,  0.0) >= 0.5) AS diverted_count,
+            COUNT(*) FILTER (WHERE COALESCE(diverted,  0.0) >= 0.5) AS diverted,
 
             -- Mean dep_delay of non-cancelled flights (AVG skips NULLs)
             AVG(dep_delay) FILTER (WHERE COALESCE(cancelled, 0.0) < 0.5) AS dep_delay_mean,
@@ -187,9 +196,8 @@ def main() -> None:
                 AS late_departure_rate
 
         FROM TABLE(
-            TUMBLE(TABLE flights, DESCRIPTOR(rowtime), INTERVAL '1' HOUR)
+            TUMBLE(TABLE flights_q1, DESCRIPTOR(rowtime), INTERVAL '1' HOUR)
         )
-        WHERE airline IN ('AA', 'DL', 'UA', 'WN')
         GROUP BY window_start, window_end, airline
     """)
 

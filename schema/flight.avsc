@@ -1,0 +1,24 @@
+{
+  "type": "record",
+  "name": "Flight",
+  "namespace": "it.uniroma2.sabd",
+  "fields": [
+    {"name": "event_time",          "type": "long"},
+    {"name": "year",                "type": "int"},
+    {"name": "month",               "type": "int"},
+    {"name": "day_of_month",        "type": "int"},
+    {"name": "airline",             "type": "string"},
+    {"name": "origin_airport_id",   "type": "int"},
+    {"name": "dest_airport_id",     "type": "int"},
+    {"name": "crs_dep_time",        "type": "int"},
+    {"name": "dep_delay",           "type": ["null", "double"], "default": null},
+    {"name": "arr_delay",           "type": ["null", "double"], "default": null},
+    {"name": "cancelled",           "type": ["null", "double"], "default": null},
+    {"name": "diverted",            "type": ["null", "double"], "default": null},
+    {"name": "carrier_delay",       "type": ["null", "double"], "default": null},
+    {"name": "weather_delay",       "type": ["null", "double"], "default": null},
+    {"name": "nas_delay",           "type": ["null", "double"], "default": null},
+    {"name": "security_delay",      "type": ["null", "double"], "default": null},
+    {"name": "late_aircraft_delay", "type": ["null", "double"], "default": null}
+  ]
+}
