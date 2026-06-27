@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import heapq
+import io
 import json
 import logging
 import random
+import struct
 import sys
 import time
 from dataclasses import dataclass
@@ -13,7 +15,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import fastavro
 import pandas as pd
+import requests
 from kafka import KafkaConsumer, KafkaProducer, TopicPartition
 from kafka.errors import KafkaError, NoBrokersAvailable
 
@@ -49,6 +53,14 @@ class ProducerConfig:
     kafka_topic: str
     prepared_path: Path
     producer_log_path: Path | None
+
+    # NiFi HTTP ingest endpoint
+    nifi_endpoint: str
+    http_batch_size: int
+
+    # Confluent Schema Registry (for Avro-encoded EOS markers)
+    schema_registry_url: str
+    schema_registry_subject: str
 
     acceleration_factor: float
     log_interval: int
@@ -101,11 +113,20 @@ def load_producer_config() -> ProducerConfig:
 
     random_seed = producer_cfg.get("random_seed")
 
+    nifi_cfg = cfg.get("nifi", {})
+    sr_cfg = cfg.get("schema_registry", {})
+
     producer_config = ProducerConfig(
         kafka_bootstrap_servers=kafka_cfg["bootstrap_servers"],
         kafka_topic=kafka_cfg["topic"],
         prepared_path=Path(paths_cfg["prepared_path"]),
         producer_log_path=Path(producer_log_path) if producer_log_path else None,
+
+        nifi_endpoint=str(nifi_cfg.get("endpoint", "http://nifi:9876/flights")),
+        http_batch_size=int(nifi_cfg.get("http_batch_size", 100)),
+
+        schema_registry_url=str(sr_cfg.get("url", "http://schema-registry:8081")),
+        schema_registry_subject=str(sr_cfg.get("subject", "flights-value")),
 
         acceleration_factor=float(producer_cfg["acceleration_factor"]),
         log_interval=int(producer_cfg["log_interval"]),
@@ -149,7 +170,7 @@ def load_prepared(path: Path, acceleration_factor: float) -> pd.DataFrame:
 
     logger.info("Loading prepared dataset %s …", path)
 
-    df = pd.read_parquet(path)
+    df = pd.read_csv(path)
     df = df.reset_index(drop=True)
 
     logger.info("Loaded %d prepared events", len(df))
@@ -206,6 +227,112 @@ def _row_to_payload(row: pd.Series) -> dict[str, Any]:
     }
 
 
+_CSV_HEADER = (
+    "event_time,year,month,day_of_month,airline,origin_airport_id,dest_airport_id,"
+    "crs_dep_time,dep_delay,arr_delay,cancelled,diverted,carrier_delay,weather_delay,"
+    "nas_delay,security_delay,late_aircraft_delay"
+)
+
+
+def _payload_to_csv_line(payload: dict[str, Any]) -> str:
+    def f(v):
+        return "" if v is None else str(v)
+    return ",".join([
+        f(payload["event_time"]),
+        f(payload["year"]),
+        f(payload["month"]),
+        f(payload["day_of_month"]),
+        str(payload["airline"]),
+        f(payload["origin_airport_id"]),
+        f(payload["dest_airport_id"]),
+        f(payload["crs_dep_time"]),
+        f(payload["dep_delay"]),
+        f(payload["arr_delay"]),
+        f(payload["cancelled"]),
+        f(payload["diverted"]),
+        f(payload["carrier_delay"]),
+        f(payload["weather_delay"]),
+        f(payload["nas_delay"]),
+        f(payload["security_delay"]),
+        f(payload["late_aircraft_delay"]),
+    ])
+
+
+def _post_csv_batch(
+    session: requests.Session,
+    nifi_endpoint: str,
+    lines: list[str],
+) -> None:
+    body = (_CSV_HEADER + "\n" + "\n".join(lines) + "\n").encode("utf-8")
+    for attempt in range(1, 4):
+        try:
+            resp = session.post(
+                nifi_endpoint,
+                data=body,
+                headers={"Content-Type": "text/plain"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            return
+        except Exception as exc:
+            if attempt < 3:
+                time.sleep(attempt)
+            else:
+                raise RuntimeError(
+                    f"NiFi POST failed after 3 attempts: {exc}"
+                ) from exc
+
+
+def _wait_for_nifi(
+    session: requests.Session,
+    nifi_endpoint: str,
+    max_retries: int = 60,
+    retry_interval: int = 5,
+) -> None:
+    for attempt in range(1, max_retries + 1):
+        try:
+            session.head(nifi_endpoint, timeout=5)
+            logger.info("NiFi ready at %s", nifi_endpoint)
+            return
+        except requests.exceptions.ConnectionError:
+            logger.warning(
+                "NiFi not reachable (attempt %d/%d) — retrying in %ds …",
+                attempt, max_retries, retry_interval,
+            )
+            if attempt < max_retries:
+                time.sleep(retry_interval)
+    raise RuntimeError(
+        f"NiFi endpoint {nifi_endpoint!r} not reachable after {max_retries} attempts"
+    )
+
+
+def _fetch_schema_info(
+    schema_registry_url: str,
+    subject: str,
+) -> tuple[int, Any]:
+    """Return (schema_id, parsed_schema) from Confluent Schema Registry."""
+    url = f"{schema_registry_url}/subjects/{subject}/versions/latest"
+    resp = requests.get(url, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+    schema_id: int = data["id"]
+    parsed_schema = fastavro.parse_schema(json.loads(data["schema"]))
+    return schema_id, parsed_schema
+
+
+def _encode_avro_confluent(
+    record: dict[str, Any],
+    schema_id: int,
+    parsed_schema: Any,
+) -> bytes:
+    """Encode a record as Confluent Avro wire format: magic + 4-byte ID + datum."""
+    buf = io.BytesIO()
+    buf.write(b"\x00")
+    buf.write(struct.pack(">I", schema_id))
+    fastavro.schemaless_writer(buf, parsed_schema, record)
+    return buf.getvalue()
+
+
 def create_producer(
     cfg: ProducerConfig,
     max_retries: int = 30,
@@ -215,7 +342,7 @@ def create_producer(
         try:
             producer = KafkaProducer(
                 bootstrap_servers=cfg.kafka_bootstrap_servers,
-                value_serializer=lambda value: json.dumps(value).encode("utf-8"),
+                value_serializer=lambda v: v,  # raw bytes; callers pre-encode
                 acks=cfg.kafka_acks,
                 retries=cfg.kafka_retries,
                 max_in_flight_requests_per_connection=(
@@ -293,7 +420,7 @@ def _sleep_until(wall_start: float, target_wall: float) -> None:
 
 
 def replay_events(
-    producer: KafkaProducer,
+    session: requests.Session,
     df: pd.DataFrame,
     cfg: ProducerConfig,
 ) -> None:
@@ -327,6 +454,7 @@ def replay_events(
     )
 
     held_buffer: list[tuple[float, int, dict[str, Any]]] = []
+    csv_batch: list[str] = []
 
     held_total = 0
     sent = 0
@@ -334,6 +462,11 @@ def replay_events(
 
     max_emitted_event_time = -1
     out_of_order_emitted = 0
+
+    def flush_batch() -> None:
+        if csv_batch:
+            _post_csv_batch(session, cfg.nifi_endpoint, csv_batch)
+            csv_batch.clear()
 
     def dispatch(payload: dict[str, Any]) -> None:
         nonlocal sent, max_emitted_event_time, out_of_order_emitted
@@ -345,13 +478,14 @@ def replay_events(
         else:
             max_emitted_event_time = event_time
 
-        producer.send(cfg.kafka_topic, value=payload)
+        csv_batch.append(_payload_to_csv_line(payload))
         sent += 1
 
-        if sent % cfg.flush_interval == 0:
-            producer.flush()
+        if len(csv_batch) >= cfg.http_batch_size:
+            flush_batch()
 
-        if sent % cfg.log_interval == 0:
+        if sent % cfg.flush_interval == 0:
+            flush_batch()
             elapsed = time.monotonic() - wall_start
             throughput = sent / elapsed if elapsed > 0 else 0.0
 
@@ -402,7 +536,7 @@ def replay_events(
         _sleep_until(wall_start, scheduled_wall)
         dispatch(delayed_payload)
 
-    producer.flush()
+    flush_batch()
 
     total = time.monotonic() - wall_start
     avg_throughput = sent / total if total > 0 else 0.0
@@ -433,7 +567,12 @@ END_OF_STREAM_EVENT_TIME_MS = int(
 
 
 def emit_end_of_stream_markers(producer: KafkaProducer, cfg: ProducerConfig) -> None:
-    """Append a future-dated marker as the last record of every partition."""
+    """Append a future-dated marker as the last record of every partition.
+
+    Encoded as Confluent Avro (magic byte + schema ID + binary datum) so Flink
+    can deserialise it with the avro-confluent format. The marker's airline field
+    is '__EOS__' which is excluded by all Flink queries.
+    """
     partitions = producer.partitions_for(cfg.kafka_topic)
 
     if not partitions:
@@ -445,15 +584,35 @@ def emit_end_of_stream_markers(producer: KafkaProducer, cfg: ProducerConfig) -> 
 
     producer.flush()
 
-    marker = {
+    schema_id, parsed_schema = _fetch_schema_info(
+        cfg.schema_registry_url,
+        cfg.schema_registry_subject,
+    )
+
+    eos_record: dict[str, Any] = {
         "event_time": END_OF_STREAM_EVENT_TIME_MS,
+        "year": 0,
+        "month": 0,
+        "day_of_month": 0,
         "airline": "__EOS__",
+        "origin_airport_id": 0,
+        "dest_airport_id": 0,
+        "crs_dep_time": 0,
+        "dep_delay": None,
+        "arr_delay": None,
         "cancelled": 1.0,
         "diverted": 1.0,
+        "carrier_delay": None,
+        "weather_delay": None,
+        "nas_delay": None,
+        "security_delay": None,
+        "late_aircraft_delay": None,
     }
 
+    encoded = _encode_avro_confluent(eos_record, schema_id, parsed_schema)
+
     for partition in sorted(partitions):
-        producer.send(cfg.kafka_topic, value=marker, partition=partition)
+        producer.send(cfg.kafka_topic, value=encoded, partition=partition)
 
     producer.flush()
 
@@ -519,11 +678,16 @@ def main() -> None:
         logger.error("Prepared dataset is empty — nothing to produce. Exiting.")
         sys.exit(1)
 
+    session = requests.Session()
+    _wait_for_nifi(session, cfg.nifi_endpoint)
+
+    # KafkaProducer is kept only for EOS markers (direct per-partition publish).
+    # Main data flow goes via NiFi HTTP → NiFi → Kafka (Avro).
     producer = create_producer(cfg)
 
     try:
         replay_events(
-            producer=producer,
+            session=session,
             df=df,
             cfg=cfg,
         )
@@ -535,6 +699,7 @@ def main() -> None:
             )
     finally:
         producer.close()
+        session.close()
 
     logger.info("Producer closed.")
 

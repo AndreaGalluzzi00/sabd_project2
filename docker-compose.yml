@@ -9,12 +9,16 @@
 #   docker compose run --rm kafka-init
 #   docker compose run --rm preprocess
 #   docker compose run --rm flink-job-q1
+#   docker compose run --rm flink-job-q1-ds
+#   docker compose run --rm flink-job-q2
 #   docker compose run --rm producer
 #
-# Chiusura pulita del job Q1, dopo che il producer ha finito:
+# Chiusura pulita dei job (dopo che il producer ha finito):
 #   docker exec flink-jobmanager flink list -r
-#   docker exec flink-jobmanager flink stop --drain -p /opt/flink/savepoints <JOB_ID>
+#   docker exec flink-jobmanager flink stop --drain -p /opt/flink/savepoints <JOB_ID_Q1>
+#   docker exec flink-jobmanager flink stop --drain -p /opt/flink/savepoints <JOB_ID_Q2>
 #   python scripts/merge_q1.py
+#   python scripts/merge_q2.py
 #
 # Configurazione applicativa:
 #   config/base.yml
@@ -70,6 +74,111 @@ services:
       start_period: 30s
     networks:
       - sabd-net
+
+  # ----------------------------------------------------------
+  # Confluent Schema Registry
+  # Manages Avro schemas; Flink avro-confluent format and NiFi
+  # AvroRecordSetWriter both resolve schemas from here.
+  # ----------------------------------------------------------
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.6.0
+    hostname: schema-registry
+    container_name: schema-registry
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8082:8081"
+    environment:
+      - SCHEMA_REGISTRY_HOST_NAME=schema-registry
+      - SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS=kafka:9092
+      - SCHEMA_REGISTRY_LISTENERS=http://0.0.0.0:8081
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/subjects || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 20s
+    networks:
+      - sabd-net
+
+  # ----------------------------------------------------------
+  # Schema Init: registers flight.avsc in Schema Registry
+  # Runs once at startup (restart: no).
+  # ----------------------------------------------------------
+  schema-init:
+    image: python:3.11-slim
+    container_name: schema-init
+    depends_on:
+      schema-registry:
+        condition: service_healthy
+    command: >
+      bash -c "
+        pip install --quiet requests &&
+        python -c \"import requests,sys; s=open('/schema/flight.avsc').read(); r=requests.post('http://schema-registry:8081/subjects/flights-value/versions',json={'schema':s},headers={'Content-Type':'application/vnd.schemaregistry.v1+json'}); print('Schema registered (or already exists). ID:',r.json().get('id','N/A')) if r.status_code in (200,409) else (print('ERROR:',r.status_code,r.text) or sys.exit(1))\"
+      "
+    volumes:
+      - ./schema:/schema:ro
+    networks:
+      - sabd-net
+    restart: "no"
+
+  # ----------------------------------------------------------
+  # Apache NiFi 1.16.3
+  # Receives CSV batches from the producer via HTTP (port 9876)
+  # and publishes Avro messages to Kafka.
+  # UI available at http://localhost:8180/nifi
+  # ----------------------------------------------------------
+  nifi:
+    image: apache/nifi:1.16.3
+    hostname: nifi
+    container_name: nifi
+    depends_on:
+      schema-registry:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8180:8080"   # NiFi UI (8080 inside container)
+      - "9876:9876"   # ListenHTTP ingest endpoint
+    environment:
+      - NIFI_WEB_HTTP_PORT=8080
+      - NIFI_WEB_HTTP_HOST=0.0.0.0
+      - SINGLE_USER_CREDENTIALS_USERNAME=admin
+      - SINGLE_USER_CREDENTIALS_PASSWORD=adminpassword
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/nifi-api/flow/status || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+    networks:
+      - sabd-net
+
+  # ----------------------------------------------------------
+  # NiFi Init: configures the NiFi flow via REST API
+  # Runs once after NiFi is healthy (restart: no).
+  # ----------------------------------------------------------
+  nifi-init:
+    build:
+      context: ./nifi
+      dockerfile: Dockerfile
+    container_name: nifi-init
+    depends_on:
+      nifi:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    environment:
+      - NIFI_BASE_URL=http://nifi:8080/nifi-api
+      - SCHEMA_REGISTRY_URL=http://schema-registry:8081
+      - KAFKA_BOOTSTRAP=kafka:9092
+      - KAFKA_TOPIC=flights
+      - NIFI_LISTEN_PORT=9876
+      - NIFI_LISTEN_PATH=/flights
+    networks:
+      - sabd-net
+    restart: "no"
 
   # ----------------------------------------------------------
   # Apache Flink - JobManager
@@ -141,8 +250,11 @@ services:
     environment:
       - KAFKA_CLUSTERS_0_NAME=sabd-cluster
       - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
+      - KAFKA_CLUSTERS_0_SCHEMAREGISTRY=http://schema-registry:8081
     depends_on:
       kafka:
+        condition: service_healthy
+      schema-registry:
         condition: service_healthy
     networks:
       - sabd-net
@@ -176,7 +288,7 @@ services:
     restart: "no"
 
   # ----------------------------------------------------------
-  # [2] Preprocessing: CSV -> Parquet ordinato per event_time
+  # [2] Preprocessing: CSV -> CSV ordinato per event_time
   # ----------------------------------------------------------
   preprocess:
     build:
@@ -227,7 +339,76 @@ services:
     restart: "no"
 
   # ----------------------------------------------------------
-  # [4] Producer: replay eventi su Kafka
+  # [3b] Flink Q1 DataStream: reimplementazione DataStream API
+  # Produce gli stessi risultati di flink-job-q1 in q1_ds/
+  # per confronto architetturale Table API vs DataStream API.
+  # ----------------------------------------------------------
+  flink-job-q1-ds:
+    build:
+      context: .
+      dockerfile: flink_jobs/Dockerfile
+    platform: linux/amd64
+    container_name: flink-job-q1-ds
+    profiles: ["manual"]
+    depends_on:
+      - flink-taskmanager
+    environment:
+      CONFIG_PATH: /config/base.yml
+    command: >
+      bash -c "
+        echo 'Waiting for Flink JobManager...' &&
+        until curl -sf http://flink-jobmanager:8081/overview > /dev/null; do sleep 2; done &&
+        echo 'Preparing Q1-DS output directory...' &&
+        python -c \"from pathlib import Path; from common.config import load_config; p = Path(load_config()['paths']['q1_ds_results_path']); p.mkdir(parents=True, exist_ok=True); print(f'Q1-DS output directory ready: {p}')\" &&
+        echo 'Submitting Q1-DS job (DataStream API)...' &&
+        flink run -d -m flink-jobmanager:8081 -py /opt/flink/jobs/q1/job_datastream.py
+      "
+    volumes:
+      - ./config:/config:ro
+      - ./Results:/opt/flink/results
+      - ./flink-savepoints:/opt/flink/savepoints
+      - ./flink-checkpoints:/opt/flink/checkpoints
+    networks:
+      - sabd-net
+    restart: "no"
+
+  # ----------------------------------------------------------
+  # [3c] Flink Q2: sottomette il job PyFlink al cluster
+  # ----------------------------------------------------------
+  flink-job-q2:
+    build:
+      context: .
+      dockerfile: flink_jobs/Dockerfile
+    platform: linux/amd64
+    container_name: flink-job-q2
+    profiles: ["manual"]
+    depends_on:
+      - flink-taskmanager
+    environment:
+      CONFIG_PATH: /config/base.yml
+    command: >
+      bash -c "
+        echo 'Waiting for Flink JobManager...' &&
+        until curl -sf http://flink-jobmanager:8081/overview > /dev/null; do sleep 2; done &&
+        echo 'Preparing Q2 output directories...' &&
+        python -c \"from pathlib import Path; from common.config import load_config; cfg=load_config()['paths']; [Path(cfg[k]).mkdir(parents=True,exist_ok=True) or print(f'Ready: {Path(cfg[k])}') for k in ['q2_results_path_1h','q2_results_path_6h','q2_results_path_global']]\" &&
+        echo 'Submitting Q2 job...' &&
+        flink run -d -m flink-jobmanager:8081 -py /opt/flink/jobs/q2/job.py
+      "
+    volumes:
+      - ./config:/config:ro
+      - ./Results:/opt/flink/results
+      - ./flink-savepoints:/opt/flink/savepoints
+      - ./flink-checkpoints:/opt/flink/checkpoints
+    networks:
+      - sabd-net
+    restart: "no"
+
+  # ----------------------------------------------------------
+  # [4] Producer: replay eventi su Kafka via NiFi
+  # Sends CSV batches to NiFi ListenHTTP; NiFi converts to Avro
+  # and publishes to Kafka. EOS markers go directly to Kafka
+  # (via kafka-python) in Confluent Avro format.
   # ----------------------------------------------------------
   producer:
     build:
@@ -238,6 +419,10 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      nifi-init:
+        condition: service_completed_successfully
+      schema-init:
+        condition: service_completed_successfully
     environment:
       CONFIG_PATH: /config/base.yml
     volumes:

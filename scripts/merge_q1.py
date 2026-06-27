@@ -25,7 +25,7 @@ from common.config import load_config  # noqa: E402
 
 HEADER = (
     "window_start,window_end,airline,num_flights,completed,"
-    "cancelled_count,diverted_count,dep_delay_mean,"
+    "cancelled,diverted,dep_delay_mean,"
     "cancellation_rate,late_departure_rate"
 )
 

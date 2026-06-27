@@ -10,10 +10,12 @@ RUN apt-get update -y && \
     rm -rf /var/lib/apt/lists/* && \
     ln -sf /usr/bin/python3 /usr/bin/python
 
-RUN pip3 install --no-cache-dir apache-flink==1.20.0 PyYAML
+RUN pip3 install --no-cache-dir --timeout 120 --retries 10 apache-flink==1.20.0 PyYAML
 
 RUN wget -q -P /opt/flink/lib/ \
-    https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kafka/3.4.0-1.20/flink-sql-connector-kafka-3.4.0-1.20.jar
+    https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kafka/3.4.0-1.20/flink-sql-connector-kafka-3.4.0-1.20.jar && \
+    wget -q -P /opt/flink/lib/ \
+    https://repo1.maven.org/maven2/org/apache/flink/flink-sql-avro-confluent-registry/1.20.0/flink-sql-avro-confluent-registry-1.20.0.jar
 
 # JDBC connector + PostgreSQL driver: usati dal sink opzionale verso TimescaleDB
 # (dashboard SQL alternativa a InfluxDB). Il jar 3.3.0-1.20 include il dialetto
@@ -26,5 +28,5 @@ RUN wget -q -P /opt/flink/lib/ \
 COPY common /opt/flink/jobs/common
 COPY flink_jobs /opt/flink/jobs
 
-ENV PYTHONPATH=/opt/flink/jobs
+ENV PYTHONPATH=/opt/flink/jobs:/opt/flink/jobs/q1:/opt/flink/jobs/q2
 ENV CONFIG_PATH=/config/base.yml

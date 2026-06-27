@@ -217,7 +217,7 @@ def load_and_prepare(
 
 def write_prepared(df: pd.DataFrame, prepared_path: Path) -> None:
     prepared_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(prepared_path, index=False)
+    df.to_csv(prepared_path, index=False)
 
     logger.info("Wrote %d prepared events → %s", len(df), prepared_path)
 

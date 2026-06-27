@@ -5,7 +5,7 @@ experiment:
 
 paths:
   raw_dataset_path: "/data/raw/project-2-data"
-  prepared_path: "/prepared/flights_prepared.parquet"
+  prepared_path: "/prepared/flights_prepared.csv"
 
 
   # Path visto dentro il container Flink
@@ -14,9 +14,35 @@ paths:
   q1_results_host_path: "Results/q1"
   q1_merged_output_host_path: "Results/q1.csv"
 
+  # Q1 DataStream API (job_datastream.py) – output separato per confronto
+  q1_ds_results_path: "/opt/flink/results/q1_ds"
+  q1_ds_results_host_path: "Results/q1_ds"
+  q1_ds_merged_output_host_path: "Results/q1_ds.csv"
+
+  # Q2 – tre finestre, tre directory di part-file e tre CSV finali
+  q2_results_path_1h:     "/opt/flink/results/q2/1h"
+  q2_results_path_6h:     "/opt/flink/results/q2/6h"
+  q2_results_path_global: "/opt/flink/results/q2/global"
+
+  q2_results_host_path_1h:     "Results/q2/1h"
+  q2_results_host_path_6h:     "Results/q2/6h"
+  q2_results_host_path_global: "Results/q2/global"
+
+  q2_merged_output_host_path_1h:     "Results/q2_1h.csv"
+  q2_merged_output_host_path_6h:     "Results/q2_6h.csv"
+  q2_merged_output_host_path_global: "Results/q2_global.csv"
+
 kafka:
   bootstrap_servers: "kafka:9092"
   topic: "flights"
+
+nifi:
+  endpoint: "http://nifi:9876/flights"
+  http_batch_size: 100
+
+schema_registry:
+  url: "http://schema-registry:8081"
+  subject: "flights-value"
 
 preprocessing:
   numeric_missing_policy: "null"  # "null" oppure "zero"
@@ -74,6 +100,12 @@ spark:
 q1:
   watermark_delay_seconds: 180
 
+q2:
+  # Ritardo massimo ammesso per eventi in ritardo (event time).
+  # Stesso valore di Q1: un holdback_delay di 120 s con distribuzione
+  # esponenziale (holdback_mean ~40 s) è coperto da 180 s con ampio margine.
+  watermark_delay_seconds: 180
+
 # Visualizzazione real-time su Grafana (Opzionale 1 della specifica).
 # Due backend ALTERNATIVI e indipendenti, attivabili uno, l'altro o entrambi:
 #   - influx:    Q1 -> topic Kafka -> Telegraf -> InfluxDB   (time-series nativo)
@@ -85,12 +117,20 @@ q1:
 dashboard:
   influx:
     enabled: false
-    # NB: con enabled=true il topic DEVE esistere (vedi servizio dashboard-init).
+    # NB: con enabled=true i topic DEVONO esistere (vedi servizio dashboard-init).
     results_topic: "q1_results"
+    q2:
+      topic_1h:     "q2_results_1h"
+      topic_6h:     "q2_results_6h"
+      topic_global: "q2_results_global"
   timescale:
     enabled: false
-    # NB: con enabled=true la tabella DEVE esistere (init in dashboard/timescaledb/).
+    # NB: con enabled=true le tabelle DEVONO esistere (init in dashboard/timescaledb/).
     url: "jdbc:postgresql://timescaledb:5432/sabd"
     table: "q1_results"
     username: "sabd"
     password: "sabd"
+    q2:
+      table_1h:     "q2_results_1h"
+      table_6h:     "q2_results_6h"
+      table_global: "q2_results_global"
