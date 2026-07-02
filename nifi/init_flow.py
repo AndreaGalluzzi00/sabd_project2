@@ -63,6 +63,47 @@ def _get_root_pg_id() -> str:
     return data["processGroupFlow"]["id"]
 
 
+def _list_controller_services(pg_id: str) -> list[dict]:
+    data = _nifi("GET", f"/flow/process-groups/{pg_id}/controller-services").json()
+    return data.get("controllerServices", [])
+
+
+def _list_processors(pg_id: str) -> list[dict]:
+    data = _nifi("GET", f"/process-groups/{pg_id}/processors").json()
+    return data.get("processors", [])
+
+
+def _list_connections(pg_id: str) -> list[dict]:
+    data = _nifi("GET", f"/process-groups/{pg_id}/connections").json()
+    return data.get("connections", [])
+
+
+def _find_component(
+    entities: list[dict],
+    name: str,
+    type_: str | None = None,
+) -> dict | None:
+    matches = []
+    for entity in entities:
+        component = entity.get("component", {})
+        if component.get("name") != name:
+            continue
+        if type_ is not None and component.get("type") != type_:
+            continue
+        matches.append(entity)
+
+    if len(matches) > 1:
+        type_label = f" of type {type_}" if type_ is not None else ""
+        logger.warning(
+            "Found %d existing NiFi component(s) named %s%s; reusing the first one.",
+            len(matches),
+            name,
+            type_label,
+        )
+
+    return matches[0] if matches else None
+
+
 def _create_controller_service(pg_id: str, type_: str, name: str, properties: dict) -> str:
     body = {
         "revision": {"version": 0},
@@ -76,9 +117,26 @@ def _create_controller_service(pg_id: str, type_: str, name: str, properties: di
     return data["id"]
 
 
+def _ensure_controller_service(pg_id: str, type_: str, name: str, properties: dict) -> str:
+    existing = _find_component(_list_controller_services(pg_id), name, type_)
+
+    if existing is not None:
+        service_id = existing["id"]
+        logger.info("Reusing controller service %s (%s)", name, service_id)
+        return service_id
+
+    logger.info("Creating controller service %s", name)
+    return _create_controller_service(pg_id, type_, name, properties)
+
+
 def _enable_controller_service(cs_id: str) -> None:
-    # Get current revision
     data = _nifi("GET", f"/controller-services/{cs_id}").json()
+    state = data["component"]["state"]
+
+    if state == "ENABLED":
+        logger.info("Controller service %s already enabled.", cs_id)
+        return
+
     version = data["revision"]["version"]
     body = {
         "revision": {"version": version},
@@ -108,7 +166,53 @@ def _create_processor(pg_id: str, type_: str, name: str, properties: dict, posit
     return data["id"]
 
 
+def _ensure_processor(
+    pg_id: str,
+    type_: str,
+    name: str,
+    properties: dict,
+    position: dict,
+) -> str:
+    existing = _find_component(_list_processors(pg_id), name, type_)
+
+    if existing is not None:
+        proc_id = existing["id"]
+        logger.info("Reusing processor %s (%s)", name, proc_id)
+        return proc_id
+
+    logger.info("Creating processor %s", name)
+    return _create_processor(pg_id, type_, name, properties, position)
+
+
+def _connection_exists(
+    pg_id: str,
+    src_id: str,
+    dst_id: str,
+    relationships: list[str],
+) -> bool:
+    expected = set(relationships)
+
+    for entity in _list_connections(pg_id):
+        component = entity.get("component", {})
+        source = component.get("source", {})
+        destination = component.get("destination", {})
+        selected = set(component.get("selectedRelationships", []))
+
+        if (
+            source.get("id") == src_id
+            and destination.get("id") == dst_id
+            and expected.issubset(selected)
+        ):
+            return True
+
+    return False
+
+
 def _connect(pg_id: str, src_id: str, dst_id: str, relationships: list[str]) -> None:
+    if _connection_exists(pg_id, src_id, dst_id, relationships):
+        logger.info("Connection already exists; reusing it.")
+        return
+
     body = {
         "revision": {"version": 0},
         "component": {
@@ -124,6 +228,13 @@ def _auto_terminate(proc_id: str, relationships: list[str]) -> None:
     data = _nifi("GET", f"/processors/{proc_id}").json()
     version = data["revision"]["version"]
     config = data["component"]["config"]
+    existing = set(config.get("autoTerminatedRelationships", []))
+    desired = set(relationships)
+
+    if desired.issubset(existing):
+        logger.info("Processor %s already has terminal relationships configured.", proc_id)
+        return
+
     config["autoTerminatedRelationships"] = relationships
     body = {
         "revision": {"version": version},
@@ -134,6 +245,12 @@ def _auto_terminate(proc_id: str, relationships: list[str]) -> None:
 
 def _start_processor(proc_id: str) -> None:
     data = _nifi("GET", f"/processors/{proc_id}").json()
+    state = data["component"].get("state")
+
+    if state == "RUNNING":
+        logger.info("Processor %s already running.", proc_id)
+        return
+
     version = data["revision"]["version"]
     body = {
         "revision": {"version": version},
@@ -152,16 +269,16 @@ def main() -> None:
 
     # ── Controller services ───────────────────────────────────────────────────
 
-    logger.info("Creating ConfluentSchemaRegistry …")
-    sr_id = _create_controller_service(
+    logger.info("Ensuring ConfluentSchemaRegistry ...")
+    sr_id = _ensure_controller_service(
         pg_id,
         "org.apache.nifi.confluent.schemaregistry.ConfluentSchemaRegistry",
         "ConfluentSchemaRegistry",
         {"url": SCHEMA_REGISTRY_URL},
     )
 
-    logger.info("Creating CSVReader …")
-    csv_reader_id = _create_controller_service(
+    logger.info("Ensuring CSVReader ...")
+    csv_reader_id = _ensure_controller_service(
         pg_id,
         "org.apache.nifi.csv.CSVReader",
         "CSVReader",
@@ -173,8 +290,8 @@ def main() -> None:
         },
     )
 
-    logger.info("Creating AvroRecordSetWriter (Confluent) …")
-    avro_writer_id = _create_controller_service(
+    logger.info("Ensuring AvroRecordSetWriter (Confluent) ...")
+    avro_writer_id = _ensure_controller_service(
         pg_id,
         "org.apache.nifi.avro.AvroRecordSetWriter",
         "AvroRecordSetWriter",
@@ -196,8 +313,8 @@ def main() -> None:
 
     # ── Processors ────────────────────────────────────────────────────────────
 
-    logger.info("Creating ListenHTTP processor …")
-    listen_id = _create_processor(
+    logger.info("Ensuring ListenHTTP processor ...")
+    listen_id = _ensure_processor(
         pg_id,
         "org.apache.nifi.processors.standard.ListenHTTP",
         "ListenHTTP",
@@ -208,8 +325,8 @@ def main() -> None:
         {"x": 400, "y": 200},
     )
 
-    logger.info("Creating PublishKafkaRecord processor …")
-    publish_id = _create_processor(
+    logger.info("Ensuring PublishKafkaRecord processor ...")
+    publish_id = _ensure_processor(
         pg_id,
         "org.apache.nifi.processors.kafka.pubsub.PublishKafkaRecord_2_6",
         "PublishKafkaRecord",
