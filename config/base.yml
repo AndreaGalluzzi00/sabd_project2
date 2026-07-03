@@ -36,13 +36,6 @@ kafka:
   bootstrap_servers: "kafka:9092"
   topic: "flights"
 
-nifi:
-  endpoint: "http://nifi:9876/flights"
-  # Righe CSV per singola POST a ListenHTTP. La POST è sincrona (una sola in volo,
-  # preserva l'ordine di consegna): il costo fisso per richiesta (~12 ms) va
-  # ammortizzato su batch grandi. A 100 il replay saturava a ~6.6k ev/s.
-  http_batch_size: 1000
-
 schema_registry:
   url: "http://schema-registry:8081"
   subject: "flights-value"
