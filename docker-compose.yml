@@ -226,7 +226,8 @@ services:
       CONFIG_PATH: /config/base.yml
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
-        taskmanager.memory.process.size: 2048m
+        taskmanager.memory.process.size: 2560m
+        taskmanager.memory.jvm-metaspace.size: 512m
         taskmanager.numberOfTaskSlots: 4
         metrics.reporters: slf4j
         state.savepoints.dir: file:///opt/flink/savepoints

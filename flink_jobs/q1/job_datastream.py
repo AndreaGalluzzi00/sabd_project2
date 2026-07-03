@@ -163,19 +163,16 @@ class Q1WindowFunction(ProcessWindowFunction):
 
 
 # TypeInformation del Row emesso da Q1WindowFunction.
-# LOCAL_DATE_TIME ↔ TIMESTAMP_LTZ(3) nel bridge Java/Python di PyFlink.
-Q1_DS_OUTPUT_TYPE = Types.ROW([
-    Types.SQL_TIMESTAMP(),  # window_start
-    Types.SQL_TIMESTAMP(),  # window_end
-    Types.STRING(),           # airline
-    Types.LONG(),             # num_flights
-    Types.LONG(),             # completed
-    Types.LONG(),             # cancelled
-    Types.LONG(),             # diverted
-    Types.DOUBLE(),           # dep_delay_mean  (nullable)
-    Types.DOUBLE(),           # cancellation_rate
-    Types.DOUBLE(),           # late_departure_rate (nullable)
-])
+# LOCAL_DATE_TIME ↔ TIMESTAMP(3) nel bridge Java/Python di PyFlink.
+# ROW_NAMED è necessario: from_data_stream(Schema) risolve le colonne per nome.
+# Types.ROW([...]) produce campi anonimi f0/f1/... che causano ValidationException.
+Q1_DS_OUTPUT_TYPE = Types.ROW_NAMED(
+    ['window_start', 'window_end', 'airline', 'num_flights', 'completed',
+     'cancelled', 'diverted', 'dep_delay_mean', 'cancellation_rate', 'late_departure_rate'],
+    [Types.LOCAL_DATE_TIME(), Types.LOCAL_DATE_TIME(), Types.STRING(),
+     Types.LONG(), Types.LONG(), Types.LONG(), Types.LONG(),
+     Types.DOUBLE(), Types.DOUBLE(), Types.DOUBLE()],
+)
 
 
 # ── Avro tuple extractor ──────────────────────────────────────────────────────
@@ -279,8 +276,8 @@ def main() -> None:
     result_table = t_env.from_data_stream(
         result_ds,
         Schema.new_builder()
-            .column("window_start",        DataTypes.TIMESTAMP_LTZ(3))
-            .column("window_end",          DataTypes.TIMESTAMP_LTZ(3))
+            .column("window_start",        DataTypes.TIMESTAMP(3))
+            .column("window_end",          DataTypes.TIMESTAMP(3))
             .column("airline",             DataTypes.STRING())
             .column("num_flights",         DataTypes.BIGINT())
             .column("completed",           DataTypes.BIGINT())

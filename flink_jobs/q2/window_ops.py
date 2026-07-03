@@ -97,7 +97,7 @@ class Top10AllWindowFunction(ProcessAllWindowFunction):
 TOP10_OUTPUT_TYPE = Types.ROW_NAMED(
     ['ts', 'airport_rank', 'origin_airport_id', 'num_flights',
      'severe_delays', 'dep_delay_mean', 'dep_delay_max', 'delayed_flights'],
-    [Types.SQL_TIMESTAMP(), Types.LONG(), Types.INT(), Types.LONG(),
+    [Types.LOCAL_DATE_TIME(), Types.LONG(), Types.INT(), Types.LONG(),
      Types.LONG(), Types.DOUBLE(), Types.DOUBLE(), Types.STRING()],
 )
 

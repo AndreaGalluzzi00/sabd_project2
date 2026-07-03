@@ -226,6 +226,14 @@ def _connect(pg_id: str, src_id: str, dst_id: str, relationships: list[str]) -> 
 
 def _auto_terminate(proc_id: str, relationships: list[str]) -> None:
     data = _nifi("GET", f"/processors/{proc_id}").json()
+    state = data["component"].get("state")
+
+    # NiFi returns 400 if you try to update config of a RUNNING processor.
+    # If it's already running it was configured successfully in a previous init.
+    if state == "RUNNING":
+        logger.info("Processor %s is RUNNING; skipping auto-terminate update.", proc_id)
+        return
+
     version = data["revision"]["version"]
     config = data["component"]["config"]
     existing = set(config.get("autoTerminatedRelationships", []))
