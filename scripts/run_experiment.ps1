@@ -329,42 +329,6 @@ function Clear-RunningFlinkJobs {
     Start-Sleep -Seconds 5
 }
 
-function Reconcile-NifiFlow {
-    Write-Host ""
-    Write-Host "Reconciling NiFi flow (CSV HTTP -> Avro Confluent -> Kafka)..."
-
-    Invoke-Checked {
-        docker compose rm -sf nifi-init
-    }
-
-    Invoke-Checked {
-        docker compose up -d --build nifi-init
-    }
-
-    for ($Attempt = 1; $Attempt -le 60; $Attempt++) {
-        $Inspect = docker inspect -f "{{.State.Status}} {{.State.ExitCode}}" nifi-init 2>$null
-
-        if ($LASTEXITCODE -eq 0) {
-            $Parts = $Inspect.Trim().Split(" ")
-            $Status = $Parts[0]
-            $ExitCode = [int]$Parts[1]
-
-            if ($Status -eq "exited") {
-                if ($ExitCode -eq 0) {
-                    Write-Host "NiFi flow reconciled."
-                    return
-                }
-
-                throw "nifi-init failed with exit code $ExitCode. Check: docker logs nifi-init"
-            }
-        }
-
-        Start-Sleep -Seconds 2
-    }
-
-    throw "nifi-init did not finish within 120 seconds."
-}
-
 function Reset-KafkaTopic {
     param(
         [Parameter(Mandatory = $true)]
@@ -530,8 +494,6 @@ else {
         Ensure-KafkaTopic -Topic "q1_results" -Partitions 4 -ReplicationFactor 1
     }
 }
-
-Reconcile-NifiFlow
 
 if (-not $NoPreprocess) {
     Write-Host ""
