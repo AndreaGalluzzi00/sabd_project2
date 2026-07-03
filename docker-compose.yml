@@ -232,7 +232,7 @@ services:
         --if-not-exists
         --topic flights
         --partitions 4
-        --replication-factor 1
+        --replication-factor 2
         --config retention.ms=172800000
         --config max.message.bytes=2097152
     networks:
