@@ -2,36 +2,41 @@
 """
 Q1 – Real-time airline operational status monitoring (DataStream API).
 
-Reimplementazione di q1/job.py usando la DataStream API di PyFlink al posto
-della Table API / SQL.  Produce lo stesso schema CSV del job Table API così
-che merge_q1.py possa essere riusato puntando a q1_ds_results_host_path.
+Pure DataStream pipeline: no Table API, no external Avro library.
 
-Pipeline:
-    KafkaSource (JSON)
-      → map(parse_json)  → filter(airline ∈ AIRLINES)
-      → assign_timestamps_and_watermarks(BoundedOutOfOrderness)
-      → key_by(airline)
-      → window(TumblingEventTimeWindows 1h)
-      → aggregate(Q1AggFunction, Q1WindowFunction)
-      → from_data_stream()            ← torna a Table solo per il sink CSV
-      → filesystem CSV sink
+KafkaSource uses SimpleStringSchema("ISO-8859-1") to receive raw Kafka bytes
+as a Java String without data loss (ISO-8859-1 maps every byte 0-255 to the
+matching Unicode code point).  Python recovers the original bytes with
+str.encode('iso-8859-1') inside _AvroDeserializer.
 
-Output schema (identico a job.py):
+The Confluent Avro wire format (magic byte 0x00 + 4-byte big-endian schema_id
++ Avro binary payload) is decoded with a minimal pure-Python reader that
+follows the exact field order in schema/flight.avsc:
+
+    event_time (long), year (int), month (int), day_of_month (int),
+    airline (string), origin_airport_id (int), dest_airport_id (int),
+    crs_dep_time (int), dep_delay (["null","double"]),
+    arr_delay (["null","double"]), cancelled (["null","double"]),
+    diverted (["null","double"]), …
+
+Output schema (identical to job.py):
     window_start, window_end, airline, num_flights, completed, cancelled,
     diverted, dep_delay_mean, cancellation_rate, late_departure_rate
 """
 from __future__ import annotations
 
+import struct
 import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 
 from pyflink.common import Row, Types, WatermarkStrategy
+from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.time import Duration, Time
 from pyflink.datastream import StreamExecutionEnvironment
-from pyflink.datastream.functions import AggregateFunction, ProcessWindowFunction
+from pyflink.datastream.connectors.kafka import KafkaSource, KafkaOffsetsInitializer
+from pyflink.datastream.functions import AggregateFunction, MapFunction, ProcessWindowFunction
 from pyflink.datastream.window import TumblingEventTimeWindows
-from pyflink.table import DataTypes, Schema, StreamTableEnvironment
 
 from common.config import load_config
 from common.logging_utils import configure_logging
@@ -63,26 +68,119 @@ def load_q1_ds_config() -> Q1DSConfig:
     )
 
 
+# ── Pure-Python Avro binary decoder ──────────────────────────────────────────
+# Avro binary encoding rules used below:
+#   long / int  zigzag varint: 7 bits per byte (LSB first), MSB = continuation bit.
+#               ZigZag decode: (encoded >> 1) ^ -(encoded & 1)
+#   string      long (byte count) + raw UTF-8 bytes
+#   ["null","double"]
+#               varint branch index (0 = null; 1 → zigzag = 2 = double)
+#               + optional 8-byte little-endian IEEE 754 double
+
+def _avro_decode_varint(buf: bytes, pos: int):
+    """Decode a zigzag-encoded varint. Returns (value, new_pos)."""
+    b, shift = 0, 0
+    while True:
+        byte = buf[pos]; pos += 1
+        b |= (byte & 0x7F) << shift
+        shift += 7
+        if not (byte & 0x80):
+            break
+    return (b >> 1) ^ -(b & 1), pos
+
+
+def _avro_skip_varint(buf: bytes, pos: int) -> int:
+    """Skip a varint without decoding it; return the new position."""
+    while buf[pos] & 0x80:
+        pos += 1
+    return pos + 1
+
+
+def _avro_decode_string(buf: bytes, pos: int):
+    """Decode an Avro string (long byte-length + UTF-8). Returns (str, new_pos)."""
+    n, pos = _avro_decode_varint(buf, pos)
+    return buf[pos:pos + n].decode('utf-8'), pos + n
+
+
+def _avro_decode_nullable_double(buf: bytes, pos: int):
+    """Decode union ["null","double"]. Returns (float|None, new_pos)."""
+    branch, pos = _avro_decode_varint(buf, pos)
+    if branch == 0:          # null branch
+        return None, pos
+    # double branch (index 1, zigzag-encoded as 2)
+    return struct.unpack_from('<d', buf, pos)[0], pos + 8
+
+
+def _decode_flight_record(data: bytes):
+    """
+    Decode a Confluent Avro wire-format Flight record.
+
+    Wire format:  0x00 (magic byte)  |  4 bytes big-endian schema_id  |  Avro binary
+    Field order:  flight.avsc (it.uniroma2.sabd.Flight) — see module docstring.
+
+    Returns (event_time_ms, airline, dep_delay, cancelled, diverted) or None
+    if the message is malformed (wrong magic byte or too short).
+    """
+    if len(data) < 6 or data[0] != 0:
+        return None
+    pos = 5  # skip magic byte (1) + schema_id (4)
+
+    event_time, pos = _avro_decode_varint(data, pos)            # event_time : long
+    pos = _avro_skip_varint(data, pos)                          # year       : int
+    pos = _avro_skip_varint(data, pos)                          # month      : int
+    pos = _avro_skip_varint(data, pos)                          # day_of_month: int
+    airline,    pos = _avro_decode_string(data, pos)            # airline    : string
+    pos = _avro_skip_varint(data, pos)                          # origin_airport_id: int
+    pos = _avro_skip_varint(data, pos)                          # dest_airport_id  : int
+    pos = _avro_skip_varint(data, pos)                          # crs_dep_time     : int
+    dep_delay,  pos = _avro_decode_nullable_double(data, pos)   # dep_delay  : ["null","double"]
+    _,          pos = _avro_decode_nullable_double(data, pos)   # arr_delay  (skipped)
+    cancelled,  pos = _avro_decode_nullable_double(data, pos)   # cancelled  : ["null","double"]
+    diverted,   pos = _avro_decode_nullable_double(data, pos)   # diverted   : ["null","double"]
+
+    return event_time, airline, dep_delay, cancelled, diverted
+
+
+# ── Kafka+Avro deserializer MapFunction ──────────────────────────────────────
+
+class _AvroDeserializer(MapFunction):
+    """
+    Converts the ISO-8859-1 Java String (from SimpleStringSchema("ISO-8859-1"))
+    back to the original raw bytes, then decodes the Confluent Avro Flight record.
+
+    Returns (event_time_ms, airline, dep_delay, cancelled, diverted) or None.
+    Non-target airlines and EOS markers ('__EOS__') produce None.
+    Malformed records are silently dropped (return None).
+    """
+
+    def map(self, value: str):
+        try:
+            raw = value.encode('iso-8859-1')    # recover original Kafka bytes
+            result = _decode_flight_record(raw)
+            if result is None:
+                return None
+            event_time, airline, dep_delay, cancelled, diverted = result
+            if airline not in AIRLINES:         # filters EOS markers too
+                return None
+            return (event_time, airline, dep_delay, cancelled, diverted)
+        except Exception:
+            return None
+
+
 # ── Timestamp assigner ────────────────────────────────────────────────────────
 
 class FlightTimestampAssigner:
     """Duck-type timestamp assigner for PyFlink 1.20. Extracts event_time (ms) from tuple[0]."""
     def extract_timestamp(self, value, record_timestamp: int) -> int:
-        return value[0]  # event_time in millisecondi
+        return value[0]  # event_time in milliseconds
 
 
 # ── Accumulator ───────────────────────────────────────────────────────────────
-# Lista mutabile: [num_flights, completed, cancelled, diverted,
-#                  dep_delay_sum, dep_delay_count, late_departures, non_cancelled_count]
-# dep_delay_count e late_departures contano solo i voli non cancellati con dep_delay non nullo.
-# non_cancelled_count conta tutti i voli non cancellati (denominatore di late_departure_rate).
+# List layout: [num_flights, completed, cancelled, diverted,
+#               dep_delay_sum, dep_delay_count, late_departures, non_cancelled_count]
 
 class Q1AggFunction(AggregateFunction):
-    """
-    Aggregazione incrementale per finestra tumbling 1h.
-    Ogni chiamata ad add() aggiorna l'accumulatore con un singolo volo.
-    Serializzato come PICKLED_BYTE_ARRAY: Flink usa pickle Python per lo stato.
-    """
+    """Incremental aggregation for a 1-hour tumbling window."""
 
     def create_accumulator(self):
         return [0, 0, 0, 0, 0.0, 0, 0, 0]
@@ -101,7 +199,6 @@ class Q1AggFunction(AggregateFunction):
         if is_diverted:
             acc[3] += 1                              # diverted
 
-        # Solo voli non cancellati contribuiscono al ritardo
         if not is_cancelled:
             acc[7] += 1                              # non_cancelled_count
             if dep_delay is not None:
@@ -123,13 +220,8 @@ class Q1AggFunction(AggregateFunction):
 
 class Q1WindowFunction(ProcessWindowFunction):
     """
-    Riceve l'accumulatore finale per (finestra, airline) e emette un Row con
-    tutte le statistiche più i metadati window_start / window_end.
-
-    Semantica identica al GROUP BY + FILTER della Table API in job.py:
-      - dep_delay_mean:      AVG(dep_delay) sui non cancellati (None se 0 voli)
-      - cancellation_rate:   cancelled / num_flights * 100
-      - late_departure_rate: late_departures / non_cancelled_count * 100  (None se 0 non-cancellati)
+    Receives the final accumulator for (window, airline) and emits a Row with
+    all statistics plus window_start / window_end as epoch milliseconds (LONG).
     """
 
     def process(self, key: str, context: ProcessWindowFunction.Context, elements):
@@ -138,19 +230,14 @@ class Q1WindowFunction(ProcessWindowFunction):
             dep_delay_sum, dep_delay_count, late_departures, non_cancelled_count = acc
 
         window = context.window()
-        window_start = datetime.fromtimestamp(window.start / 1000.0, tz=timezone.utc) \
-                               .replace(tzinfo=None)   # naive UTC, coerente con LOCAL_DATE_TIME
-        window_end   = datetime.fromtimestamp(window.end   / 1000.0, tz=timezone.utc) \
-                               .replace(tzinfo=None)
-
-        dep_delay_mean      = dep_delay_sum / dep_delay_count if dep_delay_count > 0         else None
-        cancellation_rate   = cancelled / num_flights * 100.0  if num_flights > 0            else 0.0
+        dep_delay_mean      = dep_delay_sum / dep_delay_count if dep_delay_count > 0 else None
+        cancellation_rate   = cancelled / num_flights * 100.0 if num_flights > 0     else 0.0
         late_departure_rate = late_departures / non_cancelled_count * 100.0 \
                               if non_cancelled_count > 0 else None
 
         yield Row(
-            window_start,
-            window_end,
+            window.start,          # epoch ms (LONG) — avoids java.sql.Timestamp bridge
+            window.end,
             key,
             num_flights,
             completed,
@@ -162,38 +249,58 @@ class Q1WindowFunction(ProcessWindowFunction):
         )
 
 
-# TypeInformation del Row emesso da Q1WindowFunction.
-# LOCAL_DATE_TIME ↔ TIMESTAMP(3) nel bridge Java/Python di PyFlink.
-# ROW_NAMED è necessario: from_data_stream(Schema) risolve le colonne per nome.
-# Types.ROW([...]) produce campi anonimi f0/f1/... che causano ValidationException.
 Q1_DS_OUTPUT_TYPE = Types.ROW_NAMED(
     ['window_start', 'window_end', 'airline', 'num_flights', 'completed',
      'cancelled', 'diverted', 'dep_delay_mean', 'cancellation_rate', 'late_departure_rate'],
-    [Types.LOCAL_DATE_TIME(), Types.LOCAL_DATE_TIME(), Types.STRING(),
+    [Types.LONG(), Types.LONG(), Types.STRING(),
      Types.LONG(), Types.LONG(), Types.LONG(), Types.LONG(),
      Types.DOUBLE(), Types.DOUBLE(), Types.DOUBLE()],
 )
 
 
-# ── Avro tuple extractor ──────────────────────────────────────────────────────
+# ── CSV sink ─────────────────────────────────────────────────────────────────
 
-def _extract_flight_tuple(row):
+class _CsvWriter(MapFunction):
     """
-    Converte un Row proveniente dal Table source avro-confluent in una tupla
-    (event_time_ms, airline, dep_delay|None, cancelled|None, diverted|None).
-    Restituisce None per i marker EOS (airline='__EOS__') e per le compagnie
-    non di interesse.
+    MapFunction that writes each CSV row to part-{subtask_index}-{run_ts} and
+    re-emits the value unchanged (consumed by .print() as the mandatory sink).
+    Unique timestamped filenames avoid PermissionError on Windows Docker bind mounts
+    where previous-run files have a different UID.
     """
-    airline = row.airline
-    if not isinstance(airline, str) or airline not in AIRLINES:
-        return None
-    return (
-        int(row.event_time),
-        airline,
-        float(row.dep_delay)  if row.dep_delay  is not None else None,
-        float(row.cancelled)  if row.cancelled  is not None else None,
-        float(row.diverted)   if row.diverted   is not None else None,
-    )
+    def __init__(self, base_path: str):
+        self._base_path = base_path
+        self._file = None
+
+    def open(self, runtime_context):
+        import os
+        import time as _time
+        os.makedirs(self._base_path, exist_ok=True)
+        idx = runtime_context.get_index_of_this_subtask()
+        run_ts = int(_time.time())
+        self._file = open(
+            os.path.join(self._base_path, f"part-{idx}-{run_ts}"),
+            'w', encoding='utf-8',
+        )
+
+    def map(self, value):
+        self._file.write(value + '\n')
+        self._file.flush()
+        return value
+
+    def close(self):
+        if self._file:
+            self._file.close()
+
+
+# ── CSV formatter ────────────────────────────────────────────────────────────
+
+def _format_csv_row(row) -> str:
+    """Convert an output Row to a CSV string."""
+    ws = datetime.fromtimestamp(row[0] / 1000.0, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    we = datetime.fromtimestamp(row[1] / 1000.0, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    dep_mean  = '' if row[7] is None else str(row[7])
+    late_rate = '' if row[9] is None else str(row[9])
+    return f"{ws},{we},{row[2]},{row[3]},{row[4]},{row[5]},{row[6]},{dep_mean},{row[8]},{late_rate}"
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -207,48 +314,40 @@ def main() -> None:
     logger.info("Q1-DS | Parallelism: %d", cfg.parallelism)
     logger.info("Q1-DS | Watermark delay: %d s", cfg.watermark_delay_seconds)
 
-    # ── Ambiente ──────────────────────────────────────────────────────────────
-    env   = StreamExecutionEnvironment.get_execution_environment()
-    t_env = StreamTableEnvironment.create(env)          # usato solo per il sink CSV
-
+    env = StreamExecutionEnvironment.get_execution_environment()
     env.set_parallelism(cfg.parallelism)
     env.enable_checkpointing(cfg.checkpoint_interval_ms)
     env.get_config().set_auto_watermark_interval(cfg.auto_watermark_interval_ms)
 
-    # ── Kafka source via Table API (avro-confluent) ───────────────────────────
-    # La DataStream API non ha un deserializzatore Avro+SchemaRegistry nativo
-    # in PyFlink. Si usa la Table API per il source e si converte in DataStream.
-    t_env.execute_sql(f"""
-        CREATE TABLE flights_src (
-            event_time  BIGINT,
-            airline     STRING,
-            dep_delay   DOUBLE,
-            cancelled   DOUBLE,
-            diverted    DOUBLE
-        ) WITH (
-            'connector'                                = 'kafka',
-            'topic'                                    = '{cfg.kafka_topic}',
-            'properties.bootstrap.servers'             = '{cfg.kafka_bootstrap}',
-            'properties.group.id'                      = '{cfg.kafka_consumer_group}-ds',
-            'scan.startup.mode'                        = 'earliest-offset',
-            'format'                                   = 'avro-confluent',
-            'avro-confluent.schema-registry.url'       = 'http://schema-registry:8081',
-            'avro-confluent.schema-registry.subject'   = 'flights-value'
-        )
-    """)
+    # ── KafkaSource (raw bytes via ISO-8859-1 trick) ──────────────────────────
+    # SimpleStringSchema("ISO-8859-1") converts each Kafka message byte[i] to
+    # the Java char with code point == byte[i].  Because ISO-8859-1 is a bijection
+    # on 0-255, no byte information is lost.  The Python worker receives a str whose
+    # code points equal the original bytes; .encode('iso-8859-1') recovers them.
+    kafka_source = (
+        KafkaSource.builder()
+        .set_bootstrap_servers(cfg.kafka_bootstrap)
+        .set_topics(cfg.kafka_topic)
+        .set_group_id(cfg.kafka_consumer_group + "-ds")
+        .set_starting_offsets(KafkaOffsetsInitializer.earliest())
+        .set_value_only_deserializer(SimpleStringSchema("ISO-8859-1"))
+        .build()
+    )
 
-    raw_ds = t_env.to_data_stream(t_env.from_path("flights_src"))
+    raw_ds = env.from_source(
+        kafka_source,
+        WatermarkStrategy.no_watermarks(),
+        "KafkaSource[flights]",
+    )
 
-    # ── Extract tuple + filter ────────────────────────────────────────────────
+    # ── Avro decode + airline filter ─────────────────────────────────────────
     flights_ds = (
         raw_ds
-        .map(_extract_flight_tuple, output_type=Types.PICKLED_BYTE_ARRAY())
+        .map(_AvroDeserializer(), output_type=Types.PICKLED_BYTE_ARRAY())
         .filter(lambda v: v is not None)
     )
 
-    # ── Assegnazione timestamp e watermark ────────────────────────────────────
-    # BoundedOutOfOrderness con lo stesso delay del job Table API (q1.watermark_delay_seconds).
-    # FlightTimestampAssigner estrae event_time (ms) dalla tupla parsata.
+    # ── Watermark assignment ──────────────────────────────────────────────────
     watermark_strategy = (
         WatermarkStrategy
         .for_bounded_out_of_orderness(Duration.of_seconds(cfg.watermark_delay_seconds))
@@ -269,53 +368,16 @@ def main() -> None:
         )
     )
 
-    # ── Da DataStream a Table → sink CSV (filesystem connector) ──────────────
-    # Pattern identico a Q2: from_data_stream() riporta il risultato nel mondo
-    # Table API. Il sink filesystem è identico a quello del job Table API così
-    # che merge_q1.py possa processare i part-file senza modifiche.
-    result_table = t_env.from_data_stream(
-        result_ds,
-        Schema.new_builder()
-            .column("window_start",        DataTypes.TIMESTAMP(3))
-            .column("window_end",          DataTypes.TIMESTAMP(3))
-            .column("airline",             DataTypes.STRING())
-            .column("num_flights",         DataTypes.BIGINT())
-            .column("completed",           DataTypes.BIGINT())
-            .column("cancelled",           DataTypes.BIGINT())
-            .column("diverted",            DataTypes.BIGINT())
-            .column("dep_delay_mean",      DataTypes.DOUBLE())
-            .column("cancellation_rate",   DataTypes.DOUBLE())
-            .column("late_departure_rate", DataTypes.DOUBLE())
-            .build()
+    # ── CSV sink ──────────────────────────────────────────────────────────────
+    (
+        result_ds
+        .map(_format_csv_row, output_type=Types.STRING())
+        .map(_CsvWriter(cfg.results_path), output_type=Types.STRING())
+        .print()
     )
-    t_env.create_temporary_view("q1_ds_agg", result_table)
-
-    t_env.execute_sql(f"""
-        CREATE TABLE q1_ds_results (
-            window_start        TIMESTAMP(3),
-            window_end          TIMESTAMP(3),
-            airline             STRING,
-            num_flights         BIGINT,
-            completed           BIGINT,
-            cancelled           BIGINT,
-            diverted            BIGINT,
-            dep_delay_mean      DOUBLE,
-            cancellation_rate   DOUBLE,
-            late_departure_rate DOUBLE
-        ) WITH (
-            'connector'                              = 'filesystem',
-            'path'                                   = '{cfg.results_path}',
-            'format'                                 = 'csv',
-            'sink.rolling-policy.rollover-interval'  = '10 s',
-            'sink.rolling-policy.check-interval'     = '5 s'
-        )
-    """)
 
     logger.info("Q1-DS | Submitting job …")
-    stmt_set = t_env.create_statement_set()
-    stmt_set.add_insert_sql("INSERT INTO q1_ds_results SELECT * FROM q1_ds_agg")
-    stmt_set.execute()
-
+    env.execute("Q1-DS")
     logger.info("Q1-DS | Job submitted successfully.")
     sys.exit(0)
 

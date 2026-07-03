@@ -360,6 +360,7 @@ services:
         echo 'Waiting for Flink JobManager...' &&
         until curl -sf http://flink-jobmanager:8081/overview > /dev/null; do sleep 2; done &&
         echo 'Preparing Q1-DS output directory...' &&
+        rm -rf /opt/flink/results/q1_ds &&
         python -c \"from pathlib import Path; from common.config import load_config; p = Path(load_config()['paths']['q1_ds_results_path']); p.mkdir(parents=True, exist_ok=True); print(f'Q1-DS output directory ready: {p}')\" &&
         echo 'Submitting Q1-DS job (DataStream API)...' &&
         flink run -d -m flink-jobmanager:8081 -py /opt/flink/jobs/q1/job_datastream.py
