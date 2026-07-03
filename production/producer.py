@@ -205,25 +205,27 @@ def _nullable_value(value: Any) -> Any:
     return value
 
 
-def _row_to_payload(row: pd.Series) -> dict[str, Any]:
+def _row_to_payload(row: Any) -> dict[str, Any]:
+    # row è una namedtuple prodotta da df.itertuples(): accesso per attributo,
+    # senza il costo di costruzione delle pd.Series di iterrows.
     return {
-        "event_time": int(row["event_time"]),
-        "year": int(row.get("YEAR", 0)),
-        "month": int(row.get("MONTH", 0)),
-        "day_of_month": int(row.get("DAY_OF_MONTH", 0)),
-        "airline": str(row.get("OP_UNIQUE_CARRIER", "")),
-        "origin_airport_id": int(row.get("ORIGIN_AIRPORT_ID", 0)),
-        "dest_airport_id": int(row.get("DEST_AIRPORT_ID", 0)),
-        "crs_dep_time": int(row.get("CRS_DEP_TIME", 0)),
-        "dep_delay": _nullable_value(row.get("DEP_DELAY")),
-        "arr_delay": _nullable_value(row.get("ARR_DELAY")),
-        "cancelled": _nullable_value(row.get("CANCELLED")),
-        "diverted": _nullable_value(row.get("DIVERTED")),
-        "carrier_delay": _nullable_value(row.get("CARRIER_DELAY")),
-        "weather_delay": _nullable_value(row.get("WEATHER_DELAY")),
-        "nas_delay": _nullable_value(row.get("NAS_DELAY")),
-        "security_delay": _nullable_value(row.get("SECURITY_DELAY")),
-        "late_aircraft_delay": _nullable_value(row.get("LATE_AIRCRAFT_DELAY")),
+        "event_time": int(row.event_time),
+        "year": int(getattr(row, "YEAR", 0)),
+        "month": int(getattr(row, "MONTH", 0)),
+        "day_of_month": int(getattr(row, "DAY_OF_MONTH", 0)),
+        "airline": str(getattr(row, "OP_UNIQUE_CARRIER", "")),
+        "origin_airport_id": int(getattr(row, "ORIGIN_AIRPORT_ID", 0)),
+        "dest_airport_id": int(getattr(row, "DEST_AIRPORT_ID", 0)),
+        "crs_dep_time": int(getattr(row, "CRS_DEP_TIME", 0)),
+        "dep_delay": _nullable_value(getattr(row, "DEP_DELAY", None)),
+        "arr_delay": _nullable_value(getattr(row, "ARR_DELAY", None)),
+        "cancelled": _nullable_value(getattr(row, "CANCELLED", None)),
+        "diverted": _nullable_value(getattr(row, "DIVERTED", None)),
+        "carrier_delay": _nullable_value(getattr(row, "CARRIER_DELAY", None)),
+        "weather_delay": _nullable_value(getattr(row, "WEATHER_DELAY", None)),
+        "nas_delay": _nullable_value(getattr(row, "NAS_DELAY", None)),
+        "security_delay": _nullable_value(getattr(row, "SECURITY_DELAY", None)),
+        "late_aircraft_delay": _nullable_value(getattr(row, "LATE_AIRCRAFT_DELAY", None)),
     }
 
 
@@ -430,9 +432,7 @@ def replay_events(
         logger.warning("No events to replay.")
         return
 
-    event_times = df["event_time"].to_numpy()
-
-    first_ts = int(event_times[0])
+    first_ts = int(df["event_time"].iloc[0])
     wall_start = time.monotonic()
 
     # Out-of-orderness is simulated by delaying delivery, not by modifying
@@ -498,9 +498,9 @@ def replay_events(
                 throughput,
             )
 
-    for index, row in df.iterrows():
+    for row in df.itertuples(index=False):
         target_wall = (
-            (int(event_times[index]) - first_ts) / 1000.0
+            (int(row.event_time) - first_ts) / 1000.0
         ) / cfg.acceleration_factor
 
         while held_buffer and held_buffer[0][0] <= target_wall:
