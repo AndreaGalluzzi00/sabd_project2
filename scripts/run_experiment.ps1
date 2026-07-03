@@ -10,6 +10,8 @@ Prima esecuzione:
     docker exec flink-jobmanager flink list -r
     docker exec flink-jobmanager flink cancel <JOB_ID>
 
+    docker exec flink-jobmanager sh -lc '/opt/flink/bin/flink list -r | grep -Eo "[a-f0-9]{32}" | xargs -r -n1 /opt/flink/bin/flink cancel'
+
 Esecuzione con config base:
     .\scripts\run_experiment.ps1
 
@@ -72,6 +74,7 @@ Parametri disponibili:
     -DashboardInflux       Avvia/abilita solo InfluxDB via Kafka+Telegraf.
     -DashboardTimescale    Avvia/abilita solo TimescaleDB via JDBC.
     -NoCleanDashboard      Non pulisce lo stato dashboard prima della run.
+    -KeepFlinkJob          Non cancella il job Flink a fine esperimento.
 #>
 
 param(
@@ -87,8 +90,9 @@ param(
     [switch]$DashboardInflux,
     [switch]$DashboardTimescale,
     [switch]$NoCleanDashboard,
+    [switch]$KeepFlinkJob,
 
-    [int]$MergeDelaySeconds = 25
+    [int]$MergeDelaySeconds = 40
 )
 
 $ErrorActionPreference = "Stop"
@@ -163,7 +167,7 @@ function Initialize-Q1ResultsDirectory {
     New-Item -ItemType Directory -Force -Path $ResultsHostPath | Out-Null
 }
 
-function New-DashboardRuntimeConfig {
+function New-ExperimentRuntimeConfig {
     param(
         [Parameter(Mandatory = $true)]
         [string]$ConfigPathHost,
@@ -182,8 +186,10 @@ function New-DashboardRuntimeConfig {
     New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
 
     $SafeLabel = $Label -replace "[^A-Za-z0-9_.-]", "_"
-    $RuntimeFileName = "$SafeLabel.full-flow.yml"
+    $RunId = "$(Get-Date -Format 'yyyyMMddHHmmss')-$PID"
+    $RuntimeFileName = "$SafeLabel.$RunId.runtime.yml"
     $RuntimeHostPath = Join-Path $RuntimeDir $RuntimeFileName
+    $ConsumerGroup = "flink-flight-analysis-$SafeLabel-$RunId"
 
     $BaseFileName = Split-Path $ConfigPathHost -Leaf
     if ($ConfigPathHost -like "config/experiments/*") {
@@ -199,6 +205,9 @@ function New-DashboardRuntimeConfig {
     $RuntimeConfig = @"
 extends: "$ExtendsPath"
 
+flink:
+  consumer_group: "$ConsumerGroup"
+
 dashboard:
   influx:
     enabled: $InfluxEnabled
@@ -211,6 +220,7 @@ dashboard:
     return @{
         HostPath = $RuntimeHostPath
         ContainerPath = "/config/runtime/$RuntimeFileName"
+        ConsumerGroup = $ConsumerGroup
     }
 }
 
@@ -256,6 +266,103 @@ function Start-DashboardStack {
     Invoke-Checked {
         docker compose @ProfileArgs up -d
     }
+}
+
+function Test-DockerContainerRunning {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    $Names = @(docker ps --format "{{.Names}}")
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to inspect Docker containers."
+    }
+
+    return $Names -contains $Name
+}
+
+function Get-RunningFlinkJobIds {
+    if (-not (Test-DockerContainerRunning -Name "flink-jobmanager")) {
+        Write-Host "Flink JobManager not running; no existing jobs to cancel."
+        return @()
+    }
+
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $Output = @(docker exec flink-jobmanager flink list -r 2>&1)
+        $ExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $PreviousErrorActionPreference
+    }
+
+    if ($ExitCode -ne 0) {
+        Write-Warning "Unable to list running Flink jobs; continuing. Output: $($Output -join ' ')"
+        return @()
+    }
+
+    $Text = $Output -join "`n"
+    $Matches = [regex]::Matches($Text, "\b[a-f0-9]{32}\b")
+
+    return @($Matches | ForEach-Object { $_.Value } | Select-Object -Unique)
+}
+
+function Clear-RunningFlinkJobs {
+    $JobIds = @(Get-RunningFlinkJobIds)
+
+    if ($JobIds.Count -eq 0) {
+        Write-Host "No running Flink jobs to cancel."
+        return
+    }
+
+    Write-Host "Cancelling existing Flink job(s): $($JobIds -join ', ')"
+
+    foreach ($JobId in $JobIds) {
+        Invoke-Checked {
+            docker exec flink-jobmanager flink cancel $JobId
+        }
+    }
+
+    Start-Sleep -Seconds 5
+}
+
+function Reconcile-NifiFlow {
+    Write-Host ""
+    Write-Host "Reconciling NiFi flow (CSV HTTP -> Avro Confluent -> Kafka)..."
+
+    Invoke-Checked {
+        docker compose rm -sf nifi-init
+    }
+
+    Invoke-Checked {
+        docker compose up -d --build nifi-init
+    }
+
+    for ($Attempt = 1; $Attempt -le 60; $Attempt++) {
+        $Inspect = docker inspect -f "{{.State.Status}} {{.State.ExitCode}}" nifi-init 2>$null
+
+        if ($LASTEXITCODE -eq 0) {
+            $Parts = $Inspect.Trim().Split(" ")
+            $Status = $Parts[0]
+            $ExitCode = [int]$Parts[1]
+
+            if ($Status -eq "exited") {
+                if ($ExitCode -eq 0) {
+                    Write-Host "NiFi flow reconciled."
+                    return
+                }
+
+                throw "nifi-init failed with exit code $ExitCode. Check: docker logs nifi-init"
+            }
+        }
+
+        Start-Sleep -Seconds 2
+    }
+
+    throw "nifi-init did not finish within 120 seconds."
 }
 
 function Reset-KafkaTopic {
@@ -351,19 +458,15 @@ else {
     $MergeArgs = @("--exp", $Exp)
 }
 
-$SubmitCfgHost = $CfgHost
-$SubmitCfgContainer = $CfgContainer
+$RuntimeCfg = New-ExperimentRuntimeConfig `
+    -ConfigPathHost $CfgHost `
+    -Label $Label `
+    -EnableInflux $EnableInflux `
+    -EnableTimescale $EnableTimescale
 
-if ($DashboardEnabled) {
-    $RuntimeCfg = New-DashboardRuntimeConfig `
-        -ConfigPathHost $CfgHost `
-        -Label $Label `
-        -EnableInflux $EnableInflux `
-        -EnableTimescale $EnableTimescale
-
-    $SubmitCfgHost = $RuntimeCfg.HostPath
-    $SubmitCfgContainer = $RuntimeCfg.ContainerPath
-}
+$SubmitCfgHost = $RuntimeCfg.HostPath
+$SubmitCfgContainer = $RuntimeCfg.ContainerPath
+$RuntimeConsumerGroup = $RuntimeCfg.ConsumerGroup
 
 $Q1ResultsHostPath = Get-Q1ResultsHostPath -ConfigPathHost $CfgHost
 
@@ -377,6 +480,7 @@ Write-Host "Running Q1 experiment: $Label"
 Write-Host "Config host         : $CfgHost"
 Write-Host "Submit config host  : $SubmitCfgHost"
 Write-Host "Config inside Docker: $SubmitCfgContainer"
+Write-Host "Runtime consumer    : $RuntimeConsumerGroup"
 if ($DashboardEnabled) {
     Write-Host "Dashboard InfluxDB  : $EnableInflux"
     Write-Host "Dashboard Timescale : $EnableTimescale"
@@ -396,6 +500,8 @@ if ($DashboardEnabled) {
         Clear-TimescaleQ1Results
     }
 }
+
+Clear-RunningFlinkJobs
 
 if (-not $NoResetTopic) {
     Write-Host "Reset Kafka topic flights..."
@@ -425,12 +531,14 @@ else {
     }
 }
 
+Reconcile-NifiFlow
+
 if (-not $NoPreprocess) {
     Write-Host ""
     Write-Host "Running preprocessing with base config..."
 
     Invoke-Checked {
-        docker compose run --rm `
+        docker compose run --rm --build `
             -e CONFIG_PATH=/config/base.yml `
             preprocess
     }
@@ -444,7 +552,7 @@ Write-Host ""
 Write-Host "Submitting Flink Q1 job..."
 
 Invoke-Checked {
-    docker compose run --rm `
+    docker compose run --rm --build `
         -e CONFIG_PATH=$SubmitCfgContainer `
         flink-job-q1
 }
@@ -453,7 +561,7 @@ Write-Host ""
 Write-Host "Running producer..."
 
 Invoke-Checked {
-    docker compose run --rm `
+    docker compose run --rm --build `
         -e CONFIG_PATH=$SubmitCfgContainer `
         producer
 }
@@ -480,6 +588,16 @@ if (-not $NoMerge) {
 else {
     Write-Host ""
     Write-Host "Merge skipped."
+}
+
+if (-not $KeepFlinkJob) {
+    Write-Host ""
+    Write-Host "Cancelling Flink jobs after experiment..."
+    Clear-RunningFlinkJobs
+}
+else {
+    Write-Host ""
+    Write-Host "Flink job left running because -KeepFlinkJob was specified."
 }
 
 Write-Host ""

@@ -101,13 +101,13 @@ def main() -> None:
         print(f"No finalized part files found in {cfg.results_dir}")
         sys.exit(1)
 
-    print(f"Found {len(part_files)} part file(s) in {cfg.results_dir} — merging...")
+    print(f"Found {len(part_files)} part file(s) in {cfg.results_dir} - merging...")
 
     rows = read_rows(part_files)
     rows = sort_rows(rows)
     write_output(rows=rows, output_file=cfg.output_file)
 
-    print(f"Written {len(rows)} rows → {cfg.output_file}")
+    print(f"Written {len(rows)} rows -> {cfg.output_file}")
 
 
 if __name__ == "__main__":
