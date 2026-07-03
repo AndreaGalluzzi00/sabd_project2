@@ -367,7 +367,7 @@ def replay_events(
         cfg.holdback_distribution,
         int(cfg.holdback_delay),
     )
-
+    # Buffer degli eventi trattenuti
     held_buffer: list[tuple[float, int, dict[str, Any]]] = []
 
     held_total = 0
@@ -376,9 +376,6 @@ def replay_events(
 
     max_emitted_event_time = -1
     out_of_order_emitted = 0
-
-    def flush_batch() -> None:
-        producer.flush()
 
     def dispatch(payload: dict[str, Any]) -> None:
         nonlocal sent, max_emitted_event_time, out_of_order_emitted
@@ -395,7 +392,7 @@ def replay_events(
         sent += 1
 
         if sent % cfg.flush_interval == 0:
-            flush_batch()
+            producer.flush()
             elapsed = time.monotonic() - wall_start
             throughput = sent / elapsed if elapsed > 0 else 0.0
 
@@ -446,7 +443,7 @@ def replay_events(
         _sleep_until(wall_start, scheduled_wall)
         dispatch(delayed_payload)
 
-    flush_batch()
+    producer.flush()
 
     total = time.monotonic() - wall_start
     avg_throughput = sent / total if total > 0 else 0.0
