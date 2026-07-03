@@ -195,6 +195,7 @@ services:
     command: jobmanager
     environment:
       CONFIG_PATH: /config/base.yml
+      PYTHONPATH: /opt/flink/jobs:/opt/flink/jobs/q1:/opt/flink/jobs/q2:/opt/flink
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
         jobmanager.memory.process.size: 1600m
@@ -203,6 +204,8 @@ services:
         state.savepoints.dir: file:///opt/flink/savepoints
     volumes:
       - ./config:/config:ro
+      - ./flink_jobs:/opt/flink/jobs:ro
+      - ./common:/opt/flink/common:ro
       - ./Results:/opt/flink/results
       - ./flink-savepoints:/opt/flink/savepoints
       - ./flink-checkpoints:/opt/flink/checkpoints
@@ -224,6 +227,7 @@ services:
     command: taskmanager
     environment:
       CONFIG_PATH: /config/base.yml
+      PYTHONPATH: /opt/flink/jobs:/opt/flink/jobs/q1:/opt/flink/jobs/q2:/opt/flink
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
         taskmanager.memory.process.size: 2560m
@@ -233,6 +237,8 @@ services:
         state.savepoints.dir: file:///opt/flink/savepoints
     volumes:
       - ./config:/config:ro
+      - ./flink_jobs:/opt/flink/jobs:ro
+      - ./common:/opt/flink/common:ro
       - ./Results:/opt/flink/results
       - ./flink-savepoints:/opt/flink/savepoints
       - ./flink-checkpoints:/opt/flink/checkpoints
@@ -321,6 +327,7 @@ services:
       - flink-taskmanager
     environment:
       CONFIG_PATH: /config/base.yml
+      PYTHONPATH: /opt/flink/jobs:/opt/flink/jobs/q1:/opt/flink/jobs/q2:/opt/flink
     command: >
       bash -c "
         echo 'Waiting for Flink JobManager...' &&
@@ -332,6 +339,8 @@ services:
       "
     volumes:
       - ./config:/config:ro
+      - ./flink_jobs:/opt/flink/jobs:ro
+      - ./common:/opt/flink/common:ro
       - ./Results:/opt/flink/results
       - ./flink-savepoints:/opt/flink/savepoints
       - ./flink-checkpoints:/opt/flink/checkpoints
@@ -355,6 +364,7 @@ services:
       - flink-taskmanager
     environment:
       CONFIG_PATH: /config/base.yml
+      PYTHONPATH: /opt/flink/jobs:/opt/flink/jobs/q1:/opt/flink/jobs/q2:/opt/flink
     command: >
       bash -c "
         echo 'Waiting for Flink JobManager...' &&
@@ -366,6 +376,8 @@ services:
       "
     volumes:
       - ./config:/config:ro
+      - ./flink_jobs:/opt/flink/jobs:ro
+      - ./common:/opt/flink/common:ro
       - ./Results:/opt/flink/results
       - ./flink-savepoints:/opt/flink/savepoints
       - ./flink-checkpoints:/opt/flink/checkpoints
@@ -387,6 +399,7 @@ services:
       - flink-taskmanager
     environment:
       CONFIG_PATH: /config/base.yml
+      PYTHONPATH: /opt/flink/jobs:/opt/flink/jobs/q1:/opt/flink/jobs/q2:/opt/flink
     command: >
       bash -c "
         echo 'Waiting for Flink JobManager...' &&
@@ -398,6 +411,8 @@ services:
       "
     volumes:
       - ./config:/config:ro
+      - ./flink_jobs:/opt/flink/jobs:ro
+      - ./common:/opt/flink/common:ro
       - ./Results:/opt/flink/results
       - ./flink-savepoints:/opt/flink/savepoints
       - ./flink-checkpoints:/opt/flink/checkpoints
