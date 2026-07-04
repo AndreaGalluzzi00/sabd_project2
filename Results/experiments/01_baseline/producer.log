@@ -1,58 +1,481 @@
-2026-07-02 21:47:53,727 [INFO] Producer log   : /opt/flink/results/experiments/01_baseline/producer.log
-2026-07-02 21:47:53,727 [INFO] Random seed    : 42
-2026-07-02 21:47:53,727 [INFO] === Flight Event Producer ===
-2026-07-02 21:47:53,728 [INFO]  Prepared data : /prepared/flights_prepared.csv
-2026-07-02 21:47:53,728 [INFO]  Kafka brokers : kafka:9092
-2026-07-02 21:47:53,728 [INFO]  Topic         : flights
-2026-07-02 21:47:53,728 [INFO]  Acceleration  : 57600x
-2026-07-02 21:47:53,729 [INFO]  Flush every   : 5000 events
-2026-07-02 21:47:53,729 [INFO]  Log every     : 100000 events
-2026-07-02 21:47:53,729 [INFO]  Out-of-order  : disabled
-2026-07-02 21:47:53,729 [INFO]  End-of-stream : marker per partition
-2026-07-02 21:47:53,733 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=bootstrap-0 host=kafka:9092 <connecting> [IPv4 ('172.19.0.4', 9092)]>: connecting to kafka:9092 [('172.19.0.4', 9092) IPv4]
-2026-07-02 21:47:53,736 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=bootstrap-0 host=kafka:9092 <checking_api_versions_recv> [IPv4 ('172.19.0.4', 9092)]>: Broker version identified as 2.6
-2026-07-02 21:47:53,736 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=bootstrap-0 host=kafka:9092 <connected> [IPv4 ('172.19.0.4', 9092)]>: Connection complete.
-2026-07-02 21:47:53,740 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=1 host=kafka:9092 <connecting> [IPv4 ('172.19.0.4', 9092)]>: connecting to kafka:9092 [('172.19.0.4', 9092) IPv4]
-2026-07-02 21:47:53,740 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=1 host=kafka:9092 <connected> [IPv4 ('172.19.0.4', 9092)]>: Connection complete.
-2026-07-02 21:47:53,740 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=bootstrap-0 host=kafka:9092 <connected> [IPv4 ('172.19.0.4', 9092)]>: Closing connection. 
-2026-07-02 21:47:53,842 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=1 host=kafka:9092 <connected> [IPv4 ('172.19.0.4', 9092)]>: Closing connection. 
-2026-07-02 21:47:53,842 [INFO] Loading prepared dataset /prepared/flights_prepared.csv …
-2026-07-02 21:47:54,275 [INFO] Loaded 2229453 prepared events
-2026-07-02 21:47:54,278 [INFO] Event range: 2025-01-01 00:10:00+00:00 → 2025-04-30 23:59:00+00:00 (120.0 days)
-2026-07-02 21:47:54,278 [INFO] Estimated replay duration at 57600x: 3.0 minutes
-2026-07-02 21:47:54,280 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=bootstrap-0 host=kafka:9092 <connecting> [IPv4 ('172.19.0.4', 9092)]>: connecting to kafka:9092 [('172.19.0.4', 9092) IPv4]
-2026-07-02 21:47:54,282 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=bootstrap-0 host=kafka:9092 <checking_api_versions_recv> [IPv4 ('172.19.0.4', 9092)]>: Broker version identified as 2.6
-2026-07-02 21:47:54,282 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=bootstrap-0 host=kafka:9092 <connected> [IPv4 ('172.19.0.4', 9092)]>: Connection complete.
-2026-07-02 21:47:54,385 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=1 host=kafka:9092 <connecting> [IPv4 ('172.19.0.4', 9092)]>: connecting to kafka:9092 [('172.19.0.4', 9092) IPv4]
-2026-07-02 21:47:54,385 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=1 host=kafka:9092 <connected> [IPv4 ('172.19.0.4', 9092)]>: Connection complete.
-2026-07-02 21:47:54,386 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=bootstrap-0 host=kafka:9092 <connected> [IPv4 ('172.19.0.4', 9092)]>: Closing connection. 
-2026-07-02 21:47:54,387 [INFO] Connected to Kafka (kafka:9092), topic 'flights'
-2026-07-02 21:47:54,388 [INFO] Replay started: 2229453 events, factor=57600x, out-of-order prob=0.00, distribution=exponential, max delivery delay=120s (event time)
-2026-07-02 21:48:11,300 [INFO] Sent 100000 / 2229453  (4.5%)  elapsed=16.9s  throughput=5912 ev/s
-2026-07-02 21:48:26,608 [INFO] Sent 200000 / 2229453  (9.0%)  elapsed=32.2s  throughput=6207 ev/s
-2026-07-02 21:48:41,644 [INFO] Sent 300000 / 2229453  (13.5%)  elapsed=47.3s  throughput=6348 ev/s
-2026-07-02 21:48:56,456 [INFO] Sent 400000 / 2229453  (17.9%)  elapsed=62.1s  throughput=6444 ev/s
-2026-07-02 21:49:11,348 [INFO] Sent 500000 / 2229453  (22.4%)  elapsed=77.0s  throughput=6497 ev/s
-2026-07-02 21:49:26,099 [INFO] Sent 600000 / 2229453  (26.9%)  elapsed=91.7s  throughput=6542 ev/s
-2026-07-02 21:49:40,870 [INFO] Sent 700000 / 2229453  (31.4%)  elapsed=106.5s  throughput=6574 ev/s
-2026-07-02 21:49:55,675 [INFO] Sent 800000 / 2229453  (35.9%)  elapsed=121.3s  throughput=6596 ev/s
-2026-07-02 21:50:10,608 [INFO] Sent 900000 / 2229453  (40.4%)  elapsed=136.2s  throughput=6607 ev/s
-2026-07-02 21:50:25,614 [INFO] Sent 1000000 / 2229453  (44.9%)  elapsed=151.2s  throughput=6612 ev/s
-2026-07-02 21:50:40,586 [INFO] Sent 1100000 / 2229453  (49.3%)  elapsed=166.2s  throughput=6618 ev/s
-2026-07-02 21:50:55,387 [INFO] Sent 1200000 / 2229453  (53.8%)  elapsed=181.0s  throughput=6630 ev/s
-2026-07-02 21:51:10,609 [INFO] Sent 1300000 / 2229453  (58.3%)  elapsed=196.2s  throughput=6625 ev/s
-2026-07-02 21:51:25,515 [INFO] Sent 1400000 / 2229453  (62.8%)  elapsed=211.1s  throughput=6631 ev/s
-2026-07-02 21:51:40,421 [INFO] Sent 1500000 / 2229453  (67.3%)  elapsed=226.0s  throughput=6636 ev/s
-2026-07-02 21:51:55,240 [INFO] Sent 1600000 / 2229453  (71.8%)  elapsed=240.9s  throughput=6643 ev/s
-2026-07-02 21:52:09,965 [INFO] Sent 1700000 / 2229453  (76.3%)  elapsed=255.6s  throughput=6651 ev/s
-2026-07-02 21:52:24,697 [INFO] Sent 1800000 / 2229453  (80.7%)  elapsed=270.3s  throughput=6659 ev/s
-2026-07-02 21:52:39,660 [INFO] Sent 1900000 / 2229453  (85.2%)  elapsed=285.3s  throughput=6660 ev/s
-2026-07-02 21:52:54,394 [INFO] Sent 2000000 / 2229453  (89.7%)  elapsed=300.0s  throughput=6666 ev/s
-2026-07-02 21:53:09,625 [INFO] Sent 2100000 / 2229453  (94.2%)  elapsed=315.2s  throughput=6661 ev/s
-2026-07-02 21:53:25,125 [INFO] Sent 2200000 / 2229453  (98.7%)  elapsed=330.7s  throughput=6652 ev/s
-2026-07-02 21:53:29,704 [INFO] Replay complete: 2229453 events in 335.3 s (avg 6649 ev/s) — delayed: 0 (0.0%)
-2026-07-02 21:53:29,704 [INFO] Out-of-order emitted: 0 events (0.00% of emitted events)
-2026-07-02 21:53:30,156 [INFO] End-of-stream markers sent to 4 partition(s) (event_time=2200-01-01 00:00:00+00:00) — final event-time windows will flush at the next checkpoint.
-2026-07-02 21:53:30,156 [INFO] <KafkaProducer client_id=kafka-python-producer-1 transactional_id=None>: Closing the Kafka producer with 9223372036.0 secs timeout.
-2026-07-02 21:53:30,156 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=1 host=kafka:9092 <connected> [IPv4 ('172.19.0.4', 9092)]>: Closing connection. 
-2026-07-02 21:53:30,157 [INFO] Producer closed.
+2026-07-03 19:33:51,520 [INFO] Producer log   : /opt/flink/results/experiments/01_baseline/producer.log
+2026-07-03 19:33:51,521 [INFO] Random seed    : 42
+2026-07-03 19:33:51,521 [INFO] === Flight Event Producer ===
+2026-07-03 19:33:51,521 [INFO]  Prepared data : /prepared/flights_prepared.csv
+2026-07-03 19:33:51,521 [INFO]  Kafka brokers : kafka:9092
+2026-07-03 19:33:51,522 [INFO]  Topic         : flights
+2026-07-03 19:33:51,522 [INFO]  Acceleration  : 57600x
+2026-07-03 19:33:51,522 [INFO]  Flush every   : 5000 events
+2026-07-03 19:33:51,523 [INFO]  Log every     : 100000 events
+2026-07-03 19:33:51,523 [INFO]  Out-of-order  : disabled
+2026-07-03 19:33:51,523 [INFO]  End-of-stream : marker per partition
+2026-07-03 19:33:51,525 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=bootstrap-0 host=kafka:9092 <connecting> [IPv4 ('172.18.0.2', 9092)]>: connecting to kafka:9092 [('172.18.0.2', 9092) IPv4]
+2026-07-03 19:33:51,528 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=bootstrap-0 host=kafka:9092 <checking_api_versions_recv> [IPv4 ('172.18.0.2', 9092)]>: Broker version identified as 2.6
+2026-07-03 19:33:51,529 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=bootstrap-0 host=kafka:9092 <connected> [IPv4 ('172.18.0.2', 9092)]>: Connection complete.
+2026-07-03 19:33:51,532 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=1 host=kafka:9092 <connecting> [IPv4 ('172.18.0.2', 9092)]>: connecting to kafka:9092 [('172.18.0.2', 9092) IPv4]
+2026-07-03 19:33:51,533 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=1 host=kafka:9092 <connected> [IPv4 ('172.18.0.2', 9092)]>: Connection complete.
+2026-07-03 19:33:51,533 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=bootstrap-0 host=kafka:9092 <connected> [IPv4 ('172.18.0.2', 9092)]>: Closing connection. 
+2026-07-03 19:33:51,635 [INFO] <BrokerConnection client_id=kafka-python-2.3.2, node_id=1 host=kafka:9092 <connected> [IPv4 ('172.18.0.2', 9092)]>: Closing connection. 
+2026-07-03 19:33:51,636 [INFO] Loading prepared dataset /prepared/flights_prepared.csv …
+2026-07-03 19:33:54,714 [INFO] Loaded 2229453 prepared events
+2026-07-03 19:33:54,716 [INFO] Event range: 2025-01-01 00:10:00+00:00 → 2025-04-30 23:59:00+00:00 (120.0 days)
+2026-07-03 19:33:54,716 [INFO] Estimated replay duration at 57600x: 3.0 minutes
+2026-07-03 19:33:54,718 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=bootstrap-0 host=kafka:9092 <connecting> [IPv4 ('172.18.0.2', 9092)]>: connecting to kafka:9092 [('172.18.0.2', 9092) IPv4]
+2026-07-03 19:33:54,720 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=bootstrap-0 host=kafka:9092 <checking_api_versions_recv> [IPv4 ('172.18.0.2', 9092)]>: Broker version identified as 2.6
+2026-07-03 19:33:54,720 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=bootstrap-0 host=kafka:9092 <connected> [IPv4 ('172.18.0.2', 9092)]>: Connection complete.
+2026-07-03 19:33:54,823 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=1 host=kafka:9092 <connecting> [IPv4 ('172.18.0.2', 9092)]>: connecting to kafka:9092 [('172.18.0.2', 9092) IPv4]
+2026-07-03 19:33:54,824 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=1 host=kafka:9092 <connected> [IPv4 ('172.18.0.2', 9092)]>: Connection complete.
+2026-07-03 19:33:54,824 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=bootstrap-0 host=kafka:9092 <connected> [IPv4 ('172.18.0.2', 9092)]>: Closing connection. 
+2026-07-03 19:33:54,825 [INFO] Connected to Kafka (kafka:9092), topic 'flights'
+2026-07-03 19:33:54,838 [INFO] Replay started: 2229453 events, factor=57600x, out-of-order prob=0.00, distribution=exponential, max delivery delay=120s (event time)
+2026-07-03 19:33:55,500 [INFO] Sent 5000 / 2229453  (0.2%)  elapsed=0.7s  throughput=7561 ev/s
+2026-07-03 19:33:55,804 [INFO] Sent 10000 / 2229453  (0.4%)  elapsed=1.0s  throughput=10358 ev/s
+2026-07-03 19:33:56,085 [INFO] Sent 15000 / 2229453  (0.7%)  elapsed=1.2s  throughput=12031 ev/s
+2026-07-03 19:33:56,820 [INFO] Sent 20000 / 2229453  (0.9%)  elapsed=2.0s  throughput=10084 ev/s
+2026-07-03 19:33:57,109 [INFO] Sent 25000 / 2229453  (1.1%)  elapsed=2.3s  throughput=11005 ev/s
+2026-07-03 19:33:57,370 [INFO] Sent 30000 / 2229453  (1.3%)  elapsed=2.5s  throughput=11843 ev/s
+2026-07-03 19:33:57,647 [INFO] Sent 35000 / 2229453  (1.6%)  elapsed=2.8s  throughput=12455 ev/s
+2026-07-03 19:33:58,345 [INFO] Sent 40000 / 2229453  (1.8%)  elapsed=3.5s  throughput=11402 ev/s
+2026-07-03 19:33:58,616 [INFO] Sent 45000 / 2229453  (2.0%)  elapsed=3.8s  throughput=11907 ev/s
+2026-07-03 19:33:58,894 [INFO] Sent 50000 / 2229453  (2.2%)  elapsed=4.1s  throughput=12325 ev/s
+2026-07-03 19:33:59,197 [INFO] Sent 55000 / 2229453  (2.5%)  elapsed=4.4s  throughput=12614 ev/s
+2026-07-03 19:33:59,883 [INFO] Sent 60000 / 2229453  (2.7%)  elapsed=5.0s  throughput=11889 ev/s
+2026-07-03 19:34:00,173 [INFO] Sent 65000 / 2229453  (2.9%)  elapsed=5.3s  throughput=12181 ev/s
+2026-07-03 19:34:00,473 [INFO] Sent 70000 / 2229453  (3.1%)  elapsed=5.6s  throughput=12421 ev/s
+2026-07-03 19:34:01,188 [INFO] Sent 75000 / 2229453  (3.4%)  elapsed=6.4s  throughput=11810 ev/s
+2026-07-03 19:34:01,454 [INFO] Sent 80000 / 2229453  (3.6%)  elapsed=6.6s  throughput=12090 ev/s
+2026-07-03 19:34:01,729 [INFO] Sent 85000 / 2229453  (3.8%)  elapsed=6.9s  throughput=12332 ev/s
+2026-07-03 19:34:02,003 [INFO] Sent 90000 / 2229453  (4.0%)  elapsed=7.2s  throughput=12559 ev/s
+2026-07-03 19:34:02,723 [INFO] Sent 95000 / 2229453  (4.3%)  elapsed=7.9s  throughput=12046 ev/s
+2026-07-03 19:34:02,977 [INFO] Sent 100000 / 2229453  (4.5%)  elapsed=8.1s  throughput=12285 ev/s
+2026-07-03 19:34:03,257 [INFO] Sent 105000 / 2229453  (4.7%)  elapsed=8.4s  throughput=12471 ev/s
+2026-07-03 19:34:03,531 [INFO] Sent 110000 / 2229453  (4.9%)  elapsed=8.7s  throughput=12653 ev/s
+2026-07-03 19:34:04,301 [INFO] Sent 115000 / 2229453  (5.2%)  elapsed=9.5s  throughput=12151 ev/s
+2026-07-03 19:34:04,598 [INFO] Sent 120000 / 2229453  (5.4%)  elapsed=9.8s  throughput=12293 ev/s
+2026-07-03 19:34:04,923 [INFO] Sent 125000 / 2229453  (5.6%)  elapsed=10.1s  throughput=12393 ev/s
+2026-07-03 19:34:05,746 [INFO] Sent 130000 / 2229453  (5.8%)  elapsed=10.9s  throughput=11917 ev/s
+2026-07-03 19:34:06,038 [INFO] Sent 135000 / 2229453  (6.1%)  elapsed=11.2s  throughput=12052 ev/s
+2026-07-03 19:34:06,349 [INFO] Sent 140000 / 2229453  (6.3%)  elapsed=11.5s  throughput=12161 ev/s
+2026-07-03 19:34:06,822 [INFO] Sent 145000 / 2229453  (6.5%)  elapsed=12.0s  throughput=12099 ev/s
+2026-07-03 19:34:07,447 [INFO] Sent 150000 / 2229453  (6.7%)  elapsed=12.6s  throughput=11895 ev/s
+2026-07-03 19:34:07,721 [INFO] Sent 155000 / 2229453  (7.0%)  elapsed=12.9s  throughput=12030 ev/s
+2026-07-03 19:34:08,000 [INFO] Sent 160000 / 2229453  (7.2%)  elapsed=13.2s  throughput=12155 ev/s
+2026-07-03 19:34:08,793 [INFO] Sent 165000 / 2229453  (7.4%)  elapsed=14.0s  throughput=11823 ev/s
+2026-07-03 19:34:09,077 [INFO] Sent 170000 / 2229453  (7.6%)  elapsed=14.2s  throughput=11938 ev/s
+2026-07-03 19:34:09,335 [INFO] Sent 175000 / 2229453  (7.8%)  elapsed=14.5s  throughput=12070 ev/s
+2026-07-03 19:34:09,645 [INFO] Sent 180000 / 2229453  (8.1%)  elapsed=14.8s  throughput=12156 ev/s
+2026-07-03 19:34:10,422 [INFO] Sent 185000 / 2229453  (8.3%)  elapsed=15.6s  throughput=11871 ev/s
+2026-07-03 19:34:10,739 [INFO] Sent 190000 / 2229453  (8.5%)  elapsed=15.9s  throughput=11948 ev/s
+2026-07-03 19:34:11,120 [INFO] Sent 195000 / 2229453  (8.7%)  elapsed=16.3s  throughput=11976 ev/s
+2026-07-03 19:34:11,903 [INFO] Sent 200000 / 2229453  (9.0%)  elapsed=17.1s  throughput=11719 ev/s
+2026-07-03 19:34:12,171 [INFO] Sent 205000 / 2229453  (9.2%)  elapsed=17.3s  throughput=11826 ev/s
+2026-07-03 19:34:12,457 [INFO] Sent 210000 / 2229453  (9.4%)  elapsed=17.6s  throughput=11919 ev/s
+2026-07-03 19:34:13,221 [INFO] Sent 215000 / 2229453  (9.6%)  elapsed=18.4s  throughput=11695 ev/s
+2026-07-03 19:34:13,489 [INFO] Sent 220000 / 2229453  (9.9%)  elapsed=18.7s  throughput=11795 ev/s
+2026-07-03 19:34:13,764 [INFO] Sent 225000 / 2229453  (10.1%)  elapsed=18.9s  throughput=11888 ev/s
+2026-07-03 19:34:14,053 [INFO] Sent 230000 / 2229453  (10.3%)  elapsed=19.2s  throughput=11969 ev/s
+2026-07-03 19:34:14,848 [INFO] Sent 235000 / 2229453  (10.5%)  elapsed=20.0s  throughput=11744 ev/s
+2026-07-03 19:34:15,152 [INFO] Sent 240000 / 2229453  (10.8%)  elapsed=20.3s  throughput=11814 ev/s
+2026-07-03 19:34:15,474 [INFO] Sent 245000 / 2229453  (11.0%)  elapsed=20.6s  throughput=11872 ev/s
+2026-07-03 19:34:16,300 [INFO] Sent 250000 / 2229453  (11.2%)  elapsed=21.5s  throughput=11648 ev/s
+2026-07-03 19:34:16,603 [INFO] Sent 255000 / 2229453  (11.4%)  elapsed=21.8s  throughput=11716 ev/s
+2026-07-03 19:34:16,919 [INFO] Sent 260000 / 2229453  (11.7%)  elapsed=22.1s  throughput=11774 ev/s
+2026-07-03 19:34:17,736 [INFO] Sent 265000 / 2229453  (11.9%)  elapsed=22.9s  throughput=11572 ev/s
+2026-07-03 19:34:17,993 [INFO] Sent 270000 / 2229453  (12.1%)  elapsed=23.2s  throughput=11660 ev/s
+2026-07-03 19:34:18,278 [INFO] Sent 275000 / 2229453  (12.3%)  elapsed=23.4s  throughput=11731 ev/s
+2026-07-03 19:34:18,560 [INFO] Sent 280000 / 2229453  (12.6%)  elapsed=23.7s  throughput=11803 ev/s
+2026-07-03 19:34:19,308 [INFO] Sent 285000 / 2229453  (12.8%)  elapsed=24.5s  throughput=11646 ev/s
+2026-07-03 19:34:19,580 [INFO] Sent 290000 / 2229453  (13.0%)  elapsed=24.7s  throughput=11720 ev/s
+2026-07-03 19:34:19,855 [INFO] Sent 295000 / 2229453  (13.2%)  elapsed=25.0s  throughput=11792 ev/s
+2026-07-03 19:34:20,160 [INFO] Sent 300000 / 2229453  (13.5%)  elapsed=25.3s  throughput=11847 ev/s
+2026-07-03 19:34:20,922 [INFO] Sent 305000 / 2229453  (13.7%)  elapsed=26.1s  throughput=11692 ev/s
+2026-07-03 19:34:21,245 [INFO] Sent 310000 / 2229453  (13.9%)  elapsed=26.4s  throughput=11739 ev/s
+2026-07-03 19:34:21,667 [INFO] Sent 315000 / 2229453  (14.1%)  elapsed=26.8s  throughput=11741 ev/s
+2026-07-03 19:34:22,438 [INFO] Sent 320000 / 2229453  (14.4%)  elapsed=27.6s  throughput=11594 ev/s
+2026-07-03 19:34:22,750 [INFO] Sent 325000 / 2229453  (14.6%)  elapsed=27.9s  throughput=11643 ev/s
+2026-07-03 19:34:23,032 [INFO] Sent 330000 / 2229453  (14.8%)  elapsed=28.2s  throughput=11704 ev/s
+2026-07-03 19:34:23,811 [INFO] Sent 335000 / 2229453  (15.0%)  elapsed=29.0s  throughput=11562 ev/s
+2026-07-03 19:34:24,080 [INFO] Sent 340000 / 2229453  (15.3%)  elapsed=29.2s  throughput=11627 ev/s
+2026-07-03 19:34:24,355 [INFO] Sent 345000 / 2229453  (15.5%)  elapsed=29.5s  throughput=11688 ev/s
+2026-07-03 19:34:24,650 [INFO] Sent 350000 / 2229453  (15.7%)  elapsed=29.8s  throughput=11740 ev/s
+2026-07-03 19:34:25,405 [INFO] Sent 355000 / 2229453  (15.9%)  elapsed=30.6s  throughput=11614 ev/s
+2026-07-03 19:34:25,714 [INFO] Sent 360000 / 2229453  (16.1%)  elapsed=30.9s  throughput=11659 ev/s
+2026-07-03 19:34:26,025 [INFO] Sent 365000 / 2229453  (16.4%)  elapsed=31.2s  throughput=11703 ev/s
+2026-07-03 19:34:26,847 [INFO] Sent 370000 / 2229453  (16.6%)  elapsed=32.0s  throughput=11558 ev/s
+2026-07-03 19:34:27,143 [INFO] Sent 375000 / 2229453  (16.8%)  elapsed=32.3s  throughput=11607 ev/s
+2026-07-03 19:34:27,453 [INFO] Sent 380000 / 2229453  (17.0%)  elapsed=32.6s  throughput=11650 ev/s
+2026-07-03 19:34:28,272 [INFO] Sent 385000 / 2229453  (17.3%)  elapsed=33.4s  throughput=11515 ev/s
+2026-07-03 19:34:28,533 [INFO] Sent 390000 / 2229453  (17.5%)  elapsed=33.7s  throughput=11574 ev/s
+2026-07-03 19:34:28,817 [INFO] Sent 395000 / 2229453  (17.7%)  elapsed=34.0s  throughput=11624 ev/s
+2026-07-03 19:34:29,102 [INFO] Sent 400000 / 2229453  (17.9%)  elapsed=34.3s  throughput=11673 ev/s
+2026-07-03 19:34:29,852 [INFO] Sent 405000 / 2229453  (18.2%)  elapsed=35.0s  throughput=11566 ev/s
+2026-07-03 19:34:30,124 [INFO] Sent 410000 / 2229453  (18.4%)  elapsed=35.3s  throughput=11619 ev/s
+2026-07-03 19:34:30,412 [INFO] Sent 415000 / 2229453  (18.6%)  elapsed=35.6s  throughput=11665 ev/s
+2026-07-03 19:34:31,187 [INFO] Sent 420000 / 2229453  (18.8%)  elapsed=36.4s  throughput=11554 ev/s
+2026-07-03 19:34:31,495 [INFO] Sent 425000 / 2229453  (19.1%)  elapsed=36.7s  throughput=11593 ev/s
+2026-07-03 19:34:31,827 [INFO] Sent 430000 / 2229453  (19.3%)  elapsed=37.0s  throughput=11624 ev/s
+2026-07-03 19:34:32,679 [INFO] Sent 435000 / 2229453  (19.5%)  elapsed=37.8s  throughput=11495 ev/s
+2026-07-03 19:34:32,958 [INFO] Sent 440000 / 2229453  (19.7%)  elapsed=38.1s  throughput=11542 ev/s
+2026-07-03 19:34:33,230 [INFO] Sent 445000 / 2229453  (20.0%)  elapsed=38.4s  throughput=11590 ev/s
+2026-07-03 19:34:33,523 [INFO] Sent 450000 / 2229453  (20.2%)  elapsed=38.7s  throughput=11632 ev/s
+2026-07-03 19:34:34,269 [INFO] Sent 455000 / 2229453  (20.4%)  elapsed=39.4s  throughput=11538 ev/s
+2026-07-03 19:34:34,529 [INFO] Sent 460000 / 2229453  (20.6%)  elapsed=39.7s  throughput=11589 ev/s
+2026-07-03 19:34:34,806 [INFO] Sent 465000 / 2229453  (20.9%)  elapsed=40.0s  throughput=11634 ev/s
+2026-07-03 19:34:35,102 [INFO] Sent 470000 / 2229453  (21.1%)  elapsed=40.3s  throughput=11672 ev/s
+2026-07-03 19:34:35,883 [INFO] Sent 475000 / 2229453  (21.3%)  elapsed=41.0s  throughput=11572 ev/s
+2026-07-03 19:34:36,186 [INFO] Sent 480000 / 2229453  (21.5%)  elapsed=41.4s  throughput=11608 ev/s
+2026-07-03 19:34:36,511 [INFO] Sent 485000 / 2229453  (21.8%)  elapsed=41.7s  throughput=11638 ev/s
+2026-07-03 19:34:37,333 [INFO] Sent 490000 / 2229453  (22.0%)  elapsed=42.5s  throughput=11530 ev/s
+2026-07-03 19:34:37,626 [INFO] Sent 495000 / 2229453  (22.2%)  elapsed=42.8s  throughput=11568 ev/s
+2026-07-03 19:34:37,943 [INFO] Sent 500000 / 2229453  (22.4%)  elapsed=43.1s  throughput=11599 ev/s
+2026-07-03 19:34:38,752 [INFO] Sent 505000 / 2229453  (22.7%)  elapsed=43.9s  throughput=11499 ev/s
+2026-07-03 19:34:39,021 [INFO] Sent 510000 / 2229453  (22.9%)  elapsed=44.2s  throughput=11542 ev/s
+2026-07-03 19:34:39,302 [INFO] Sent 515000 / 2229453  (23.1%)  elapsed=44.5s  throughput=11582 ev/s
+2026-07-03 19:34:39,598 [INFO] Sent 520000 / 2229453  (23.3%)  elapsed=44.8s  throughput=11617 ev/s
+2026-07-03 19:34:40,345 [INFO] Sent 525000 / 2229453  (23.5%)  elapsed=45.5s  throughput=11536 ev/s
+2026-07-03 19:34:40,616 [INFO] Sent 530000 / 2229453  (23.8%)  elapsed=45.8s  throughput=11577 ev/s
+2026-07-03 19:34:40,901 [INFO] Sent 535000 / 2229453  (24.0%)  elapsed=46.1s  throughput=11614 ev/s
+2026-07-03 19:34:41,676 [INFO] Sent 540000 / 2229453  (24.2%)  elapsed=46.8s  throughput=11528 ev/s
+2026-07-03 19:34:41,985 [INFO] Sent 545000 / 2229453  (24.4%)  elapsed=47.1s  throughput=11559 ev/s
+2026-07-03 19:34:42,310 [INFO] Sent 550000 / 2229453  (24.7%)  elapsed=47.5s  throughput=11585 ev/s
+2026-07-03 19:34:43,165 [INFO] Sent 555000 / 2229453  (24.9%)  elapsed=48.3s  throughput=11484 ev/s
+2026-07-03 19:34:43,451 [INFO] Sent 560000 / 2229453  (25.1%)  elapsed=48.6s  throughput=11519 ev/s
+2026-07-03 19:34:43,725 [INFO] Sent 565000 / 2229453  (25.3%)  elapsed=48.9s  throughput=11557 ev/s
+2026-07-03 19:34:43,999 [INFO] Sent 570000 / 2229453  (25.6%)  elapsed=49.2s  throughput=11594 ev/s
+2026-07-03 19:34:44,758 [INFO] Sent 575000 / 2229453  (25.8%)  elapsed=49.9s  throughput=11518 ev/s
+2026-07-03 19:34:45,024 [INFO] Sent 580000 / 2229453  (26.0%)  elapsed=50.2s  throughput=11557 ev/s
+2026-07-03 19:34:45,304 [INFO] Sent 585000 / 2229453  (26.2%)  elapsed=50.5s  throughput=11591 ev/s
+2026-07-03 19:34:45,597 [INFO] Sent 590000 / 2229453  (26.5%)  elapsed=50.8s  throughput=11623 ev/s
+2026-07-03 19:34:46,378 [INFO] Sent 595000 / 2229453  (26.7%)  elapsed=51.5s  throughput=11544 ev/s
+2026-07-03 19:34:46,683 [INFO] Sent 600000 / 2229453  (26.9%)  elapsed=51.8s  throughput=11573 ev/s
+2026-07-03 19:34:46,998 [INFO] Sent 605000 / 2229453  (27.1%)  elapsed=52.2s  throughput=11598 ev/s
+2026-07-03 19:34:47,832 [INFO] Sent 610000 / 2229453  (27.4%)  elapsed=53.0s  throughput=11510 ev/s
+2026-07-03 19:34:48,123 [INFO] Sent 615000 / 2229453  (27.6%)  elapsed=53.3s  throughput=11541 ev/s
+2026-07-03 19:34:48,438 [INFO] Sent 620000 / 2229453  (27.8%)  elapsed=53.6s  throughput=11567 ev/s
+2026-07-03 19:34:49,245 [INFO] Sent 625000 / 2229453  (28.0%)  elapsed=54.4s  throughput=11487 ev/s
+2026-07-03 19:34:49,507 [INFO] Sent 630000 / 2229453  (28.3%)  elapsed=54.7s  throughput=11523 ev/s
+2026-07-03 19:34:49,784 [INFO] Sent 635000 / 2229453  (28.5%)  elapsed=54.9s  throughput=11556 ev/s
+2026-07-03 19:34:50,063 [INFO] Sent 640000 / 2229453  (28.7%)  elapsed=55.2s  throughput=11588 ev/s
+2026-07-03 19:34:50,817 [INFO] Sent 645000 / 2229453  (28.9%)  elapsed=56.0s  throughput=11522 ev/s
+2026-07-03 19:34:51,068 [INFO] Sent 650000 / 2229453  (29.2%)  elapsed=56.2s  throughput=11559 ev/s
+2026-07-03 19:34:51,351 [INFO] Sent 655000 / 2229453  (29.4%)  elapsed=56.5s  throughput=11590 ev/s
+2026-07-03 19:34:51,646 [INFO] Sent 660000 / 2229453  (29.6%)  elapsed=56.8s  throughput=11618 ev/s
+2026-07-03 19:34:52,408 [INFO] Sent 665000 / 2229453  (29.8%)  elapsed=57.6s  throughput=11551 ev/s
+2026-07-03 19:34:52,728 [INFO] Sent 670000 / 2229453  (30.1%)  elapsed=57.9s  throughput=11573 ev/s
+2026-07-03 19:34:53,090 [INFO] Sent 675000 / 2229453  (30.3%)  elapsed=58.3s  throughput=11587 ev/s
+2026-07-03 19:34:53,900 [INFO] Sent 680000 / 2229453  (30.5%)  elapsed=59.1s  throughput=11513 ev/s
+2026-07-03 19:34:54,176 [INFO] Sent 685000 / 2229453  (30.7%)  elapsed=59.3s  throughput=11543 ev/s
+2026-07-03 19:34:54,465 [INFO] Sent 690000 / 2229453  (30.9%)  elapsed=59.6s  throughput=11572 ev/s
+2026-07-03 19:34:55,246 [INFO] Sent 695000 / 2229453  (31.2%)  elapsed=60.4s  throughput=11505 ev/s
+2026-07-03 19:34:55,505 [INFO] Sent 700000 / 2229453  (31.4%)  elapsed=60.7s  throughput=11538 ev/s
+2026-07-03 19:34:55,781 [INFO] Sent 705000 / 2229453  (31.6%)  elapsed=60.9s  throughput=11568 ev/s
+2026-07-03 19:34:56,059 [INFO] Sent 710000 / 2229453  (31.8%)  elapsed=61.2s  throughput=11597 ev/s
+2026-07-03 19:34:56,842 [INFO] Sent 715000 / 2229453  (32.1%)  elapsed=62.0s  throughput=11531 ev/s
+2026-07-03 19:34:57,140 [INFO] Sent 720000 / 2229453  (32.3%)  elapsed=62.3s  throughput=11556 ev/s
+2026-07-03 19:34:57,456 [INFO] Sent 725000 / 2229453  (32.5%)  elapsed=62.6s  throughput=11577 ev/s
+2026-07-03 19:34:58,285 [INFO] Sent 730000 / 2229453  (32.7%)  elapsed=63.5s  throughput=11505 ev/s
+2026-07-03 19:34:58,567 [INFO] Sent 735000 / 2229453  (33.0%)  elapsed=63.7s  throughput=11533 ev/s
+2026-07-03 19:34:58,871 [INFO] Sent 740000 / 2229453  (33.2%)  elapsed=64.0s  throughput=11556 ev/s
+2026-07-03 19:34:59,660 [INFO] Sent 745000 / 2229453  (33.4%)  elapsed=64.8s  throughput=11492 ev/s
+2026-07-03 19:34:59,939 [INFO] Sent 750000 / 2229453  (33.6%)  elapsed=65.1s  throughput=11520 ev/s
+2026-07-03 19:35:00,199 [INFO] Sent 755000 / 2229453  (33.9%)  elapsed=65.4s  throughput=11551 ev/s
+2026-07-03 19:35:00,467 [INFO] Sent 760000 / 2229453  (34.1%)  elapsed=65.6s  throughput=11580 ev/s
+2026-07-03 19:35:01,187 [INFO] Sent 765000 / 2229453  (34.3%)  elapsed=66.4s  throughput=11529 ev/s
+2026-07-03 19:35:01,443 [INFO] Sent 770000 / 2229453  (34.5%)  elapsed=66.6s  throughput=11560 ev/s
+2026-07-03 19:35:01,708 [INFO] Sent 775000 / 2229453  (34.8%)  elapsed=66.9s  throughput=11589 ev/s
+2026-07-03 19:35:01,977 [INFO] Sent 780000 / 2229453  (35.0%)  elapsed=67.1s  throughput=11617 ev/s
+2026-07-03 19:35:02,710 [INFO] Sent 785000 / 2229453  (35.2%)  elapsed=67.9s  throughput=11565 ev/s
+2026-07-03 19:35:02,983 [INFO] Sent 790000 / 2229453  (35.4%)  elapsed=68.1s  throughput=11592 ev/s
+2026-07-03 19:35:03,290 [INFO] Sent 795000 / 2229453  (35.7%)  elapsed=68.5s  throughput=11613 ev/s
+2026-07-03 19:35:03,622 [INFO] Sent 800000 / 2229453  (35.9%)  elapsed=68.8s  throughput=11630 ev/s
+2026-07-03 19:35:04,362 [INFO] Sent 805000 / 2229453  (36.1%)  elapsed=69.5s  throughput=11578 ev/s
+2026-07-03 19:35:04,638 [INFO] Sent 810000 / 2229453  (36.3%)  elapsed=69.8s  throughput=11604 ev/s
+2026-07-03 19:35:04,920 [INFO] Sent 815000 / 2229453  (36.6%)  elapsed=70.1s  throughput=11629 ev/s
+2026-07-03 19:35:05,294 [INFO] Sent 820000 / 2229453  (36.8%)  elapsed=70.5s  throughput=11638 ev/s
+2026-07-03 19:35:05,904 [INFO] Sent 825000 / 2229453  (37.0%)  elapsed=71.1s  throughput=11608 ev/s
+2026-07-03 19:35:06,175 [INFO] Sent 830000 / 2229453  (37.2%)  elapsed=71.3s  throughput=11634 ev/s
+2026-07-03 19:35:06,447 [INFO] Sent 835000 / 2229453  (37.5%)  elapsed=71.6s  throughput=11660 ev/s
+2026-07-03 19:35:07,141 [INFO] Sent 840000 / 2229453  (37.7%)  elapsed=72.3s  throughput=11617 ev/s
+2026-07-03 19:35:07,439 [INFO] Sent 845000 / 2229453  (37.9%)  elapsed=72.6s  throughput=11638 ev/s
+2026-07-03 19:35:07,727 [INFO] Sent 850000 / 2229453  (38.1%)  elapsed=72.9s  throughput=11661 ev/s
+2026-07-03 19:35:08,021 [INFO] Sent 855000 / 2229453  (38.4%)  elapsed=73.2s  throughput=11682 ev/s
+2026-07-03 19:35:08,799 [INFO] Sent 860000 / 2229453  (38.6%)  elapsed=74.0s  throughput=11627 ev/s
+2026-07-03 19:35:09,076 [INFO] Sent 865000 / 2229453  (38.8%)  elapsed=74.2s  throughput=11651 ev/s
+2026-07-03 19:35:09,369 [INFO] Sent 870000 / 2229453  (39.0%)  elapsed=74.5s  throughput=11672 ev/s
+2026-07-03 19:35:09,759 [INFO] Sent 875000 / 2229453  (39.2%)  elapsed=74.9s  throughput=11678 ev/s
+2026-07-03 19:35:10,418 [INFO] Sent 880000 / 2229453  (39.5%)  elapsed=75.6s  throughput=11643 ev/s
+2026-07-03 19:35:10,673 [INFO] Sent 885000 / 2229453  (39.7%)  elapsed=75.8s  throughput=11670 ev/s
+2026-07-03 19:35:10,955 [INFO] Sent 890000 / 2229453  (39.9%)  elapsed=76.1s  throughput=11692 ev/s
+2026-07-03 19:35:11,663 [INFO] Sent 895000 / 2229453  (40.1%)  elapsed=76.8s  throughput=11649 ev/s
+2026-07-03 19:35:11,927 [INFO] Sent 900000 / 2229453  (40.4%)  elapsed=77.1s  throughput=11674 ev/s
+2026-07-03 19:35:12,208 [INFO] Sent 905000 / 2229453  (40.6%)  elapsed=77.4s  throughput=11697 ev/s
+2026-07-03 19:35:12,464 [INFO] Sent 910000 / 2229453  (40.8%)  elapsed=77.6s  throughput=11722 ev/s
+2026-07-03 19:35:13,187 [INFO] Sent 915000 / 2229453  (41.0%)  elapsed=78.4s  throughput=11678 ev/s
+2026-07-03 19:35:13,470 [INFO] Sent 920000 / 2229453  (41.3%)  elapsed=78.6s  throughput=11700 ev/s
+2026-07-03 19:35:13,773 [INFO] Sent 925000 / 2229453  (41.5%)  elapsed=78.9s  throughput=11718 ev/s
+2026-07-03 19:35:14,097 [INFO] Sent 930000 / 2229453  (41.7%)  elapsed=79.3s  throughput=11733 ev/s
+2026-07-03 19:35:14,845 [INFO] Sent 935000 / 2229453  (41.9%)  elapsed=80.0s  throughput=11686 ev/s
+2026-07-03 19:35:15,133 [INFO] Sent 940000 / 2229453  (42.2%)  elapsed=80.3s  throughput=11706 ev/s
+2026-07-03 19:35:15,389 [INFO] Sent 945000 / 2229453  (42.4%)  elapsed=80.6s  throughput=11731 ev/s
+2026-07-03 19:35:15,668 [INFO] Sent 950000 / 2229453  (42.6%)  elapsed=80.8s  throughput=11753 ev/s
+2026-07-03 19:35:16,363 [INFO] Sent 955000 / 2229453  (42.8%)  elapsed=81.5s  throughput=11714 ev/s
+2026-07-03 19:35:16,627 [INFO] Sent 960000 / 2229453  (43.1%)  elapsed=81.8s  throughput=11737 ev/s
+2026-07-03 19:35:16,901 [INFO] Sent 965000 / 2229453  (43.3%)  elapsed=82.1s  throughput=11759 ev/s
+2026-07-03 19:35:17,233 [INFO] Sent 970000 / 2229453  (43.5%)  elapsed=82.4s  throughput=11772 ev/s
+2026-07-03 19:35:17,932 [INFO] Sent 975000 / 2229453  (43.7%)  elapsed=83.1s  throughput=11733 ev/s
+2026-07-03 19:35:18,212 [INFO] Sent 980000 / 2229453  (44.0%)  elapsed=83.4s  throughput=11754 ev/s
+2026-07-03 19:35:18,506 [INFO] Sent 985000 / 2229453  (44.2%)  elapsed=83.7s  throughput=11772 ev/s
+2026-07-03 19:35:19,303 [INFO] Sent 990000 / 2229453  (44.4%)  elapsed=84.5s  throughput=11720 ev/s
+2026-07-03 19:35:19,578 [INFO] Sent 995000 / 2229453  (44.6%)  elapsed=84.7s  throughput=11741 ev/s
+2026-07-03 19:35:19,873 [INFO] Sent 1000000 / 2229453  (44.9%)  elapsed=85.0s  throughput=11759 ev/s
+2026-07-03 19:35:20,304 [INFO] Sent 1005000 / 2229453  (45.1%)  elapsed=85.5s  throughput=11759 ev/s
+2026-07-03 19:35:20,919 [INFO] Sent 1010000 / 2229453  (45.3%)  elapsed=86.1s  throughput=11733 ev/s
+2026-07-03 19:35:21,176 [INFO] Sent 1015000 / 2229453  (45.5%)  elapsed=86.3s  throughput=11756 ev/s
+2026-07-03 19:35:21,450 [INFO] Sent 1020000 / 2229453  (45.8%)  elapsed=86.6s  throughput=11776 ev/s
+2026-07-03 19:35:22,145 [INFO] Sent 1025000 / 2229453  (46.0%)  elapsed=87.3s  throughput=11740 ev/s
+2026-07-03 19:35:22,433 [INFO] Sent 1030000 / 2229453  (46.2%)  elapsed=87.6s  throughput=11758 ev/s
+2026-07-03 19:35:22,687 [INFO] Sent 1035000 / 2229453  (46.4%)  elapsed=87.9s  throughput=11781 ev/s
+2026-07-03 19:35:22,958 [INFO] Sent 1040000 / 2229453  (46.6%)  elapsed=88.1s  throughput=11802 ev/s
+2026-07-03 19:35:23,676 [INFO] Sent 1045000 / 2229453  (46.9%)  elapsed=88.8s  throughput=11763 ev/s
+2026-07-03 19:35:23,964 [INFO] Sent 1050000 / 2229453  (47.1%)  elapsed=89.1s  throughput=11781 ev/s
+2026-07-03 19:35:24,266 [INFO] Sent 1055000 / 2229453  (47.3%)  elapsed=89.4s  throughput=11797 ev/s
+2026-07-03 19:35:24,589 [INFO] Sent 1060000 / 2229453  (47.5%)  elapsed=89.8s  throughput=11810 ev/s
+2026-07-03 19:35:25,342 [INFO] Sent 1065000 / 2229453  (47.8%)  elapsed=90.5s  throughput=11767 ev/s
+2026-07-03 19:35:25,608 [INFO] Sent 1070000 / 2229453  (48.0%)  elapsed=90.8s  throughput=11788 ev/s
+2026-07-03 19:35:25,895 [INFO] Sent 1075000 / 2229453  (48.2%)  elapsed=91.1s  throughput=11805 ev/s
+2026-07-03 19:35:26,207 [INFO] Sent 1080000 / 2229453  (48.4%)  elapsed=91.4s  throughput=11820 ev/s
+2026-07-03 19:35:26,859 [INFO] Sent 1085000 / 2229453  (48.7%)  elapsed=92.0s  throughput=11790 ev/s
+2026-07-03 19:35:27,122 [INFO] Sent 1090000 / 2229453  (48.9%)  elapsed=92.3s  throughput=11811 ev/s
+2026-07-03 19:35:27,415 [INFO] Sent 1095000 / 2229453  (49.1%)  elapsed=92.6s  throughput=11827 ev/s
+2026-07-03 19:35:27,727 [INFO] Sent 1100000 / 2229453  (49.3%)  elapsed=92.9s  throughput=11842 ev/s
+2026-07-03 19:35:28,431 [INFO] Sent 1105000 / 2229453  (49.6%)  elapsed=93.6s  throughput=11806 ev/s
+2026-07-03 19:35:28,806 [INFO] Sent 1110000 / 2229453  (49.8%)  elapsed=94.0s  throughput=11812 ev/s
+2026-07-03 19:35:29,112 [INFO] Sent 1115000 / 2229453  (50.0%)  elapsed=94.3s  throughput=11827 ev/s
+2026-07-03 19:35:29,807 [INFO] Sent 1120000 / 2229453  (50.2%)  elapsed=95.0s  throughput=11793 ev/s
+2026-07-03 19:35:30,081 [INFO] Sent 1125000 / 2229453  (50.5%)  elapsed=95.2s  throughput=11811 ev/s
+2026-07-03 19:35:30,395 [INFO] Sent 1130000 / 2229453  (50.7%)  elapsed=95.6s  throughput=11825 ev/s
+2026-07-03 19:35:30,820 [INFO] Sent 1135000 / 2229453  (50.9%)  elapsed=96.0s  throughput=11825 ev/s
+2026-07-03 19:35:31,401 [INFO] Sent 1140000 / 2229453  (51.1%)  elapsed=96.6s  throughput=11805 ev/s
+2026-07-03 19:35:31,673 [INFO] Sent 1145000 / 2229453  (51.4%)  elapsed=96.8s  throughput=11824 ev/s
+2026-07-03 19:35:31,953 [INFO] Sent 1150000 / 2229453  (51.6%)  elapsed=97.1s  throughput=11841 ev/s
+2026-07-03 19:35:32,274 [INFO] Sent 1155000 / 2229453  (51.8%)  elapsed=97.4s  throughput=11853 ev/s
+2026-07-03 19:35:32,893 [INFO] Sent 1160000 / 2229453  (52.0%)  elapsed=98.1s  throughput=11830 ev/s
+2026-07-03 19:35:33,174 [INFO] Sent 1165000 / 2229453  (52.3%)  elapsed=98.3s  throughput=11847 ev/s
+2026-07-03 19:35:33,433 [INFO] Sent 1170000 / 2229453  (52.5%)  elapsed=98.6s  throughput=11866 ev/s
+2026-07-03 19:35:33,754 [INFO] Sent 1175000 / 2229453  (52.7%)  elapsed=98.9s  throughput=11878 ev/s
+2026-07-03 19:35:34,405 [INFO] Sent 1180000 / 2229453  (52.9%)  elapsed=99.6s  throughput=11851 ev/s
+2026-07-03 19:35:34,707 [INFO] Sent 1185000 / 2229453  (53.2%)  elapsed=99.9s  throughput=11865 ev/s
+2026-07-03 19:35:35,010 [INFO] Sent 1190000 / 2229453  (53.4%)  elapsed=100.2s  throughput=11879 ev/s
+2026-07-03 19:35:35,752 [INFO] Sent 1195000 / 2229453  (53.6%)  elapsed=100.9s  throughput=11841 ev/s
+2026-07-03 19:35:36,021 [INFO] Sent 1200000 / 2229453  (53.8%)  elapsed=101.2s  throughput=11859 ev/s
+2026-07-03 19:35:36,275 [INFO] Sent 1205000 / 2229453  (54.0%)  elapsed=101.4s  throughput=11879 ev/s
+2026-07-03 19:35:36,538 [INFO] Sent 1210000 / 2229453  (54.3%)  elapsed=101.7s  throughput=11897 ev/s
+2026-07-03 19:35:37,245 [INFO] Sent 1215000 / 2229453  (54.5%)  elapsed=102.4s  throughput=11864 ev/s
+2026-07-03 19:35:37,504 [INFO] Sent 1220000 / 2229453  (54.7%)  elapsed=102.7s  throughput=11883 ev/s
+2026-07-03 19:35:37,750 [INFO] Sent 1225000 / 2229453  (54.9%)  elapsed=102.9s  throughput=11903 ev/s
+2026-07-03 19:35:38,015 [INFO] Sent 1230000 / 2229453  (55.2%)  elapsed=103.2s  throughput=11921 ev/s
+2026-07-03 19:35:38,734 [INFO] Sent 1235000 / 2229453  (55.4%)  elapsed=103.9s  throughput=11886 ev/s
+2026-07-03 19:35:38,989 [INFO] Sent 1240000 / 2229453  (55.6%)  elapsed=104.2s  throughput=11905 ev/s
+2026-07-03 19:35:39,270 [INFO] Sent 1245000 / 2229453  (55.8%)  elapsed=104.4s  throughput=11921 ev/s
+2026-07-03 19:35:39,558 [INFO] Sent 1250000 / 2229453  (56.1%)  elapsed=104.7s  throughput=11936 ev/s
+2026-07-03 19:35:40,298 [INFO] Sent 1255000 / 2229453  (56.3%)  elapsed=105.5s  throughput=11900 ev/s
+2026-07-03 19:35:40,556 [INFO] Sent 1260000 / 2229453  (56.5%)  elapsed=105.7s  throughput=11918 ev/s
+2026-07-03 19:35:40,840 [INFO] Sent 1265000 / 2229453  (56.7%)  elapsed=106.0s  throughput=11933 ev/s
+2026-07-03 19:35:41,125 [INFO] Sent 1270000 / 2229453  (57.0%)  elapsed=106.3s  throughput=11948 ev/s
+2026-07-03 19:35:41,856 [INFO] Sent 1275000 / 2229453  (57.2%)  elapsed=107.0s  throughput=11913 ev/s
+2026-07-03 19:35:42,115 [INFO] Sent 1280000 / 2229453  (57.4%)  elapsed=107.3s  throughput=11931 ev/s
+2026-07-03 19:35:42,411 [INFO] Sent 1285000 / 2229453  (57.6%)  elapsed=107.6s  throughput=11945 ev/s
+2026-07-03 19:35:42,682 [INFO] Sent 1290000 / 2229453  (57.9%)  elapsed=107.8s  throughput=11961 ev/s
+2026-07-03 19:35:43,317 [INFO] Sent 1295000 / 2229453  (58.1%)  elapsed=108.5s  throughput=11937 ev/s
+2026-07-03 19:35:43,571 [INFO] Sent 1300000 / 2229453  (58.3%)  elapsed=108.7s  throughput=11955 ev/s
+2026-07-03 19:35:43,841 [INFO] Sent 1305000 / 2229453  (58.5%)  elapsed=109.0s  throughput=11972 ev/s
+2026-07-03 19:35:44,105 [INFO] Sent 1310000 / 2229453  (58.8%)  elapsed=109.3s  throughput=11988 ev/s
+2026-07-03 19:35:44,812 [INFO] Sent 1315000 / 2229453  (59.0%)  elapsed=110.0s  throughput=11957 ev/s
+2026-07-03 19:35:45,098 [INFO] Sent 1320000 / 2229453  (59.2%)  elapsed=110.3s  throughput=11971 ev/s
+2026-07-03 19:35:45,396 [INFO] Sent 1325000 / 2229453  (59.4%)  elapsed=110.6s  throughput=11984 ev/s
+2026-07-03 19:35:45,753 [INFO] Sent 1330000 / 2229453  (59.7%)  elapsed=110.9s  throughput=11991 ev/s
+2026-07-03 19:35:46,391 [INFO] Sent 1335000 / 2229453  (59.9%)  elapsed=111.6s  throughput=11967 ev/s
+2026-07-03 19:35:46,664 [INFO] Sent 1340000 / 2229453  (60.1%)  elapsed=111.8s  throughput=11982 ev/s
+2026-07-03 19:35:46,936 [INFO] Sent 1345000 / 2229453  (60.3%)  elapsed=112.1s  throughput=11998 ev/s
+2026-07-03 19:35:47,249 [INFO] Sent 1350000 / 2229453  (60.6%)  elapsed=112.4s  throughput=12009 ev/s
+2026-07-03 19:35:47,907 [INFO] Sent 1355000 / 2229453  (60.8%)  elapsed=113.1s  throughput=11983 ev/s
+2026-07-03 19:35:48,158 [INFO] Sent 1360000 / 2229453  (61.0%)  elapsed=113.3s  throughput=12001 ev/s
+2026-07-03 19:35:48,410 [INFO] Sent 1365000 / 2229453  (61.2%)  elapsed=113.6s  throughput=12018 ev/s
+2026-07-03 19:35:48,703 [INFO] Sent 1370000 / 2229453  (61.5%)  elapsed=113.9s  throughput=12031 ev/s
+2026-07-03 19:35:49,373 [INFO] Sent 1375000 / 2229453  (61.7%)  elapsed=114.5s  throughput=12005 ev/s
+2026-07-03 19:35:49,650 [INFO] Sent 1380000 / 2229453  (61.9%)  elapsed=114.8s  throughput=12019 ev/s
+2026-07-03 19:35:49,939 [INFO] Sent 1385000 / 2229453  (62.1%)  elapsed=115.1s  throughput=12032 ev/s
+2026-07-03 19:35:50,687 [INFO] Sent 1390000 / 2229453  (62.3%)  elapsed=115.9s  throughput=11998 ev/s
+2026-07-03 19:35:50,945 [INFO] Sent 1395000 / 2229453  (62.6%)  elapsed=116.1s  throughput=12014 ev/s
+2026-07-03 19:35:51,217 [INFO] Sent 1400000 / 2229453  (62.8%)  elapsed=116.4s  throughput=12029 ev/s
+2026-07-03 19:35:51,507 [INFO] Sent 1405000 / 2229453  (63.0%)  elapsed=116.7s  throughput=12042 ev/s
+2026-07-03 19:35:52,231 [INFO] Sent 1410000 / 2229453  (63.2%)  elapsed=117.4s  throughput=12010 ev/s
+2026-07-03 19:35:52,473 [INFO] Sent 1415000 / 2229453  (63.5%)  elapsed=117.6s  throughput=12028 ev/s
+2026-07-03 19:35:52,736 [INFO] Sent 1420000 / 2229453  (63.7%)  elapsed=117.9s  throughput=12044 ev/s
+2026-07-03 19:35:53,014 [INFO] Sent 1425000 / 2229453  (63.9%)  elapsed=118.2s  throughput=12058 ev/s
+2026-07-03 19:35:53,714 [INFO] Sent 1430000 / 2229453  (64.1%)  elapsed=118.9s  throughput=12029 ev/s
+2026-07-03 19:35:53,955 [INFO] Sent 1435000 / 2229453  (64.4%)  elapsed=119.1s  throughput=12046 ev/s
+2026-07-03 19:35:54,229 [INFO] Sent 1440000 / 2229453  (64.6%)  elapsed=119.4s  throughput=12061 ev/s
+2026-07-03 19:35:54,482 [INFO] Sent 1445000 / 2229453  (64.8%)  elapsed=119.6s  throughput=12077 ev/s
+2026-07-03 19:35:55,186 [INFO] Sent 1450000 / 2229453  (65.0%)  elapsed=120.4s  throughput=12048 ev/s
+2026-07-03 19:35:55,454 [INFO] Sent 1455000 / 2229453  (65.3%)  elapsed=120.6s  throughput=12063 ev/s
+2026-07-03 19:35:55,751 [INFO] Sent 1460000 / 2229453  (65.5%)  elapsed=120.9s  throughput=12074 ev/s
+2026-07-03 19:35:56,047 [INFO] Sent 1465000 / 2229453  (65.7%)  elapsed=121.2s  throughput=12086 ev/s
+2026-07-03 19:35:56,774 [INFO] Sent 1470000 / 2229453  (65.9%)  elapsed=121.9s  throughput=12055 ev/s
+2026-07-03 19:35:57,041 [INFO] Sent 1475000 / 2229453  (66.2%)  elapsed=122.2s  throughput=12069 ev/s
+2026-07-03 19:35:57,301 [INFO] Sent 1480000 / 2229453  (66.4%)  elapsed=122.5s  throughput=12085 ev/s
+2026-07-03 19:35:57,564 [INFO] Sent 1485000 / 2229453  (66.6%)  elapsed=122.7s  throughput=12099 ev/s
+2026-07-03 19:35:58,272 [INFO] Sent 1490000 / 2229453  (66.8%)  elapsed=123.4s  throughput=12071 ev/s
+2026-07-03 19:35:58,565 [INFO] Sent 1495000 / 2229453  (67.1%)  elapsed=123.7s  throughput=12082 ev/s
+2026-07-03 19:35:58,840 [INFO] Sent 1500000 / 2229453  (67.3%)  elapsed=124.0s  throughput=12096 ev/s
+2026-07-03 19:35:59,082 [INFO] Sent 1505000 / 2229453  (67.5%)  elapsed=124.3s  throughput=12113 ev/s
+2026-07-03 19:35:59,774 [INFO] Sent 1510000 / 2229453  (67.7%)  elapsed=124.9s  throughput=12086 ev/s
+2026-07-03 19:36:00,013 [INFO] Sent 1515000 / 2229453  (68.0%)  elapsed=125.2s  throughput=12102 ev/s
+2026-07-03 19:36:00,296 [INFO] Sent 1520000 / 2229453  (68.2%)  elapsed=125.5s  throughput=12115 ev/s
+2026-07-03 19:36:00,576 [INFO] Sent 1525000 / 2229453  (68.4%)  elapsed=125.7s  throughput=12128 ev/s
+2026-07-03 19:36:01,307 [INFO] Sent 1530000 / 2229453  (68.6%)  elapsed=126.5s  throughput=12097 ev/s
+2026-07-03 19:36:01,568 [INFO] Sent 1535000 / 2229453  (68.9%)  elapsed=126.7s  throughput=12112 ev/s
+2026-07-03 19:36:01,850 [INFO] Sent 1540000 / 2229453  (69.1%)  elapsed=127.0s  throughput=12124 ev/s
+2026-07-03 19:36:02,140 [INFO] Sent 1545000 / 2229453  (69.3%)  elapsed=127.3s  throughput=12136 ev/s
+2026-07-03 19:36:02,841 [INFO] Sent 1550000 / 2229453  (69.5%)  elapsed=128.0s  throughput=12108 ev/s
+2026-07-03 19:36:03,098 [INFO] Sent 1555000 / 2229453  (69.7%)  elapsed=128.3s  throughput=12123 ev/s
+2026-07-03 19:36:03,367 [INFO] Sent 1560000 / 2229453  (70.0%)  elapsed=128.5s  throughput=12137 ev/s
+2026-07-03 19:36:03,635 [INFO] Sent 1565000 / 2229453  (70.2%)  elapsed=128.8s  throughput=12150 ev/s
+2026-07-03 19:36:04,321 [INFO] Sent 1570000 / 2229453  (70.4%)  elapsed=129.5s  throughput=12125 ev/s
+2026-07-03 19:36:04,574 [INFO] Sent 1575000 / 2229453  (70.6%)  elapsed=129.7s  throughput=12139 ev/s
+2026-07-03 19:36:04,844 [INFO] Sent 1580000 / 2229453  (70.9%)  elapsed=130.0s  throughput=12153 ev/s
+2026-07-03 19:36:05,110 [INFO] Sent 1585000 / 2229453  (71.1%)  elapsed=130.3s  throughput=12166 ev/s
+2026-07-03 19:36:05,809 [INFO] Sent 1590000 / 2229453  (71.3%)  elapsed=131.0s  throughput=12140 ev/s
+2026-07-03 19:36:06,102 [INFO] Sent 1595000 / 2229453  (71.5%)  elapsed=131.3s  throughput=12151 ev/s
+2026-07-03 19:36:06,394 [INFO] Sent 1600000 / 2229453  (71.8%)  elapsed=131.6s  throughput=12162 ev/s
+2026-07-03 19:36:06,749 [INFO] Sent 1605000 / 2229453  (72.0%)  elapsed=131.9s  throughput=12167 ev/s
+2026-07-03 19:36:07,392 [INFO] Sent 1610000 / 2229453  (72.2%)  elapsed=132.6s  throughput=12145 ev/s
+2026-07-03 19:36:07,666 [INFO] Sent 1615000 / 2229453  (72.4%)  elapsed=132.8s  throughput=12158 ev/s
+2026-07-03 19:36:07,939 [INFO] Sent 1620000 / 2229453  (72.7%)  elapsed=133.1s  throughput=12171 ev/s
+2026-07-03 19:36:08,253 [INFO] Sent 1625000 / 2229453  (72.9%)  elapsed=133.4s  throughput=12179 ev/s
+2026-07-03 19:36:08,895 [INFO] Sent 1630000 / 2229453  (73.1%)  elapsed=134.1s  throughput=12158 ev/s
+2026-07-03 19:36:09,149 [INFO] Sent 1635000 / 2229453  (73.3%)  elapsed=134.3s  throughput=12173 ev/s
+2026-07-03 19:36:09,419 [INFO] Sent 1640000 / 2229453  (73.6%)  elapsed=134.6s  throughput=12185 ev/s
+2026-07-03 19:36:09,731 [INFO] Sent 1645000 / 2229453  (73.8%)  elapsed=134.9s  throughput=12194 ev/s
+2026-07-03 19:36:10,382 [INFO] Sent 1650000 / 2229453  (74.0%)  elapsed=135.6s  throughput=12173 ev/s
+2026-07-03 19:36:10,661 [INFO] Sent 1655000 / 2229453  (74.2%)  elapsed=135.8s  throughput=12184 ev/s
+2026-07-03 19:36:10,946 [INFO] Sent 1660000 / 2229453  (74.5%)  elapsed=136.1s  throughput=12196 ev/s
+2026-07-03 19:36:11,702 [INFO] Sent 1665000 / 2229453  (74.7%)  elapsed=136.9s  throughput=12165 ev/s
+2026-07-03 19:36:11,950 [INFO] Sent 1670000 / 2229453  (74.9%)  elapsed=137.1s  throughput=12179 ev/s
+2026-07-03 19:36:12,226 [INFO] Sent 1675000 / 2229453  (75.1%)  elapsed=137.4s  throughput=12191 ev/s
+2026-07-03 19:36:12,502 [INFO] Sent 1680000 / 2229453  (75.4%)  elapsed=137.7s  throughput=12203 ev/s
+2026-07-03 19:36:13,239 [INFO] Sent 1685000 / 2229453  (75.6%)  elapsed=138.4s  throughput=12174 ev/s
+2026-07-03 19:36:13,479 [INFO] Sent 1690000 / 2229453  (75.8%)  elapsed=138.6s  throughput=12189 ev/s
+2026-07-03 19:36:13,750 [INFO] Sent 1695000 / 2229453  (76.0%)  elapsed=138.9s  throughput=12201 ev/s
+2026-07-03 19:36:14,023 [INFO] Sent 1700000 / 2229453  (76.3%)  elapsed=139.2s  throughput=12213 ev/s
+2026-07-03 19:36:14,728 [INFO] Sent 1705000 / 2229453  (76.5%)  elapsed=139.9s  throughput=12188 ev/s
+2026-07-03 19:36:14,975 [INFO] Sent 1710000 / 2229453  (76.7%)  elapsed=140.1s  throughput=12202 ev/s
+2026-07-03 19:36:15,244 [INFO] Sent 1715000 / 2229453  (76.9%)  elapsed=140.4s  throughput=12214 ev/s
+2026-07-03 19:36:15,493 [INFO] Sent 1720000 / 2229453  (77.1%)  elapsed=140.7s  throughput=12228 ev/s
+2026-07-03 19:36:16,209 [INFO] Sent 1725000 / 2229453  (77.4%)  elapsed=141.4s  throughput=12201 ev/s
+2026-07-03 19:36:16,471 [INFO] Sent 1730000 / 2229453  (77.6%)  elapsed=141.6s  throughput=12214 ev/s
+2026-07-03 19:36:16,765 [INFO] Sent 1735000 / 2229453  (77.8%)  elapsed=141.9s  throughput=12224 ev/s
+2026-07-03 19:36:17,071 [INFO] Sent 1740000 / 2229453  (78.0%)  elapsed=142.2s  throughput=12233 ev/s
+2026-07-03 19:36:17,796 [INFO] Sent 1745000 / 2229453  (78.3%)  elapsed=143.0s  throughput=12206 ev/s
+2026-07-03 19:36:18,063 [INFO] Sent 1750000 / 2229453  (78.5%)  elapsed=143.2s  throughput=12218 ev/s
+2026-07-03 19:36:18,323 [INFO] Sent 1755000 / 2229453  (78.7%)  elapsed=143.5s  throughput=12231 ev/s
+2026-07-03 19:36:18,596 [INFO] Sent 1760000 / 2229453  (78.9%)  elapsed=143.8s  throughput=12242 ev/s
+2026-07-03 19:36:19,294 [INFO] Sent 1765000 / 2229453  (79.2%)  elapsed=144.5s  throughput=12218 ev/s
+2026-07-03 19:36:19,546 [INFO] Sent 1770000 / 2229453  (79.4%)  elapsed=144.7s  throughput=12231 ev/s
+2026-07-03 19:36:19,800 [INFO] Sent 1775000 / 2229453  (79.6%)  elapsed=145.0s  throughput=12244 ev/s
+2026-07-03 19:36:20,061 [INFO] Sent 1780000 / 2229453  (79.8%)  elapsed=145.2s  throughput=12256 ev/s
+2026-07-03 19:36:20,791 [INFO] Sent 1785000 / 2229453  (80.1%)  elapsed=146.0s  throughput=12229 ev/s
+2026-07-03 19:36:21,034 [INFO] Sent 1790000 / 2229453  (80.3%)  elapsed=146.2s  throughput=12243 ev/s
+2026-07-03 19:36:21,320 [INFO] Sent 1795000 / 2229453  (80.5%)  elapsed=146.5s  throughput=12254 ev/s
+2026-07-03 19:36:21,608 [INFO] Sent 1800000 / 2229453  (80.7%)  elapsed=146.8s  throughput=12264 ev/s
+2026-07-03 19:36:22,339 [INFO] Sent 1805000 / 2229453  (81.0%)  elapsed=147.5s  throughput=12237 ev/s
+2026-07-03 19:36:22,606 [INFO] Sent 1810000 / 2229453  (81.2%)  elapsed=147.8s  throughput=12248 ev/s
+2026-07-03 19:36:22,891 [INFO] Sent 1815000 / 2229453  (81.4%)  elapsed=148.1s  throughput=12259 ev/s
+2026-07-03 19:36:23,226 [INFO] Sent 1820000 / 2229453  (81.6%)  elapsed=148.4s  throughput=12265 ev/s
+2026-07-03 19:36:23,876 [INFO] Sent 1825000 / 2229453  (81.9%)  elapsed=149.0s  throughput=12245 ev/s
+2026-07-03 19:36:24,134 [INFO] Sent 1830000 / 2229453  (82.1%)  elapsed=149.3s  throughput=12257 ev/s
+2026-07-03 19:36:24,403 [INFO] Sent 1835000 / 2229453  (82.3%)  elapsed=149.6s  throughput=12268 ev/s
+2026-07-03 19:36:24,685 [INFO] Sent 1840000 / 2229453  (82.5%)  elapsed=149.9s  throughput=12279 ev/s
+2026-07-03 19:36:25,362 [INFO] Sent 1845000 / 2229453  (82.8%)  elapsed=150.5s  throughput=12257 ev/s
+2026-07-03 19:36:25,616 [INFO] Sent 1850000 / 2229453  (83.0%)  elapsed=150.8s  throughput=12269 ev/s
+2026-07-03 19:36:25,893 [INFO] Sent 1855000 / 2229453  (83.2%)  elapsed=151.1s  throughput=12280 ev/s
+2026-07-03 19:36:26,160 [INFO] Sent 1860000 / 2229453  (83.4%)  elapsed=151.3s  throughput=12291 ev/s
+2026-07-03 19:36:26,856 [INFO] Sent 1865000 / 2229453  (83.7%)  elapsed=152.0s  throughput=12268 ev/s
+2026-07-03 19:36:27,150 [INFO] Sent 1870000 / 2229453  (83.9%)  elapsed=152.3s  throughput=12277 ev/s
+2026-07-03 19:36:27,453 [INFO] Sent 1875000 / 2229453  (84.1%)  elapsed=152.6s  throughput=12285 ev/s
+2026-07-03 19:36:28,230 [INFO] Sent 1880000 / 2229453  (84.3%)  elapsed=153.4s  throughput=12256 ev/s
+2026-07-03 19:36:28,474 [INFO] Sent 1885000 / 2229453  (84.5%)  elapsed=153.6s  throughput=12269 ev/s
+2026-07-03 19:36:28,747 [INFO] Sent 1890000 / 2229453  (84.8%)  elapsed=153.9s  throughput=12279 ev/s
+2026-07-03 19:36:29,005 [INFO] Sent 1895000 / 2229453  (85.0%)  elapsed=154.2s  throughput=12291 ev/s
+2026-07-03 19:36:29,710 [INFO] Sent 1900000 / 2229453  (85.2%)  elapsed=154.9s  throughput=12268 ev/s
+2026-07-03 19:36:29,950 [INFO] Sent 1905000 / 2229453  (85.4%)  elapsed=155.1s  throughput=12281 ev/s
+2026-07-03 19:36:30,212 [INFO] Sent 1910000 / 2229453  (85.7%)  elapsed=155.4s  throughput=12292 ev/s
+2026-07-03 19:36:30,476 [INFO] Sent 1915000 / 2229453  (85.9%)  elapsed=155.6s  throughput=12304 ev/s
+2026-07-03 19:36:31,202 [INFO] Sent 1920000 / 2229453  (86.1%)  elapsed=156.4s  throughput=12278 ev/s
+2026-07-03 19:36:31,455 [INFO] Sent 1925000 / 2229453  (86.3%)  elapsed=156.6s  throughput=12291 ev/s
+2026-07-03 19:36:31,733 [INFO] Sent 1930000 / 2229453  (86.6%)  elapsed=156.9s  throughput=12301 ev/s
+2026-07-03 19:36:32,017 [INFO] Sent 1935000 / 2229453  (86.8%)  elapsed=157.2s  throughput=12310 ev/s
+2026-07-03 19:36:32,769 [INFO] Sent 1940000 / 2229453  (87.0%)  elapsed=157.9s  throughput=12283 ev/s
+2026-07-03 19:36:33,024 [INFO] Sent 1945000 / 2229453  (87.2%)  elapsed=158.2s  throughput=12295 ev/s
+2026-07-03 19:36:33,305 [INFO] Sent 1950000 / 2229453  (87.5%)  elapsed=158.5s  throughput=12305 ev/s
+2026-07-03 19:36:33,583 [INFO] Sent 1955000 / 2229453  (87.7%)  elapsed=158.8s  throughput=12315 ev/s
+2026-07-03 19:36:34,319 [INFO] Sent 1960000 / 2229453  (87.9%)  elapsed=159.5s  throughput=12289 ev/s
+2026-07-03 19:36:34,550 [INFO] Sent 1965000 / 2229453  (88.1%)  elapsed=159.7s  throughput=12303 ev/s
+2026-07-03 19:36:34,822 [INFO] Sent 1970000 / 2229453  (88.4%)  elapsed=160.0s  throughput=12313 ev/s
+2026-07-03 19:36:35,089 [INFO] Sent 1975000 / 2229453  (88.6%)  elapsed=160.3s  throughput=12324 ev/s
+2026-07-03 19:36:35,780 [INFO] Sent 1980000 / 2229453  (88.8%)  elapsed=161.0s  throughput=12302 ev/s
+2026-07-03 19:36:36,029 [INFO] Sent 1985000 / 2229453  (89.0%)  elapsed=161.2s  throughput=12314 ev/s
+2026-07-03 19:36:36,297 [INFO] Sent 1990000 / 2229453  (89.3%)  elapsed=161.5s  throughput=12324 ev/s
+2026-07-03 19:36:36,559 [INFO] Sent 1995000 / 2229453  (89.5%)  elapsed=161.7s  throughput=12335 ev/s
+2026-07-03 19:36:37,273 [INFO] Sent 2000000 / 2229453  (89.7%)  elapsed=162.4s  throughput=12312 ev/s
+2026-07-03 19:36:37,544 [INFO] Sent 2005000 / 2229453  (89.9%)  elapsed=162.7s  throughput=12322 ev/s
+2026-07-03 19:36:37,848 [INFO] Sent 2010000 / 2229453  (90.2%)  elapsed=163.0s  throughput=12330 ev/s
+2026-07-03 19:36:38,197 [INFO] Sent 2015000 / 2229453  (90.4%)  elapsed=163.4s  throughput=12334 ev/s
+2026-07-03 19:36:38,879 [INFO] Sent 2020000 / 2229453  (90.6%)  elapsed=164.0s  throughput=12313 ev/s
+2026-07-03 19:36:39,146 [INFO] Sent 2025000 / 2229453  (90.8%)  elapsed=164.3s  throughput=12324 ev/s
+2026-07-03 19:36:39,415 [INFO] Sent 2030000 / 2229453  (91.1%)  elapsed=164.6s  throughput=12334 ev/s
+2026-07-03 19:36:39,698 [INFO] Sent 2035000 / 2229453  (91.3%)  elapsed=164.9s  throughput=12343 ev/s
+2026-07-03 19:36:40,355 [INFO] Sent 2040000 / 2229453  (91.5%)  elapsed=165.5s  throughput=12324 ev/s
+2026-07-03 19:36:40,625 [INFO] Sent 2045000 / 2229453  (91.7%)  elapsed=165.8s  throughput=12335 ev/s
+2026-07-03 19:36:40,880 [INFO] Sent 2050000 / 2229453  (92.0%)  elapsed=166.0s  throughput=12346 ev/s
+2026-07-03 19:36:41,151 [INFO] Sent 2055000 / 2229453  (92.2%)  elapsed=166.3s  throughput=12356 ev/s
+2026-07-03 19:36:41,856 [INFO] Sent 2060000 / 2229453  (92.4%)  elapsed=167.0s  throughput=12333 ev/s
+2026-07-03 19:36:42,144 [INFO] Sent 2065000 / 2229453  (92.6%)  elapsed=167.3s  throughput=12342 ev/s
+2026-07-03 19:36:42,420 [INFO] Sent 2070000 / 2229453  (92.8%)  elapsed=167.6s  throughput=12352 ev/s
+2026-07-03 19:36:43,169 [INFO] Sent 2075000 / 2229453  (93.1%)  elapsed=168.3s  throughput=12326 ev/s
+2026-07-03 19:36:43,449 [INFO] Sent 2080000 / 2229453  (93.3%)  elapsed=168.6s  throughput=12336 ev/s
+2026-07-03 19:36:43,710 [INFO] Sent 2085000 / 2229453  (93.5%)  elapsed=168.9s  throughput=12346 ev/s
+2026-07-03 19:36:43,993 [INFO] Sent 2090000 / 2229453  (93.7%)  elapsed=169.2s  throughput=12355 ev/s
+2026-07-03 19:36:44,736 [INFO] Sent 2095000 / 2229453  (94.0%)  elapsed=169.9s  throughput=12330 ev/s
+2026-07-03 19:36:44,992 [INFO] Sent 2100000 / 2229453  (94.2%)  elapsed=170.2s  throughput=12341 ev/s
+2026-07-03 19:36:45,240 [INFO] Sent 2105000 / 2229453  (94.4%)  elapsed=170.4s  throughput=12353 ev/s
+2026-07-03 19:36:45,502 [INFO] Sent 2110000 / 2229453  (94.6%)  elapsed=170.7s  throughput=12363 ev/s
+2026-07-03 19:36:46,220 [INFO] Sent 2115000 / 2229453  (94.9%)  elapsed=171.4s  throughput=12340 ev/s
+2026-07-03 19:36:46,469 [INFO] Sent 2120000 / 2229453  (95.1%)  elapsed=171.6s  throughput=12352 ev/s
+2026-07-03 19:36:46,725 [INFO] Sent 2125000 / 2229453  (95.3%)  elapsed=171.9s  throughput=12362 ev/s
+2026-07-03 19:36:46,988 [INFO] Sent 2130000 / 2229453  (95.5%)  elapsed=172.2s  throughput=12372 ev/s
+2026-07-03 19:36:47,706 [INFO] Sent 2135000 / 2229453  (95.8%)  elapsed=172.9s  throughput=12350 ev/s
+2026-07-03 19:36:47,968 [INFO] Sent 2140000 / 2229453  (96.0%)  elapsed=173.1s  throughput=12360 ev/s
+2026-07-03 19:36:48,268 [INFO] Sent 2145000 / 2229453  (96.2%)  elapsed=173.4s  throughput=12368 ev/s
+2026-07-03 19:36:48,576 [INFO] Sent 2150000 / 2229453  (96.4%)  elapsed=173.7s  throughput=12374 ev/s
+2026-07-03 19:36:49,327 [INFO] Sent 2155000 / 2229453  (96.7%)  elapsed=174.5s  throughput=12350 ev/s
+2026-07-03 19:36:49,580 [INFO] Sent 2160000 / 2229453  (96.9%)  elapsed=174.7s  throughput=12361 ev/s
+2026-07-03 19:36:49,860 [INFO] Sent 2165000 / 2229453  (97.1%)  elapsed=175.0s  throughput=12369 ev/s
+2026-07-03 19:36:50,110 [INFO] Sent 2170000 / 2229453  (97.3%)  elapsed=175.3s  throughput=12380 ev/s
+2026-07-03 19:36:50,804 [INFO] Sent 2175000 / 2229453  (97.6%)  elapsed=176.0s  throughput=12360 ev/s
+2026-07-03 19:36:51,047 [INFO] Sent 2180000 / 2229453  (97.8%)  elapsed=176.2s  throughput=12371 ev/s
+2026-07-03 19:36:51,323 [INFO] Sent 2185000 / 2229453  (98.0%)  elapsed=176.5s  throughput=12380 ev/s
+2026-07-03 19:36:51,575 [INFO] Sent 2190000 / 2229453  (98.2%)  elapsed=176.7s  throughput=12391 ev/s
+2026-07-03 19:36:52,299 [INFO] Sent 2195000 / 2229453  (98.5%)  elapsed=177.5s  throughput=12368 ev/s
+2026-07-03 19:36:52,582 [INFO] Sent 2200000 / 2229453  (98.7%)  elapsed=177.8s  throughput=12377 ev/s
+2026-07-03 19:36:52,856 [INFO] Sent 2205000 / 2229453  (98.9%)  elapsed=178.0s  throughput=12386 ev/s
+2026-07-03 19:36:53,169 [INFO] Sent 2210000 / 2229453  (99.1%)  elapsed=178.3s  throughput=12392 ev/s
+2026-07-03 19:36:53,875 [INFO] Sent 2215000 / 2229453  (99.4%)  elapsed=179.0s  throughput=12371 ev/s
+2026-07-03 19:36:54,151 [INFO] Sent 2220000 / 2229453  (99.6%)  elapsed=179.3s  throughput=12380 ev/s
+2026-07-03 19:36:54,437 [INFO] Sent 2225000 / 2229453  (99.8%)  elapsed=179.6s  throughput=12388 ev/s
+2026-07-03 19:36:54,821 [INFO] Replay complete: 2229453 events in 180.0 s (avg 12386 ev/s) — delayed: 0 (0.0%)
+2026-07-03 19:36:54,822 [INFO] Out-of-order emitted: 0 events (0.00% of emitted events)
+2026-07-03 19:36:54,828 [INFO] End-of-stream markers sent to 4 partition(s) (event_time=2200-01-01 00:00:00+00:00) — final event-time windows will flush at the next checkpoint.
+2026-07-03 19:36:54,829 [INFO] <KafkaProducer client_id=kafka-python-producer-1 transactional_id=None>: Closing the Kafka producer with 9223372036.0 secs timeout.
+2026-07-03 19:36:54,829 [INFO] <BrokerConnection client_id=kafka-python-producer-1, node_id=1 host=kafka:9092 <connected> [IPv4 ('172.18.0.2', 9092)]>: Closing connection. 
+2026-07-03 19:36:54,829 [INFO] Producer closed.

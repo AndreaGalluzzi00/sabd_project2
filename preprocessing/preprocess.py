@@ -82,9 +82,6 @@ def _compute_event_timestamps(df: pd.DataFrame) -> pd.Series:
 
     year  = df["YEAR"].fillna(2025).astype(int)
     month = df["MONTH"].fillna(1).astype(int).clip(1, 12)
-    # Keep real days: 29/30/31 are valid for most months. Only guard against
-    # 0/negative values. Genuinely impossible dates (e.g. Feb 30) become NaT
-    # in to_datetime below and are caught by the first-of-month fallback.
     day   = df["DAY_OF_MONTH"].fillna(1).astype(int).clip(lower=1)
 
     dt_strings = (
