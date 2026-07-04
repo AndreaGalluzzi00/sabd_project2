@@ -28,5 +28,5 @@ RUN wget -q -P /opt/flink/lib/ \
 COPY common /opt/flink/jobs/common
 COPY flink_jobs /opt/flink/jobs
 
-ENV PYTHONPATH=/opt/flink/jobs:/opt/flink/jobs/q1:/opt/flink/jobs/q2
+ENV PYTHONPATH=/opt/flink/jobs:/opt/flink/jobs/q1:/opt/flink/jobs/q2:/opt/flink/jobs/q3
 ENV CONFIG_PATH=/config/base.yml
