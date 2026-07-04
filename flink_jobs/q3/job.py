@@ -51,7 +51,7 @@ from flink_runtime import (
     create_stream_execution_environment,
 )
 from flight_avro import decode_flight_for_q3, hour_band
-from window_ops import (
+from q3_window_ops import (
     CSV_SINK_DDL,
     JDBC_SINK_DDL,
     KAFKA_SINK_DDL,
@@ -206,7 +206,7 @@ def build_window_pipeline(
     table = t_env.from_data_stream(
         result_ds,
         Schema.new_builder()
-            .column("ts",          DataTypes.TIMESTAMP(3))
+            .column("ts",          DataTypes.TIMESTAMP(3).bridged_to("java.sql.Timestamp"))
             .column("airline",     DataTypes.STRING())
             .column("hour",        DataTypes.INT())
             .column("num_flights", DataTypes.BIGINT())
@@ -237,7 +237,7 @@ def build_window_pipeline(
         # hour → STRING: Telegraf usa solo stringhe come tag InfluxDB.
         stmt_set.add_insert_sql(f"""
             INSERT INTO {kafka_sink}
-            SELECT ts, airline, CAST(hour AS STRING), num_flights,
+            SELECT ts, airline, CAST(`hour` AS STRING), num_flights,
                    delay_min, p25, p50, p75, p90, delay_max
             FROM {view}
         """)
