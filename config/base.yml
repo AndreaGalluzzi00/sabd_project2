@@ -36,10 +36,6 @@ kafka:
   bootstrap_servers: "kafka:9092"
   topic: "flights"
 
-nifi:
-  endpoint: "http://nifi:9876/flights"
-  http_batch_size: 100
-
 schema_registry:
   url: "http://schema-registry:8081"
   subject: "flights-value"

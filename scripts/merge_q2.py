@@ -7,7 +7,7 @@ script only needs to:
   1. Find finalised part-files.
   2. Deduplicate rows (keep first occurrence, same policy as merge_q1.py).
   3. Sort by ts ASC, then airport_rank ASC.
-  4. Write with the spec-compliant header (renames airport_rank → rank).
+  4. Write with the spec-compliant header (renames airport_rank -> rank).
 
 Usage:
     python scripts/merge_q2.py [--experiment <name>]
@@ -35,7 +35,7 @@ CONFIG_PATH = configure_config_path(ARGS.experiment)
 from common.config import load_config  # noqa: E402
 
 
-# Spec output header (airport_rank → rank as required by the spec schema)
+# Spec output header (airport_rank -> rank as required by the spec schema)
 HEADER = (
     "ts,rank,origin_airport_id,num_flights,severe_delays,"
     "dep_delay_mean,dep_delay_max,delayed_flights"
@@ -114,13 +114,13 @@ def merge_window(wc: WindowMergeConfig) -> None:
     part_files = find_finalized_part_files(wc.results_dir)
 
     if not part_files:
-        print(f"[{wc.label}] No finalised part files — skipping.")
+        print(f"[{wc.label}] No finalised part files - skipping.")
         return
 
-    print(f"[{wc.label}] Found {len(part_files)} part file(s) — merging …")
+    print(f"[{wc.label}] Found {len(part_files)} part file(s) - merging ...")
     rows = sort_rows(read_rows(part_files))
     write_output(rows, wc.output_file)
-    print(f"[{wc.label}] Written {len(rows)} rows → {wc.output_file}")
+    print(f"[{wc.label}] Written {len(rows)} rows -> {wc.output_file}")
 
 
 def main() -> None:

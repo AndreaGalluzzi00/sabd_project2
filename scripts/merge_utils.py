@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -23,7 +25,95 @@ def parse_experiment_args(description: str) -> argparse.Namespace:
         help="Experiment name under config/experiments, e.g. 02_ooo_safe",
     )
 
+    parser.add_argument(
+        "--wait",
+        action="store_true",
+        help=(
+            "Wait until the finalized part files are stable (no new files or "
+            "rows for at least ~2 Flink checkpoint intervals) before merging."
+        ),
+    )
+
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=180.0,
+        help="Max seconds to wait for stable results with --wait (default: 180).",
+    )
+
     return parser.parse_args()
+
+
+def stability_window_seconds(cfg: dict) -> float:
+    """Stability window sized to cover at least two Flink checkpoints.
+
+    Part files are finalized only when a checkpoint completes, so if nothing
+    new shows up for ~2.5 checkpoint intervals there is no committed data
+    left in flight.
+    """
+    checkpoint_ms = float(cfg.get("flink", {}).get("checkpoint_interval_ms", 10_000))
+
+    return max(2.5 * checkpoint_ms / 1000.0, 15.0)
+
+
+def _snapshot_results(
+    find_part_files: Callable[[], list[Path]],
+) -> tuple[tuple[str, ...], int]:
+    files = find_part_files()
+    names = tuple(sorted(str(path) for path in files))
+
+    total_rows = 0
+    for path in files:
+        with path.open("r", encoding="utf-8") as file:
+            total_rows += sum(1 for line in file if line.strip())
+
+    return names, total_rows
+
+
+def wait_for_stable_results(
+    find_part_files: Callable[[], list[Path]],
+    stable_for_seconds: float,
+    poll_seconds: float = 2.0,
+    timeout_seconds: float = 180.0,
+) -> None:
+    """Block until the set of finalized part files stops changing.
+
+    The snapshot (file names + total row count) must stay identical, with at
+    least one row, for stable_for_seconds. Raises TimeoutError otherwise: an
+    empty results directory never counts as stable, so a merge launched too
+    early fails loudly instead of producing a truncated CSV.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    previous: tuple[tuple[str, ...], int] | None = None
+    stable_since = time.monotonic()
+
+    while True:
+        current = _snapshot_results(find_part_files)
+        now = time.monotonic()
+
+        if current != previous:
+            print(
+                f"Waiting for stable results: {len(current[0])} finalized "
+                f"part file(s), {current[1]} row(s)..."
+            )
+            previous = current
+            stable_since = now
+        elif current[1] > 0 and now - stable_since >= stable_for_seconds:
+            print(
+                f"Results stable for {stable_for_seconds:.0f}s: "
+                f"{len(current[0])} part file(s), {current[1]} row(s)."
+            )
+            return
+
+        if now >= deadline:
+            raise TimeoutError(
+                f"Results not stable after {timeout_seconds:.0f}s "
+                f"(finalized part files: {len(current[0])}, "
+                f"rows: {current[1]}). The Flink job may still be writing, "
+                "or checkpointing may be stuck."
+            )
+
+        time.sleep(poll_seconds)
 
 
 def resolve_config_path(experiment: str | None) -> Path:

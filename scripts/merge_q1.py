@@ -12,6 +12,8 @@ from merge_utils import (
     get_experiment_name,
     parse_experiment_args,
     resolve_project_path,
+    stability_window_seconds,
+    wait_for_stable_results,
 )
 
 ARGS = parse_experiment_args(
@@ -34,6 +36,7 @@ HEADER = (
 class MergeConfig:
     results_dir: Path
     output_file: Path
+    stable_for_seconds: float
 
 
 def load_merge_config() -> MergeConfig:
@@ -53,6 +56,7 @@ def load_merge_config() -> MergeConfig:
     return MergeConfig(
         results_dir=results_dir,
         output_file=output_file,
+        stable_for_seconds=stability_window_seconds(cfg),
     )
 
 
@@ -105,13 +109,24 @@ def main() -> None:
 
     cfg = load_merge_config()
 
+    if ARGS.wait:
+        try:
+            wait_for_stable_results(
+                find_part_files=lambda: find_finalized_part_files(cfg.results_dir),
+                stable_for_seconds=cfg.stable_for_seconds,
+                timeout_seconds=ARGS.timeout,
+            )
+        except TimeoutError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
+
     part_files = find_finalized_part_files(cfg.results_dir)
 
     if not part_files:
         print(f"No finalized part files found in {cfg.results_dir}")
         sys.exit(1)
 
-    print(f"Found {len(part_files)} part file(s) in {cfg.results_dir} — merging...")
+    print(f"Found {len(part_files)} part file(s) in {cfg.results_dir} - merging...")
 
     rows = read_rows(part_files)
     rows = sort_rows(rows)
@@ -121,7 +136,7 @@ def main() -> None:
         output_file=cfg.output_file,
     )
 
-    print(f"Written {len(rows)} rows → {cfg.output_file}")
+    print(f"Written {len(rows)} rows -> {cfg.output_file}")
 
 
 if __name__ == "__main__":

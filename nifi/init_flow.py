@@ -123,10 +123,71 @@ def _ensure_controller_service(pg_id: str, type_: str, name: str, properties: di
     if existing is not None:
         service_id = existing["id"]
         logger.info("Reusing controller service %s (%s)", name, service_id)
+        _update_controller_service(service_id, properties)
         return service_id
 
     logger.info("Creating controller service %s", name)
     return _create_controller_service(pg_id, type_, name, properties)
+
+
+def _properties_match(existing: dict, desired: dict) -> bool:
+    for key, value in desired.items():
+        if str(existing.get(key)) != str(value):
+            return False
+    return True
+
+
+def _disable_controller_service(cs_id: str) -> None:
+    data = _nifi("GET", f"/controller-services/{cs_id}").json()
+    state = data["component"]["state"]
+
+    if state == "DISABLED":
+        logger.info("Controller service %s already disabled.", cs_id)
+        return
+
+    version = data["revision"]["version"]
+    body = {
+        "revision": {"version": version},
+        "state": "DISABLED",
+    }
+    _nifi("PUT", f"/controller-services/{cs_id}/run-status", json=body)
+
+    for _ in range(60):
+        time.sleep(2)
+        state = _nifi("GET", f"/controller-services/{cs_id}").json()
+        if state["component"]["state"] == "DISABLED":
+            return
+
+    raise RuntimeError(f"Controller service {cs_id} did not disable in time.")
+
+
+def _update_controller_service(cs_id: str, properties: dict) -> None:
+    data = _nifi("GET", f"/controller-services/{cs_id}").json()
+    component = data["component"]
+    current_properties = component.get("properties") or {}
+
+    if _properties_match(current_properties, properties):
+        logger.info("Controller service %s already has desired properties.", cs_id)
+        return
+
+    if component["state"] != "DISABLED":
+        _disable_controller_service(cs_id)
+        data = _nifi("GET", f"/controller-services/{cs_id}").json()
+        component = data["component"]
+        current_properties = component.get("properties") or {}
+
+    updated_properties = dict(current_properties)
+    updated_properties.update(properties)
+
+    body = {
+        "revision": {"version": data["revision"]["version"]},
+        "component": {
+            "id": cs_id,
+            "properties": updated_properties,
+        },
+    }
+    _nifi("PUT", f"/controller-services/{cs_id}", json=body)
+    logger.info("Updated controller service %s properties.", cs_id)
 
 
 def _enable_controller_service(cs_id: str) -> None:
@@ -178,6 +239,7 @@ def _ensure_processor(
     if existing is not None:
         proc_id = existing["id"]
         logger.info("Reusing processor %s (%s)", name, proc_id)
+        _update_processor(proc_id, properties)
         return proc_id
 
     logger.info("Creating processor %s", name)
@@ -251,6 +313,66 @@ def _auto_terminate(proc_id: str, relationships: list[str]) -> None:
     _nifi("PUT", f"/processors/{proc_id}", json=body)
 
 
+def _stop_processor(proc_id: str) -> None:
+    data = _nifi("GET", f"/processors/{proc_id}").json()
+    state = data["component"].get("state")
+
+    if state == "STOPPED":
+        logger.info("Processor %s already stopped.", proc_id)
+        return
+
+    if state != "RUNNING":
+        logger.info("Processor %s state is %s; no stop requested.", proc_id, state)
+        return
+
+    version = data["revision"]["version"]
+    body = {
+        "revision": {"version": version},
+        "state": "STOPPED",
+    }
+    _nifi("PUT", f"/processors/{proc_id}/run-status", json=body)
+
+    for _ in range(60):
+        time.sleep(2)
+        state = _nifi("GET", f"/processors/{proc_id}").json()
+        if state["component"]["state"] == "STOPPED":
+            return
+
+    raise RuntimeError(f"Processor {proc_id} did not stop in time.")
+
+
+def _update_processor(proc_id: str, properties: dict) -> None:
+    data = _nifi("GET", f"/processors/{proc_id}").json()
+    component = data["component"]
+    config = component["config"]
+    current_properties = config.get("properties") or {}
+
+    if _properties_match(current_properties, properties):
+        logger.info("Processor %s already has desired properties.", proc_id)
+        return
+
+    if component.get("state") == "RUNNING":
+        _stop_processor(proc_id)
+        data = _nifi("GET", f"/processors/{proc_id}").json()
+        component = data["component"]
+        config = component["config"]
+        current_properties = config.get("properties") or {}
+
+    updated_properties = dict(current_properties)
+    updated_properties.update(properties)
+    config["properties"] = updated_properties
+
+    body = {
+        "revision": {"version": data["revision"]["version"]},
+        "component": {
+            "id": proc_id,
+            "config": config,
+        },
+    }
+    _nifi("PUT", f"/processors/{proc_id}", json=body)
+    logger.info("Updated processor %s properties.", proc_id)
+
+
 def _start_processor(proc_id: str) -> None:
     data = _nifi("GET", f"/processors/{proc_id}").json()
     state = data["component"].get("state")
@@ -274,6 +396,39 @@ def main() -> None:
 
     pg_id = _get_root_pg_id()
     logger.info("Root process group ID: %s", pg_id)
+
+    # Existing containers may still hold the pre-Avro flow. Stop and disable the
+    # known components before reconciling properties so old JSON writers/readers
+    # cannot survive a code update.
+    existing_processors = _list_processors(pg_id)
+    for proc_type, proc_name in [
+        ("org.apache.nifi.processors.standard.ListenHTTP", "ListenHTTP"),
+        (
+            "org.apache.nifi.processors.kafka.pubsub.PublishKafkaRecord_2_6",
+            "PublishKafkaRecord",
+        ),
+    ]:
+        existing = _find_component(existing_processors, proc_name, proc_type)
+        if existing is not None:
+            logger.info("Stopping existing processor %s before reconciliation.", proc_name)
+            _stop_processor(existing["id"])
+
+    existing_services = _list_controller_services(pg_id)
+    for service_type, service_name in [
+        ("org.apache.nifi.avro.AvroRecordSetWriter", "AvroRecordSetWriter"),
+        ("org.apache.nifi.csv.CSVReader", "CSVReader"),
+        (
+            "org.apache.nifi.confluent.schemaregistry.ConfluentSchemaRegistry",
+            "ConfluentSchemaRegistry",
+        ),
+    ]:
+        existing = _find_component(existing_services, service_name, service_type)
+        if existing is not None:
+            logger.info(
+                "Disabling existing controller service %s before reconciliation.",
+                service_name,
+            )
+            _disable_controller_service(existing["id"])
 
     # ── Controller services ───────────────────────────────────────────────────
 

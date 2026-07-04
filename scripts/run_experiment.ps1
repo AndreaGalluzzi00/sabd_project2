@@ -10,6 +10,8 @@ Prima esecuzione:
     docker exec flink-jobmanager flink list -r
     docker exec flink-jobmanager flink cancel <JOB_ID>
 
+    docker exec flink-jobmanager sh -lc '/opt/flink/bin/flink list -r | grep -Eo "[a-f0-9]{32}" | xargs -r -n1 /opt/flink/bin/flink cancel'
+
 Esecuzione con config base:
     .\scripts\run_experiment.ps1
 
@@ -37,8 +39,8 @@ Se il preprocessing è già stato eseguito:
 Per non cancellare i risultati precedenti:
     .\scripts\run_experiment.ps1 -e 02_ooo_safe -NoPreprocess -NoCleanResults
 
-Per cambiare il tempo di attesa prima del merge automatico:
-    .\scripts\run_experiment.ps1 -e 02_ooo_safe -NoPreprocess -MergeDelaySeconds 35
+Per cambiare il timeout dell'attesa risultati prima del merge automatico:
+    .\scripts\run_experiment.ps1 -e 02_ooo_safe -NoPreprocess -MergeTimeoutSeconds 300
 
 Per disattivare il merge automatico:
     .\scripts\run_experiment.ps1 -e 02_ooo_safe -NoPreprocess -NoMerge
@@ -67,11 +69,13 @@ Parametri disponibili:
     -NoResetTopic          Non cancella e non ricrea il topic Kafka flights.
     -NoCleanResults        Non cancella la cartella dei part file prima del run.
     -NoMerge               Non esegue il merge automatico.
-    -MergeDelaySeconds     Numero di secondi da attendere prima del merge. Default: 25.
+    -MergeTimeoutSeconds   Timeout (s) dell'attesa che i part file siano stabili
+                           prima del merge (merge_q1.py --wait). Default: 180.
     -FullFlow              Avvia entrambi i backend dashboard e abilita i sink runtime.
     -DashboardInflux       Avvia/abilita solo InfluxDB via Kafka+Telegraf.
     -DashboardTimescale    Avvia/abilita solo TimescaleDB via JDBC.
     -NoCleanDashboard      Non pulisce lo stato dashboard prima della run.
+    -KeepFlinkJob          Non cancella il job Flink a fine esperimento.
 #>
 
 param(
@@ -87,8 +91,9 @@ param(
     [switch]$DashboardInflux,
     [switch]$DashboardTimescale,
     [switch]$NoCleanDashboard,
+    [switch]$KeepFlinkJob,
 
-    [int]$MergeDelaySeconds = 25
+    [int]$MergeTimeoutSeconds = 180
 )
 
 $ErrorActionPreference = "Stop"
@@ -163,7 +168,7 @@ function Initialize-Q1ResultsDirectory {
     New-Item -ItemType Directory -Force -Path $ResultsHostPath | Out-Null
 }
 
-function New-DashboardRuntimeConfig {
+function New-ExperimentRuntimeConfig {
     param(
         [Parameter(Mandatory = $true)]
         [string]$ConfigPathHost,
@@ -182,8 +187,10 @@ function New-DashboardRuntimeConfig {
     New-Item -ItemType Directory -Force -Path $RuntimeDir | Out-Null
 
     $SafeLabel = $Label -replace "[^A-Za-z0-9_.-]", "_"
-    $RuntimeFileName = "$SafeLabel.full-flow.yml"
+    $RunId = "$(Get-Date -Format 'yyyyMMddHHmmss')-$PID"
+    $RuntimeFileName = "$SafeLabel.$RunId.runtime.yml"
     $RuntimeHostPath = Join-Path $RuntimeDir $RuntimeFileName
+    $ConsumerGroup = "flink-flight-analysis-$SafeLabel-$RunId"
 
     $BaseFileName = Split-Path $ConfigPathHost -Leaf
     if ($ConfigPathHost -like "config/experiments/*") {
@@ -199,6 +206,9 @@ function New-DashboardRuntimeConfig {
     $RuntimeConfig = @"
 extends: "$ExtendsPath"
 
+flink:
+  consumer_group: "$ConsumerGroup"
+
 dashboard:
   influx:
     enabled: $InfluxEnabled
@@ -211,6 +221,7 @@ dashboard:
     return @{
         HostPath = $RuntimeHostPath
         ContainerPath = "/config/runtime/$RuntimeFileName"
+        ConsumerGroup = $ConsumerGroup
     }
 }
 
@@ -256,6 +267,67 @@ function Start-DashboardStack {
     Invoke-Checked {
         docker compose @ProfileArgs up -d
     }
+}
+
+function Test-DockerContainerRunning {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    $Names = @(docker ps --format "{{.Names}}")
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to inspect Docker containers."
+    }
+
+    return $Names -contains $Name
+}
+
+function Get-RunningFlinkJobIds {
+    if (-not (Test-DockerContainerRunning -Name "flink-jobmanager")) {
+        Write-Host "Flink JobManager not running; no existing jobs to cancel."
+        return @()
+    }
+
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $Output = @(docker exec flink-jobmanager flink list -r 2>&1)
+        $ExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $PreviousErrorActionPreference
+    }
+
+    if ($ExitCode -ne 0) {
+        Write-Warning "Unable to list running Flink jobs; continuing. Output: $($Output -join ' ')"
+        return @()
+    }
+
+    $Text = $Output -join "`n"
+    $Matches = [regex]::Matches($Text, "\b[a-f0-9]{32}\b")
+
+    return @($Matches | ForEach-Object { $_.Value } | Select-Object -Unique)
+}
+
+function Clear-RunningFlinkJobs {
+    $JobIds = @(Get-RunningFlinkJobIds)
+
+    if ($JobIds.Count -eq 0) {
+        Write-Host "No running Flink jobs to cancel."
+        return
+    }
+
+    Write-Host "Cancelling existing Flink job(s): $($JobIds -join ', ')"
+
+    foreach ($JobId in $JobIds) {
+        Invoke-Checked {
+            docker exec flink-jobmanager flink cancel $JobId
+        }
+    }
+
+    Start-Sleep -Seconds 5
 }
 
 function Reset-KafkaTopic {
@@ -324,8 +396,8 @@ function Clear-TimescaleQ1Results {
 
 Assert-ProjectRoot
 
-if ($MergeDelaySeconds -lt 0) {
-    throw "MergeDelaySeconds non può essere negativo."
+if ($MergeTimeoutSeconds -le 0) {
+    throw "MergeTimeoutSeconds deve essere maggiore di zero."
 }
 
 $EnableInflux = [bool]($FullFlow -or $DashboardInflux)
@@ -351,19 +423,15 @@ else {
     $MergeArgs = @("--exp", $Exp)
 }
 
-$SubmitCfgHost = $CfgHost
-$SubmitCfgContainer = $CfgContainer
+$RuntimeCfg = New-ExperimentRuntimeConfig `
+    -ConfigPathHost $CfgHost `
+    -Label $Label `
+    -EnableInflux $EnableInflux `
+    -EnableTimescale $EnableTimescale
 
-if ($DashboardEnabled) {
-    $RuntimeCfg = New-DashboardRuntimeConfig `
-        -ConfigPathHost $CfgHost `
-        -Label $Label `
-        -EnableInflux $EnableInflux `
-        -EnableTimescale $EnableTimescale
-
-    $SubmitCfgHost = $RuntimeCfg.HostPath
-    $SubmitCfgContainer = $RuntimeCfg.ContainerPath
-}
+$SubmitCfgHost = $RuntimeCfg.HostPath
+$SubmitCfgContainer = $RuntimeCfg.ContainerPath
+$RuntimeConsumerGroup = $RuntimeCfg.ConsumerGroup
 
 $Q1ResultsHostPath = Get-Q1ResultsHostPath -ConfigPathHost $CfgHost
 
@@ -377,6 +445,7 @@ Write-Host "Running Q1 experiment: $Label"
 Write-Host "Config host         : $CfgHost"
 Write-Host "Submit config host  : $SubmitCfgHost"
 Write-Host "Config inside Docker: $SubmitCfgContainer"
+Write-Host "Runtime consumer    : $RuntimeConsumerGroup"
 if ($DashboardEnabled) {
     Write-Host "Dashboard InfluxDB  : $EnableInflux"
     Write-Host "Dashboard Timescale : $EnableTimescale"
@@ -396,6 +465,8 @@ if ($DashboardEnabled) {
         Clear-TimescaleQ1Results
     }
 }
+
+Clear-RunningFlinkJobs
 
 if (-not $NoResetTopic) {
     Write-Host "Reset Kafka topic flights..."
@@ -430,7 +501,7 @@ if (-not $NoPreprocess) {
     Write-Host "Running preprocessing with base config..."
 
     Invoke-Checked {
-        docker compose run --rm `
+        docker compose run --rm --build `
             -e CONFIG_PATH=/config/base.yml `
             preprocess
     }
@@ -444,7 +515,7 @@ Write-Host ""
 Write-Host "Submitting Flink Q1 job..."
 
 Invoke-Checked {
-    docker compose run --rm `
+    docker compose run --rm --build `
         -e CONFIG_PATH=$SubmitCfgContainer `
         flink-job-q1
 }
@@ -453,7 +524,7 @@ Write-Host ""
 Write-Host "Running producer..."
 
 Invoke-Checked {
-    docker compose run --rm `
+    docker compose run --rm --build `
         -e CONFIG_PATH=$SubmitCfgContainer `
         producer
 }
@@ -467,19 +538,25 @@ Invoke-Checked {
 
 if (-not $NoMerge) {
     Write-Host ""
-    Write-Host "Waiting $MergeDelaySeconds seconds before merge..."
-    Start-Sleep -Seconds $MergeDelaySeconds
-
-    Write-Host ""
-    Write-Host "Merging Q1 results..."
+    Write-Host "Merging Q1 results (waiting for part files to stabilize)..."
 
     Invoke-Checked {
-        python .\scripts\merge_q1.py @MergeArgs
+        python .\scripts\merge_q1.py @MergeArgs --wait --timeout $MergeTimeoutSeconds
     }
 }
 else {
     Write-Host ""
     Write-Host "Merge skipped."
+}
+
+if (-not $KeepFlinkJob) {
+    Write-Host ""
+    Write-Host "Cancelling Flink jobs after experiment..."
+    Clear-RunningFlinkJobs
+}
+else {
+    Write-Host ""
+    Write-Host "Flink job left running because -KeepFlinkJob was specified."
 }
 
 Write-Host ""

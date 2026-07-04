@@ -1,4 +1,4 @@
-window_start,window_end,airline,num_flights,completed,cancelled_count,diverted_count,dep_delay_mean,cancellation_rate,late_departure_rate
+window_start,window_end,airline,num_flights,completed,cancelled,diverted,dep_delay_mean,cancellation_rate,late_departure_rate
 "2025-01-01 00:00:00","2025-01-01 01:00:00",AA,13,13,0,0,7.384615384615385,0.0,30.76923076923077
 "2025-01-01 00:00:00","2025-01-01 01:00:00",DL,1,1,0,0,-6.0,0.0,0.0
 "2025-01-01 00:00:00","2025-01-01 01:00:00",UA,7,7,0,0,10.571428571428571,0.0,14.285714285714286
