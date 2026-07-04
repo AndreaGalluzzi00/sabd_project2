@@ -1,0 +1,187 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["sabd", "q3"],
+  "templating": {
+    "list": [
+      {
+        "type": "custom",
+        "name": "airline",
+        "label": "Compagnia",
+        "query": "AA,DL,UA,WN",
+        "current": { "text": "AA", "value": "AA", "selected": true },
+        "options": [
+          { "text": "AA", "value": "AA", "selected": true },
+          { "text": "DL", "value": "DL", "selected": false },
+          { "text": "UA", "value": "UA", "selected": false },
+          { "text": "WN", "value": "WN", "selected": false }
+        ],
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "type": "custom",
+        "name": "hour",
+        "label": "Fascia oraria",
+        "query": "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23",
+        "current": { "text": "8", "value": "8", "selected": true },
+        "options": [
+          { "text": "0", "value": "0", "selected": false },
+          { "text": "1", "value": "1", "selected": false },
+          { "text": "2", "value": "2", "selected": false },
+          { "text": "3", "value": "3", "selected": false },
+          { "text": "4", "value": "4", "selected": false },
+          { "text": "5", "value": "5", "selected": false },
+          { "text": "6", "value": "6", "selected": false },
+          { "text": "7", "value": "7", "selected": false },
+          { "text": "8", "value": "8", "selected": true },
+          { "text": "9", "value": "9", "selected": false },
+          { "text": "10", "value": "10", "selected": false },
+          { "text": "11", "value": "11", "selected": false },
+          { "text": "12", "value": "12", "selected": false },
+          { "text": "13", "value": "13", "selected": false },
+          { "text": "14", "value": "14", "selected": false },
+          { "text": "15", "value": "15", "selected": false },
+          { "text": "16", "value": "16", "selected": false },
+          { "text": "17", "value": "17", "selected": false },
+          { "text": "18", "value": "18", "selected": false },
+          { "text": "19", "value": "19", "selected": false },
+          { "text": "20", "value": "20", "selected": false },
+          { "text": "21", "value": "21", "selected": false },
+          { "text": "22", "value": "22", "selected": false },
+          { "text": "23", "value": "23", "selected": false }
+        ],
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "time": { "from": "2025-01-01T00:00:00.000Z", "to": "2025-05-01T00:00:00.000Z" },
+  "timepicker": {},
+  "timezone": "utc",
+  "title": "SABD - Q3 Distribuzione ritardi per compagnia e fascia (real-time)",
+  "uid": "sabd-q3",
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Percentili DEP_DELAY - finestra 1g ($airline, fascia $hour)",
+      "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 8, "showPoints": "auto" },
+          "unit": "m"
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
+          "query": "from(bucket: \"flights\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"q3_1d\" and r[\"airline\"] == \"${airline}\" and r[\"hour\"] == \"${hour}\") |> filter(fn: (r) => r[\"_field\"] == \"p25\" or r[\"_field\"] == \"p50\" or r[\"_field\"] == \"p75\" or r[\"_field\"] == \"p90\") |> keep(columns: [\"_time\", \"_value\", \"_field\"]) |> group(columns: [\"_field\"]) |> sort(columns: [\"_time\"])"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Mediana (p50) per compagnia - finestra 1g (fascia $hour)",
+      "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 8, "showPoints": "auto" },
+          "unit": "m"
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
+          "query": "from(bucket: \"flights\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"q3_1d\" and r[\"hour\"] == \"${hour}\" and r[\"_field\"] == \"p50\") |> keep(columns: [\"_time\", \"_value\", \"airline\"]) |> group(columns: [\"airline\"]) |> sort(columns: [\"_time\"])"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Percentili DEP_DELAY - finestra 7g ($airline, fascia $hour)",
+      "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 8, "showPoints": "auto" },
+          "unit": "m"
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
+          "query": "from(bucket: \"flights\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"q3_7d\" and r[\"airline\"] == \"${airline}\" and r[\"hour\"] == \"${hour}\") |> filter(fn: (r) => r[\"_field\"] == \"p25\" or r[\"_field\"] == \"p50\" or r[\"_field\"] == \"p75\" or r[\"_field\"] == \"p90\") |> keep(columns: [\"_time\", \"_value\", \"_field\"]) |> group(columns: [\"_field\"]) |> sort(columns: [\"_time\"])"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Voli considerati per compagnia - finestra 1g (fascia $hour)",
+      "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 8, "showPoints": "auto" },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
+          "query": "from(bucket: \"flights\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"q3_1d\" and r[\"hour\"] == \"${hour}\" and r[\"_field\"] == \"num_flights\") |> keep(columns: [\"_time\", \"_value\", \"airline\"]) |> group(columns: [\"airline\"]) |> sort(columns: [\"_time\"])"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Distribuzione dall'inizio del dataset - $airline per fascia oraria (si popola al termine del replay)",
+      "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 18 },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
+      "options": { "showHeader": true },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "hour": 0, "num_flights": 1, "delay_min": 2,
+              "p25": 3, "p50": 4, "p75": 5, "p90": 6, "delay_max": 7
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
+          "query": "from(bucket: \"flights\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"q3_global\" and r[\"airline\"] == \"${airline}\") |> filter(fn: (r) => r[\"_field\"] == \"num_flights\" or r[\"_field\"] == \"delay_min\" or r[\"_field\"] == \"p25\" or r[\"_field\"] == \"p50\" or r[\"_field\"] == \"p75\" or r[\"_field\"] == \"p90\" or r[\"_field\"] == \"delay_max\") |> group(columns: [\"hour\", \"_field\"]) |> last() |> keep(columns: [\"hour\", \"_field\", \"_value\"]) |> group() |> pivot(rowKey: [\"hour\"], columnKey: [\"_field\"], valueColumn: \"_value\") |> map(fn: (r) => ({ r with hour: int(v: r.hour) })) |> sort(columns: [\"hour\"])"
+        }
+      ]
+    }
+  ]
+}
