@@ -14,26 +14,43 @@ from pyflink.table.udf import AggregateFunction, udaf
 
 # ── UDAF: top-20 severely delayed flights per airport per window ──────────────
 
+# Max number of severely-delayed flights reported per airport (spec: at most 20).
+TOP_N = 20
+
+
 class TopDelayedCollector(AggregateFunction):
     """
-    Accumulates (carrier, dest_airport_id, dep_delay) tuples.
-    The SQL caller passes NULL for non-qualifying rows (dep_delay <= 30);
-    NULLs are silently ignored.
-    Returns the top-20 by dep_delay descending as a formatted string.
+    Keeps the TOP_N (carrier, dest_airport_id, dep_delay) tuples with the
+    largest dep_delay for one airport/window. The SQL caller passes NULL for
+    non-qualifying rows (dep_delay <= 30); NULLs are silently ignored.
+    Returns them sorted by dep_delay descending as a formatted string.
+
+    The accumulator is trimmed to TOP_N on every accumulate() (not only in
+    get_value), so the checkpointed state stays O(TOP_N) per key instead of
+    growing with every severe-delay flight. Without this, the 6h and — above
+    all — the 365-day global window build unbounded lists that overflow the
+    checkpoint state limit. Top-k is decomposable, so trimming incrementally
+    returns exactly the same result as trimming once at the end.
     """
 
     def create_accumulator(self):
         return []
 
     def accumulate(self, acc, carrier, dest_airport_id, dep_delay):
-        if carrier is not None and dep_delay is not None:
-            acc.append((str(carrier), int(dest_airport_id) if dest_airport_id is not None else 0, float(dep_delay)))
+        if carrier is None or dep_delay is None:
+            return
+        acc.append((str(carrier),
+                    int(dest_airport_id) if dest_airport_id is not None else 0,
+                    float(dep_delay)))
+        if len(acc) > TOP_N:
+            acc.sort(key=lambda x: x[2], reverse=True)
+            del acc[TOP_N:]
 
     def get_value(self, acc):
         if not acc:
             return "[]"
-        top20 = sorted(acc, key=lambda x: x[2], reverse=True)[:20]
-        return "[" + ",".join(f"({f[0]},{f[1]},{f[2]:.2f})" for f in top20) + "]"
+        top = sorted(acc, key=lambda x: x[2], reverse=True)
+        return "[" + ",".join(f"({f[0]},{f[1]},{f[2]:.2f})" for f in top) + "]"
 
     def get_result_type(self):
         return DataTypes.STRING()
@@ -54,9 +71,11 @@ def make_top_delayed_udaf():
 
 class Top10AllWindowFunction(ProcessAllWindowFunction):
     """
-    Receives all per-airport stats for a completed TUMBLE window (emitted as a
-    burst by Stage 1), sorts by severe_delays DESC (ties broken by dep_delay_mean
-    DESC), and emits exactly the top-10 with ranks 1–10.
+    Receives per-airport stats for a completed TUMBLE window from Stage 1. Since
+    Stage 1 runs as a retracting aggregate it emits several intermediate
+    snapshots per airport; this function keeps only the final snapshot per
+    airport, sorts by severe_delays DESC (ties broken by dep_delay_mean DESC),
+    and emits exactly the top-10 with ranks 1–10.
 
     Input Row column order (from make_stats_view_sql):
         0  window_start     TIMESTAMP_LTZ(3)
@@ -81,8 +100,23 @@ class Top10AllWindowFunction(ProcessAllWindowFunction):
 
     def process(self, context, elements):
         # PyFlink 1.20 calls process(context, elements) — use yield, not out.collect().
+        #
+        # Stage 1 carries a Python UDAF, so Flink plans it as a retracting group
+        # aggregate that re-emits an updated row for an airport on every input
+        # flight, not once when the window closes. We therefore receive many
+        # intermediate snapshots per airport. Keep only the final snapshot —
+        # the one with the largest num_flights (index 3), which grows
+        # monotonically within a tumbling window — before ranking; otherwise the
+        # same airport's intermediate snapshots would occupy multiple ranks.
+        latest: dict = {}
+        for r in elements:
+            airport = r[2]
+            current = latest.get(airport)
+            if current is None or (r[3] or 0) > (current[3] or 0):
+                latest[airport] = r
+
         airports = sorted(
-            list(elements),          # materialise one-shot iterator
+            latest.values(),
             key=lambda r: (-(r[4] or 0), -(r[5] or 0.0)),  # severe_delays DESC, mean DESC
         )
         for rank, r in enumerate(airports[:10], 1):

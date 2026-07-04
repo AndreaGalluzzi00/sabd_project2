@@ -184,6 +184,8 @@ services:
         rest.bind-port: 8081
         metrics.reporters: slf4j
         state.savepoints.dir: file:///opt/flink/savepoints
+        state.checkpoints.dir: file:///opt/flink/checkpoints
+        state.checkpoint-storage: filesystem
     volumes:
       - ./config:/config:ro
       - ./flink_jobs:/opt/flink/jobs:ro
@@ -217,6 +219,8 @@ services:
         taskmanager.numberOfTaskSlots: 4
         metrics.reporters: slf4j
         state.savepoints.dir: file:///opt/flink/savepoints
+        state.checkpoints.dir: file:///opt/flink/checkpoints
+        state.checkpoint-storage: filesystem
     volumes:
       - ./config:/config:ro
       - ./flink_jobs:/opt/flink/jobs:ro
