@@ -188,7 +188,11 @@ def build_window_pipeline(
     ranked_table = t_env.from_data_stream(
         ranked_ds,
         Schema.new_builder()
-            .column("ts",                DataTypes.TIMESTAMP(3))   # SQL_TIMESTAMP → java.sql.Timestamp → TIMESTAMP(3)
+            # The DataStream emits `ts` as Types.SQL_TIMESTAMP() → java.sql.Timestamp.
+            # TIMESTAMP(3) defaults to a java.time.LocalDateTime conversion class, so
+            # without bridging Flink raises "java.sql.Timestamp cannot be cast to
+            # java.time.LocalDateTime" during input conversion. Bridge to match.
+            .column("ts",                DataTypes.TIMESTAMP(3).bridged_to("java.sql.Timestamp"))
             .column("airport_rank",      DataTypes.BIGINT())
             .column("origin_airport_id", DataTypes.INT())
             .column("num_flights",       DataTypes.BIGINT())
