@@ -12,6 +12,8 @@ from merge_utils import (
     get_experiment_name,
     parse_experiment_args,
     resolve_project_path,
+    stability_window_seconds,
+    wait_for_stable_results,
 )
 
 ARGS = parse_experiment_args(
@@ -34,6 +36,7 @@ HEADER = (
 class MergeConfig:
     results_dir: Path
     output_file: Path
+    stable_for_seconds: float
 
 
 def load_merge_config() -> MergeConfig:
@@ -53,6 +56,7 @@ def load_merge_config() -> MergeConfig:
     return MergeConfig(
         results_dir=results_dir,
         output_file=output_file,
+        stable_for_seconds=stability_window_seconds(cfg),
     )
 
 
@@ -104,6 +108,17 @@ def main() -> None:
     print(f"Using config: {CONFIG_PATH}")
 
     cfg = load_merge_config()
+
+    if ARGS.wait:
+        try:
+            wait_for_stable_results(
+                find_part_files=lambda: find_finalized_part_files(cfg.results_dir),
+                stable_for_seconds=cfg.stable_for_seconds,
+                timeout_seconds=ARGS.timeout,
+            )
+        except TimeoutError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            sys.exit(1)
 
     part_files = find_finalized_part_files(cfg.results_dir)
 

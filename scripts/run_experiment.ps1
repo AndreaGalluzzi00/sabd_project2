@@ -39,8 +39,8 @@ Se il preprocessing è già stato eseguito:
 Per non cancellare i risultati precedenti:
     .\scripts\run_experiment.ps1 -e 02_ooo_safe -NoPreprocess -NoCleanResults
 
-Per cambiare il tempo di attesa prima del merge automatico:
-    .\scripts\run_experiment.ps1 -e 02_ooo_safe -NoPreprocess -MergeDelaySeconds 35
+Per cambiare il timeout dell'attesa risultati prima del merge automatico:
+    .\scripts\run_experiment.ps1 -e 02_ooo_safe -NoPreprocess -MergeTimeoutSeconds 300
 
 Per disattivare il merge automatico:
     .\scripts\run_experiment.ps1 -e 02_ooo_safe -NoPreprocess -NoMerge
@@ -69,7 +69,8 @@ Parametri disponibili:
     -NoResetTopic          Non cancella e non ricrea il topic Kafka flights.
     -NoCleanResults        Non cancella la cartella dei part file prima del run.
     -NoMerge               Non esegue il merge automatico.
-    -MergeDelaySeconds     Numero di secondi da attendere prima del merge. Default: 25.
+    -MergeTimeoutSeconds   Timeout (s) dell'attesa che i part file siano stabili
+                           prima del merge (merge_q1.py --wait). Default: 180.
     -FullFlow              Avvia entrambi i backend dashboard e abilita i sink runtime.
     -DashboardInflux       Avvia/abilita solo InfluxDB via Kafka+Telegraf.
     -DashboardTimescale    Avvia/abilita solo TimescaleDB via JDBC.
@@ -92,7 +93,7 @@ param(
     [switch]$NoCleanDashboard,
     [switch]$KeepFlinkJob,
 
-    [int]$MergeDelaySeconds = 40
+    [int]$MergeTimeoutSeconds = 180
 )
 
 $ErrorActionPreference = "Stop"
@@ -395,8 +396,8 @@ function Clear-TimescaleQ1Results {
 
 Assert-ProjectRoot
 
-if ($MergeDelaySeconds -lt 0) {
-    throw "MergeDelaySeconds non può essere negativo."
+if ($MergeTimeoutSeconds -le 0) {
+    throw "MergeTimeoutSeconds deve essere maggiore di zero."
 }
 
 $EnableInflux = [bool]($FullFlow -or $DashboardInflux)
@@ -537,14 +538,10 @@ Invoke-Checked {
 
 if (-not $NoMerge) {
     Write-Host ""
-    Write-Host "Waiting $MergeDelaySeconds seconds before merge..."
-    Start-Sleep -Seconds $MergeDelaySeconds
-
-    Write-Host ""
-    Write-Host "Merging Q1 results..."
+    Write-Host "Merging Q1 results (waiting for part files to stabilize)..."
 
     Invoke-Checked {
-        python .\scripts\merge_q1.py @MergeArgs
+        python .\scripts\merge_q1.py @MergeArgs --wait --timeout $MergeTimeoutSeconds
     }
 }
 else {
