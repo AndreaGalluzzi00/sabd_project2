@@ -55,6 +55,11 @@ Esecuzione con un solo backend dashboard:
 Merge manuale:
     python .\scripts\merge_q1.py --exp 02_ooo_safe
 
+Dopo il merge (e prima di cancellare il job) lo script legge dal JobManager
+la metrica numLateRecordsDropped (eventi scartati come late dalle finestre)
+e la accoda a Results/late_drops.csv, una riga per esperimento. Manuale:
+    python .\scripts\report_late_drops.py --exp 02_ooo_safe
+
 Esecuzione consigliata di tutti gli esperimenti:
     .\scripts\run_experiment.ps1 -e 01_baseline
     .\scripts\run_experiment.ps1 -e 02_ooo_safe -NoPreprocess
@@ -547,6 +552,15 @@ if (-not $NoMerge) {
 else {
     Write-Host ""
     Write-Host "Merge skipped."
+}
+
+Write-Host ""
+Write-Host "Collecting Flink late-drop metrics (numLateRecordsDropped)..."
+
+python .\scripts\report_late_drops.py @MergeArgs
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Late-drop metrics collection failed (exit code $LASTEXITCODE); continuing."
 }
 
 if (-not $KeepFlinkJob) {
