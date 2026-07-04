@@ -2,7 +2,7 @@
 """
 Merge Q2 part-files into three sorted CSV files (one per window size).
 
-The ranking is already computed by Flink's Top10AllWindowFunction, so this
+The ranking is already computed by Flink's SQL Window Top-N, so this
 script only needs to:
   1. Find finalised part-files.
   2. Deduplicate rows (keep first occurrence, same policy as merge_q1.py).

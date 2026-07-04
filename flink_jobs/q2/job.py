@@ -2,20 +2,21 @@
 """
 Q2 – Real-time ranking of departure airports with significant delays.
 
-Two-stage pipeline per window size (1h, 6h, 365-day global):
+Option B — pure Flink SQL, fully append-only, one job with three window
+pipelines (1h, 6h, 365-day global):
 
-  Stage 1 (SQL / Table API):
-    TUMBLE aggregation → per-airport stats (num_flights, severe_delays,
-    dep_delay_mean, dep_delay_max, delayed_flights).
-    Airports with < 30 completed flights are excluded (HAVING).
+  Stage 1 — Windowing TVF aggregation (append-only, fires once per window):
+    per (window, airport) num_flights, severe_delays, dep_delay_mean,
+    dep_delay_max and ARRAY_AGG of the severe flights. Airports with < 30
+    non-cancelled/non-diverted flights are excluded (HAVING).
 
-  Stage 2 (DataStream API):
-    All airports for a completed window arrive as a burst; a
-    ProcessAllWindowFunction sorts them and emits the top-10 ranked rows.
-    Output is append-only → compatible with the filesystem CSV sink.
+  Stage 2 — Window Top-N (native WindowRank operator): top-10 airports per
+    window ranked by severe_delays.
 
-The same ranked DataStream feeds optional dashboard sinks (Kafka → InfluxDB,
-JDBC → TimescaleDB) using the same pattern as Q1.
+  Stage 3 — a Python *scalar* UDF formats the severe-flight list (top-20 by
+    dep_delay). No Python UDAF is used, so the whole plan stays append-only
+    and maps directly onto the filesystem CSV sink (and the optional Kafka /
+    JDBC dashboard sinks).
 
 Output schema (per window type, one file each):
     ts, airport_rank, origin_airport_id, num_flights, severe_delays,
@@ -29,21 +30,13 @@ from __future__ import annotations
 import sys
 from dataclasses import asdict, dataclass
 
-from pyflink.common import WatermarkStrategy
-from pyflink.common.time import Time
-from pyflink.datastream.window import TumblingEventTimeWindows
-from pyflink.table import DataTypes, Schema
-
 from common.config import load_config
 from common.logging_utils import configure_logging
 from flink_runtime import FlinkRuntimeConfig, build_flink_runtime_config, create_table_environment
 from window_ops import (
-    Top10AllWindowFunction,
-    TOP10_OUTPUT_TYPE,
-    STATS_VIEW_TYPE,
-    WindowEndTimestampAssigner,
+    format_top_delayed,
     make_stats_view_sql,
-    make_top_delayed_udaf,
+    make_topn_sql,
     CSV_SINK_DDL,
     KAFKA_SINK_DDL,
     JDBC_SINK_DDL,
@@ -129,7 +122,6 @@ def sql_watermark_interval(seconds: int) -> str:
 def build_window_pipeline(
     label: str,
     window_sql: str,
-    window_time: Time,
     results_path: str,
     influx_topic: str,
     timescale_table: str,
@@ -138,76 +130,25 @@ def build_window_pipeline(
     cfg: Q2Config,
 ) -> None:
     """
-    Wires Stage 1 (SQL TUMBLE) → Stage 2 (DataStream top-10) → sinks for one
-    window size. All three window sizes share the same completed_flights view.
-
-    Stage 2 uses windowAll(TumblingEventTimeWindows) with the same interval as
-    Stage 1. Because all airports from a given Stage-1 window carry event_time =
-    window_end, they all land in the same Stage-2 window bucket and are processed
-    together by Top10AllWindowFunction. Output is append-only (no retracts).
+    Wires Stage 1 (Windowing TVF aggregation) → Stage 2 (Window Top-N) →
+    Stage 3 (format UDF) → sinks for one window size. All three window sizes
+    share the same completed_flights view. Everything is append-only pure SQL.
     """
 
-    # ── Stage 1: SQL aggregation ──────────────────────────────────────────────
+    # ── Stage 1: append-only windowing aggregation ────────────────────────────
     stats_view = f"q2_stats_{label}"
     t_env.execute_sql(f"""
         CREATE TEMPORARY VIEW {stats_view} AS
         {make_stats_view_sql(window_sql)}
     """)
 
-    # ── Stage 2: DataStream top-10 ranking ────────────────────────────────────
-    # The Python UDAF (top_delayed) causes Flink to plan Stage 1 as
-    # PythonGroupAggregate (retract mode), so neither to_data_stream() nor
-    # to_append_stream() is accepted by the planner. to_retract_stream()
-    # handles retract semantics and returns (bool, Row) tuples. TUMBLE windows
-    # are append-only in practice (one emit per bucket, no retracts), so we
-    # filter for True records and unwrap the Row.
-    retract_ds = t_env.to_retract_stream(t_env.from_path(stats_view), STATS_VIEW_TYPE)
-    stats_ds = (
-        retract_ds
-        .filter(lambda t: t[0])                             # inserts only
-        .map(lambda t: t[1], output_type=STATS_VIEW_TYPE)  # unwrap Row
-    )
-
-    # Re-assign timestamps from window_end (index 1) and emit monotonous
-    # watermarks. The SQL pipeline already processes windows in order, so
-    # for_monotonous_timestamps() is correct and tight.
-    stats_ds = stats_ds.assign_timestamps_and_watermarks(
-        WatermarkStrategy
-            .for_monotonous_timestamps()
-            .with_timestamp_assigner(WindowEndTimestampAssigner())
-    )
-
-    ranked_ds = (
-        stats_ds
-        .window_all(TumblingEventTimeWindows.of(window_time))
-        .process(Top10AllWindowFunction(), TOP10_OUTPUT_TYPE)
-    )
-
-    # ── Convert ranked DataStream back to Table ────────────────────────────────
-    ranked_view = f"q2_ranked_{label}"
-    ranked_table = t_env.from_data_stream(
-        ranked_ds,
-        Schema.new_builder()
-            # The DataStream emits `ts` as Types.SQL_TIMESTAMP() → java.sql.Timestamp.
-            # TIMESTAMP(3) defaults to a java.time.LocalDateTime conversion class, so
-            # without bridging Flink raises "java.sql.Timestamp cannot be cast to
-            # java.time.LocalDateTime" during input conversion. Bridge to match.
-            .column("ts",                DataTypes.TIMESTAMP(3).bridged_to("java.sql.Timestamp"))
-            .column("airport_rank",      DataTypes.BIGINT())
-            .column("origin_airport_id", DataTypes.INT())
-            .column("num_flights",       DataTypes.BIGINT())
-            .column("severe_delays",     DataTypes.BIGINT())
-            .column("dep_delay_mean",    DataTypes.DOUBLE())
-            .column("dep_delay_max",     DataTypes.DOUBLE())
-            .column("delayed_flights",   DataTypes.STRING())
-            .build()
-    )
-    t_env.create_temporary_view(ranked_view, ranked_table)
+    # ── Stage 2+3: Window Top-N + list formatting (single append-only query) ──
+    ranked_sql = make_topn_sql(stats_view)
 
     # ── CSV sink (always active) ───────────────────────────────────────────────
     csv_sink = f"q2_csv_{label}"
     t_env.execute_sql(CSV_SINK_DDL.format(name=csv_sink, path=results_path))
-    stmt_set.add_insert_sql(f"INSERT INTO {csv_sink} SELECT * FROM {ranked_view}")
+    stmt_set.add_insert_sql(f"INSERT INTO {csv_sink} {ranked_sql}")
     logger.info("Q2 [%s] | CSV sink → %s", label, results_path)
 
     # ── InfluxDB sink (optional) ───────────────────────────────────────────────
@@ -218,7 +159,7 @@ def build_window_pipeline(
             topic=influx_topic,
             bootstrap=cfg.kafka_bootstrap,
         ))
-        stmt_set.add_insert_sql(f"INSERT INTO {kafka_sink} SELECT * FROM {ranked_view}")
+        stmt_set.add_insert_sql(f"INSERT INTO {kafka_sink} {ranked_sql}")
         logger.info("Q2 [%s] | InfluxDB sink → Kafka topic '%s'", label, influx_topic)
 
     # ── TimescaleDB sink (optional) ────────────────────────────────────────────
@@ -231,7 +172,7 @@ def build_window_pipeline(
             username=cfg.timescale_username,
             password=cfg.timescale_password,
         ))
-        stmt_set.add_insert_sql(f"INSERT INTO {jdbc_sink} SELECT * FROM {ranked_view}")
+        stmt_set.add_insert_sql(f"INSERT INTO {jdbc_sink} {ranked_sql}")
         logger.info("Q2 [%s] | TimescaleDB sink → table '%s'", label, timescale_table)
 
 
@@ -246,8 +187,8 @@ def main() -> None:
     logger.info("Q2 | Consumer group: %s", cfg.kafka_consumer_group)
     logger.info("Q2 | Watermark delay: %d s (event time)", cfg.watermark_delay_seconds)
 
-    # ── Register UDAF ─────────────────────────────────────────────────────────
-    t_env.create_temporary_function("top_delayed", make_top_delayed_udaf())
+    # ── Register the scalar UDF used to format the delayed_flights list ───────
+    t_env.create_temporary_function("format_top_delayed", format_top_delayed)
 
     # ── Kafka source ──────────────────────────────────────────────────────────
     # Q2 needs more fields than Q1: airline and dest_airport_id for the
@@ -290,21 +231,20 @@ def main() -> None:
     stmt_set = t_env.create_statement_set()
 
     windows = [
-        # (label,    SQL interval,          DataStream Time,  results path,              influx topic,           timescale table)
-        ("1h",     "INTERVAL '1' HOUR",   Time.hours(1),    cfg.results_path_1h,     cfg.influx_topic_1h,     cfg.timescale_table_1h),
-        ("6h",     "INTERVAL '6' HOUR",   Time.hours(6),    cfg.results_path_6h,     cfg.influx_topic_6h,     cfg.timescale_table_6h),
+        # (label,    SQL interval,            results path,             influx topic,            timescale table)
+        ("1h",     "INTERVAL '1' HOUR",     cfg.results_path_1h,     cfg.influx_topic_1h,     cfg.timescale_table_1h),
+        ("6h",     "INTERVAL '6' HOUR",     cfg.results_path_6h,     cfg.influx_topic_6h,     cfg.timescale_table_6h),
         # 365-day window: the entire Jan–Apr 2025 dataset fits in one bucket.
         # The window fires once after the EOS marker. ts = Flink's epoch-aligned
         # window_start (late 2024); document this alignment in the report.
         # DAY(3) precision required: default DAY(2) only allows up to 99 days.
-        ("global", "INTERVAL '365' DAY(3)",  Time.days(365),   cfg.results_path_global, cfg.influx_topic_global, cfg.timescale_table_global),
+        ("global", "INTERVAL '365' DAY(3)", cfg.results_path_global, cfg.influx_topic_global, cfg.timescale_table_global),
     ]
 
-    for label, window_sql, window_time, results_path, influx_topic, timescale_table in windows:
+    for label, window_sql, results_path, influx_topic, timescale_table in windows:
         build_window_pipeline(
             label=label,
             window_sql=window_sql,
-            window_time=window_time,
             results_path=results_path,
             influx_topic=influx_topic,
             timescale_table=timescale_table,

@@ -1,195 +1,87 @@
 """
-Q2 shared components: UDAF, Stage-2 ranking function, SQL helpers.
+Q2 shared components — Option B: pure Flink SQL Window Top-N.
+
+The whole pipeline is append-only, so it maps 1:1 onto the filesystem CSV sink
+and never needs retract handling:
+
+    Windowing TVF aggregation  ->  Window Top-N  ->  format list  ->  CSV sink
+    (GlobalWindowAggregate)        (WindowRank)      (Python scalar UDF)
+
+Why no Python UDAF: a Python *UDAF* inside the windowing query forces the planner
+out of the window-aggregate operator into a continuously-updating group aggregate
+(retract mode) — that was the defect of the previous implementation (same airport
+occupying several ranks, unbounded state). Here the severely-delayed flights are
+collected with the built-in ARRAY_AGG (kept inside the append-only window
+aggregate) and turned into the required string by a Python *scalar* UDF, which
+does not change the changelog mode.
 """
 from __future__ import annotations
 
-from datetime import timezone
-
-from pyflink.common import Row
-from pyflink.common.typeinfo import Types
-from pyflink.datastream.functions import ProcessAllWindowFunction
 from pyflink.table import DataTypes
-from pyflink.table.udf import AggregateFunction, udaf
+from pyflink.table.udf import udf
 
 
-# ── UDAF: top-20 severely delayed flights per airport per window ──────────────
-
-# Max number of severely-delayed flights reported per airport (spec: at most 20).
+# Max flights listed per airport (spec: at most 20, sorted by dep_delay desc).
 TOP_N = 20
 
-
-class TopDelayedCollector(AggregateFunction):
-    """
-    Keeps the TOP_N (carrier, dest_airport_id, dep_delay) tuples with the
-    largest dep_delay for one airport/window. The SQL caller passes NULL for
-    non-qualifying rows (dep_delay <= 30); NULLs are silently ignored.
-    Returns them sorted by dep_delay descending as a formatted string.
-
-    The accumulator is trimmed to TOP_N on every accumulate() (not only in
-    get_value), so the checkpointed state stays O(TOP_N) per key instead of
-    growing with every severe-delay flight. Without this, the 6h and — above
-    all — the 365-day global window build unbounded lists that overflow the
-    checkpoint state limit. Top-k is decomposable, so trimming incrementally
-    returns exactly the same result as trimming once at the end.
-    """
-
-    def create_accumulator(self):
-        return []
-
-    def accumulate(self, acc, carrier, dest_airport_id, dep_delay):
-        if carrier is None or dep_delay is None:
-            return
-        acc.append((str(carrier),
-                    int(dest_airport_id) if dest_airport_id is not None else 0,
-                    float(dep_delay)))
-        if len(acc) > TOP_N:
-            acc.sort(key=lambda x: x[2], reverse=True)
-            del acc[TOP_N:]
-
-    def get_value(self, acc):
-        if not acc:
-            return "[]"
-        top = sorted(acc, key=lambda x: x[2], reverse=True)
-        return "[" + ",".join(f"({f[0]},{f[1]},{f[2]:.2f})" for f in top) + "]"
-
-    def get_result_type(self):
-        return DataTypes.STRING()
-
-    def get_accumulator_type(self):
-        return DataTypes.ARRAY(DataTypes.STRING())
-
-
-def make_top_delayed_udaf():
-    return udaf(
-        TopDelayedCollector(),
-        result_type=DataTypes.STRING(),
-        accumulator_type=DataTypes.ARRAY(DataTypes.STRING()),
-    )
-
-
-# ── Stage 2: top-10 ranking per window (DataStream ProcessAllWindowFunction) ──
-
-class Top10AllWindowFunction(ProcessAllWindowFunction):
-    """
-    Receives per-airport stats for a completed TUMBLE window from Stage 1. Since
-    Stage 1 runs as a retracting aggregate it emits several intermediate
-    snapshots per airport; this function keeps only the final snapshot per
-    airport, sorts by severe_delays DESC (ties broken by dep_delay_mean DESC),
-    and emits exactly the top-10 with ranks 1–10.
-
-    Input Row column order (from make_stats_view_sql):
-        0  window_start     TIMESTAMP_LTZ(3)
-        1  window_end       TIMESTAMP_LTZ(3)
-        2  origin_airport_id  INT
-        3  num_flights        BIGINT
-        4  severe_delays      BIGINT
-        5  dep_delay_mean     DOUBLE (nullable)
-        6  dep_delay_max      DOUBLE (nullable)
-        7  delayed_flights    STRING
-
-    Output Row column order:
-        0  ts                 TIMESTAMP_LTZ(3)  (= window_start)
-        1  airport_rank       BIGINT
-        2  origin_airport_id  INT
-        3  num_flights        BIGINT
-        4  severe_delays      BIGINT
-        5  dep_delay_mean     DOUBLE
-        6  dep_delay_max      DOUBLE
-        7  delayed_flights    STRING
-    """
-
-    def process(self, context, elements):
-        # PyFlink 1.20 calls process(context, elements) — use yield, not out.collect().
-        #
-        # Stage 1 carries a Python UDAF, so Flink plans it as a retracting group
-        # aggregate that re-emits an updated row for an airport on every input
-        # flight, not once when the window closes. We therefore receive many
-        # intermediate snapshots per airport. Keep only the final snapshot —
-        # the one with the largest num_flights (index 3), which grows
-        # monotonically within a tumbling window — before ranking; otherwise the
-        # same airport's intermediate snapshots would occupy multiple ranks.
-        latest: dict = {}
-        for r in elements:
-            airport = r[2]
-            current = latest.get(airport)
-            if current is None or (r[3] or 0) > (current[3] or 0):
-                latest[airport] = r
-
-        airports = sorted(
-            latest.values(),
-            key=lambda r: (-(r[4] or 0), -(r[5] or 0.0)),  # severe_delays DESC, mean DESC
-        )
-        for rank, r in enumerate(airports[:10], 1):
-            yield Row(r[0], rank, r[2], r[3], r[4], r[5], r[6], r[7])
-
-
-# TypeInformation for Top10AllWindowFunction output.
-# TIMESTAMP_LTZ(3) → SQL_TIMESTAMP in PyFlink 1.20's Java type bridge.
-# Types.ROW_NAMED gives named fields so that from_data_stream(schema=...) can
-# resolve column references like 'ts', 'airport_rank', etc. by name.
-# Types.ROW([...]) would produce anonymous f0/f1/... fields which fail schema matching.
-TOP10_OUTPUT_TYPE = Types.ROW_NAMED(
-    ['ts', 'airport_rank', 'origin_airport_id', 'num_flights',
-     'severe_delays', 'dep_delay_mean', 'dep_delay_max', 'delayed_flights'],
-    [Types.SQL_TIMESTAMP(), Types.LONG(), Types.INT(), Types.LONG(),
-     Types.LONG(), Types.DOUBLE(), Types.DOUBLE(), Types.STRING()],
-)
-
-# TypeInformation for the Stage-1 stats view rows.
-# Used with to_append_stream() to bypass the PythonGroupAggregate retract-mode
-# check: TUMBLE windows are semantically append-only (fire once per bucket)
-# but the Python UDAF makes Flink think the plan needs retract support.
-STATS_VIEW_TYPE = Types.ROW([
-    Types.SQL_TIMESTAMP(),  # window_start
-    Types.SQL_TIMESTAMP(),  # window_end
-    Types.INT(),              # origin_airport_id
-    Types.LONG(),             # num_flights
-    Types.LONG(),             # severe_delays
-    Types.DOUBLE(),           # dep_delay_mean  (nullable at Python level)
-    Types.DOUBLE(),           # dep_delay_max   (nullable at Python level)
-    Types.STRING(),           # delayed_flights
+# Element type collected by ARRAY_AGG for every severe-delay flight.
+SEVERE_ROW = DataTypes.ROW([
+    DataTypes.FIELD("dep_delay", DataTypes.DOUBLE()),
+    DataTypes.FIELD("carrier",   DataTypes.STRING()),
+    DataTypes.FIELD("dest",      DataTypes.INT()),
 ])
 
 
-# ── Timestamp assigner for Stage 2 watermark re-assignment ───────────────────
+@udf(result_type=DataTypes.STRING(), input_types=[DataTypes.ARRAY(SEVERE_ROW)])
+def format_top_delayed(flights) -> str:
+    """
+    Sort the severely-delayed flights by dep_delay descending, keep the TOP_N
+    largest and format them as ``[(carrier,dest,delay), ...]``.
 
-class WindowEndTimestampAssigner:
+    Scalar (one row -> one value) function: it runs after the append-only Window
+    Top-N, so it does not affect the changelog mode of the stream.
     """
-    Duck-type timestamp assigner for PyFlink 1.20 (no base class needed).
-    Extracts window_end (row[1]) as epoch milliseconds.
-    Handles both tz-aware (TIMESTAMP_LTZ → UTC datetime) and naive datetimes.
-    Used after to_retract_stream() + map() to ensure Stage 2
-    TumblingEventTimeWindows fire at the correct event-time boundaries.
-    """
-    def extract_timestamp(self, value, record_timestamp: int) -> int:
-        dt = value[1]  # window_end
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return int(dt.timestamp() * 1000)
+    if not flights:
+        return "[]"
+    top = sorted(
+        flights,
+        key=lambda r: r[0] if r[0] is not None else float("-inf"),
+        reverse=True,
+    )[:TOP_N]
+    return "[" + ",".join(
+        f"({r[1]},{0 if r[2] is None else r[2]},{r[0]:.2f})" for r in top
+    ) + "]"
 
 
 # ── SQL helpers ───────────────────────────────────────────────────────────────
 
 def make_stats_view_sql(window_interval: str) -> str:
     """
-    Per-airport TUMBLE aggregation (Stage 1). Includes window_end so that
-    to_data_stream() can extract it as the event-time for Stage 2.
-    HAVING filters airports with < 30 completed flights.
+    Stage 1 — Windowing TVF aggregation (append-only, fires once per window,
+    per-window state released on fire). Per (window, airport):
+      * num_flights    : non-cancelled/non-diverted flights in the window
+      * severe_delays  : of those, how many with dep_delay > 30
+      * dep_delay_mean : average dep_delay
+      * dep_delay_max  : maximum dep_delay
+      * severe_flights : ARRAY_AGG of the severe flights (dep_delay, carrier, dest)
+    HAVING keeps only airports with at least 30 flights.
+
+    `completed_flights` is expected to already be filtered to non-cancelled and
+    non-diverted rows.
     """
     return f"""
         SELECT
             window_start,
             window_end,
             origin_airport_id,
-            COUNT(*)                                   AS num_flights,
-            COUNT(*) FILTER (WHERE dep_delay > 30.0)   AS severe_delays,
-            AVG(dep_delay)                             AS dep_delay_mean,
-            MAX(dep_delay)                             AS dep_delay_max,
-            top_delayed(
-                CASE WHEN dep_delay > 30.0 THEN airline         ELSE NULL END,
-                CASE WHEN dep_delay > 30.0 THEN dest_airport_id ELSE NULL END,
-                CASE WHEN dep_delay > 30.0 THEN dep_delay       ELSE NULL END
-            )                                          AS delayed_flights
+            COUNT(*)                                     AS num_flights,
+            COUNT(*) FILTER (WHERE dep_delay > 30.0)     AS severe_delays,
+            AVG(dep_delay)                               AS dep_delay_mean,
+            MAX(dep_delay)                               AS dep_delay_max,
+            ARRAY_AGG(
+                CAST(ROW(dep_delay, airline, dest_airport_id) AS
+                     ROW<dep_delay DOUBLE, carrier STRING, dest INT>)
+            ) FILTER (WHERE dep_delay > 30.0)            AS severe_flights
         FROM TABLE(
             TUMBLE(TABLE completed_flights, DESCRIPTOR(rowtime), {window_interval})
         )
@@ -197,6 +89,41 @@ def make_stats_view_sql(window_interval: str) -> str:
         HAVING COUNT(*) >= 30
     """
 
+
+def make_topn_sql(stats_view: str, top_n_airports: int = 10) -> str:
+    """
+    Stage 2 — Window Top-N: the top `top_n_airports` airports per window ranked
+    by severe_delays (ties broken by dep_delay_mean), planned by Flink as the
+    native append-only WindowRank operator.
+    Stage 3 — the scalar UDF formats the flight list for the surviving rows.
+
+    Output columns match the CSV sink / spec schema:
+        ts, airport_rank, origin_airport_id, num_flights, severe_delays,
+        dep_delay_mean, dep_delay_max, delayed_flights
+    """
+    return f"""
+        SELECT
+            window_start                       AS ts,
+            rn                                 AS airport_rank,
+            origin_airport_id,
+            num_flights,
+            severe_delays,
+            dep_delay_mean,
+            dep_delay_max,
+            format_top_delayed(severe_flights) AS delayed_flights
+        FROM (
+            SELECT *,
+                ROW_NUMBER() OVER (
+                    PARTITION BY window_start, window_end
+                    ORDER BY severe_delays DESC, dep_delay_mean DESC
+                ) AS rn
+            FROM {stats_view}
+        )
+        WHERE rn <= {top_n_airports}
+    """
+
+
+# ── Sink DDLs ───────────────────────────────────────────────────────────────
 
 CSV_SINK_DDL = """
     CREATE TABLE {name} (
