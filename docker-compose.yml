@@ -410,6 +410,44 @@ services:
     restart: "no"
 
   # ----------------------------------------------------------
+  # [3d] Flink Q2 DataStream: reimplementazione DataStream API
+  # Produce gli stessi risultati di flink-job-q2 in q2_ds/
+  # per confronto architetturale Table API vs DataStream API.
+  # ----------------------------------------------------------
+  flink-job-q2-ds:
+    build:
+      context: .
+      dockerfile: flink_jobs/Dockerfile
+    platform: linux/amd64
+    container_name: flink-job-q2-ds
+    profiles: ["manual"]
+    depends_on:
+      - flink-taskmanager
+    environment:
+      CONFIG_PATH: /config/base.yml
+      PYTHONPATH: /opt/flink/jobs:/opt/flink/jobs/q1:/opt/flink/jobs/q2:/opt/flink
+    command: >
+      bash -c "
+        echo 'Waiting for Flink JobManager...' &&
+        until curl -sf http://flink-jobmanager:8081/overview > /dev/null; do sleep 2; done &&
+        echo 'Preparing Q2-DS output directories...' &&
+        rm -rf /opt/flink/results/q2_ds &&
+        python -c \"from pathlib import Path; from common.config import load_config; cfg=load_config()['paths']; [Path(cfg[k]).mkdir(parents=True,exist_ok=True) or print(f'Ready: {Path(cfg[k])}') for k in ['q2_ds_results_path_1h','q2_ds_results_path_6h','q2_ds_results_path_global']]\" &&
+        echo 'Submitting Q2-DS job (DataStream API)...' &&
+        flink run -d -m flink-jobmanager:8081 -py /opt/flink/jobs/q2/job_datastream.py
+      "
+    volumes:
+      - ./config:/config:ro
+      - ./flink_jobs:/opt/flink/jobs:ro
+      - ./common:/opt/flink/common:ro
+      - ./Results:/opt/flink/results
+      - ./flink-savepoints:/opt/flink/savepoints
+      - ./flink-checkpoints:/opt/flink/checkpoints
+    networks:
+      - sabd-net
+    restart: "no"
+
+  # ----------------------------------------------------------
   # [4] Producer: replay eventi su Kafka
   # Serializes every event in Confluent Avro format and publishes
   # directly to Kafka. EOS markers are sent to Kafka as well.
