@@ -31,9 +31,9 @@ def build_flink_runtime_config(cfg: dict[str, Any]) -> FlinkRuntimeConfig:
     )
 
 
-def create_table_environment(
+def create_stream_execution_environment(
     runtime_cfg: FlinkRuntimeConfig,
-) -> StreamTableEnvironment:
+) -> StreamExecutionEnvironment:
     env = StreamExecutionEnvironment.get_execution_environment()
     env.set_parallelism(runtime_cfg.parallelism)
     env.enable_checkpointing(runtime_cfg.checkpoint_interval_ms)
@@ -45,4 +45,12 @@ def create_table_environment(
         runtime_cfg.auto_watermark_interval_ms
     )
 
-    return StreamTableEnvironment.create(env)
+    return env
+
+
+def create_table_environment(
+    runtime_cfg: FlinkRuntimeConfig,
+) -> StreamTableEnvironment:
+    return StreamTableEnvironment.create(
+        create_stream_execution_environment(runtime_cfg)
+    )

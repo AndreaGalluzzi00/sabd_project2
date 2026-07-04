@@ -12,6 +12,7 @@ docker compose run --rm kafka-init
 
 docker compose run --rm preprocess
 docker compose run --rm flink-job-q1
+docker compose run --rm flink-job-q3
 docker exec flink-jobmanager flink list -r
 docker compose run --rm producer
 
@@ -19,6 +20,22 @@ docker exec flink-jobmanager flink list -r
 docker exec flink-jobmanager flink stop --drain   <JOB_ID>
 
 python .\scripts\merge_q1.py
+python .\scripts\merge_q3.py --wait
+
+
+Q3 CON DASHBOARD GRAFANA (Influx + Timescale)
+
+1. in config/base.yml: dashboard.influx.enabled=true e/o dashboard.timescale.enabled=true
+2. docker compose --profile dashboard-influx --profile dashboard-timescale up -d
+   (crea topic q3_results_* e tabelle q3_results_*; se il volume timescaledb
+    esiste da prima di Q3: docker compose --profile dashboard-timescale down -v)
+3. docker compose run --rm flink-job-q3
+4. docker compose run --rm producer
+5. Grafana http://localhost:3000 (admin/admin) -> cartella SABD -> dashboard Q3
+   (time range gen-apr 2025; il replay a 57600x dura ~3 minuti)
+6. Il marker EOS chiude anche l'ultima finestra e quella globale: il job Q3
+   NON richiede stop --drain (watermark assegnato prima del filtro compagnie).
+   python scripts/merge_q3.py --wait
 
 
 ESPERIMENTO 1 ATTENZIONE SOLO PER ESPERIMENTO 1 HO MESSO ENTRAMBE LE VERSIONI

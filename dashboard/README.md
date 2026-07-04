@@ -1,18 +1,19 @@
-# Dashboard real-time Q1 (Opzionale 1)
+# Dashboard real-time Q1 e Q3 (Opzionale 1)
 
-Visualizzazione in tempo reale delle metriche di Q1 su **Grafana**, con **due backend
-alternativi** tenuti volutamente entrambi a fini di confronto nella presentazione.
+Visualizzazione in tempo reale delle metriche di Q1 e Q3 su **Grafana**, con **due
+backend alternativi** tenuti volutamente entrambi a fini di confronto nella presentazione.
 
 ```
-                                  ┌──(topic Kafka q1_results)──► Telegraf ──► InfluxDB ─┐
-Flink Q1 ──► vista q1_agg ──┤                                                            ├─► Grafana
+                                  ┌──(topic Kafka q*_results*)─► Telegraf ──► InfluxDB ─┐
+Flink Q1/Q3 ──► stessa query ─┤                                                          ├─► Grafana
             │                     └──(sink JDBC)───────────────────────────► TimescaleDB ┘
-            └──(sink CSV, invariato)──► Results/q1 ──► merge_q1.py ──► output certificato
+            └──(sink CSV, invariato)──► Results/q* ──► merge_q*.py ──► output certificato
 ```
 
-Il sink CSV resta **sempre** attivo: le dashboard sono consumatori paralleli. Tutti i
-sink leggono la **stessa vista `q1_agg`** nel job Flink → CSV, InfluxDB e TimescaleDB
-non possono divergere.
+Il sink CSV resta **sempre** attivo: le dashboard sono consumatori paralleli. Per Q1
+tutti i sink leggono la **stessa vista `q1_agg`**; per Q3 leggono lo **stesso
+DataStream di risultati** (sketch DDSketch) → CSV, InfluxDB e TimescaleDB non possono
+divergere.
 
 ## Perché due stack (per l'orale)
 
@@ -34,10 +35,16 @@ differenza è architetturale.
 | Servizio | Profilo | Porta | Note |
 |---|---|---|---|
 | `influxdb` | `dashboard-influx` | 8086 | org `sabd`, bucket `flights`, retention infinita |
-| `telegraf` | `dashboard-influx` | — | consuma `q1_results`, misura `q1`, tag `airline` |
-| `dashboard-init` | `dashboard-influx` | — | crea il topic `q1_results` (one-shot) |
-| `timescaledb` | `dashboard-timescale` | 5432 | tabella+hypertable create dall'init SQL |
-| `grafana` | entrambi | 3000 | provisiona i 2 datasource + le 2 dashboard |
+| `telegraf` | `dashboard-influx` | — | consuma `q1_results` (misura `q1`, tag `airline`) e `q3_results_{1d,7d,global}` (misure `q3_*`, tag `airline`+`hour`) |
+| `dashboard-init` | `dashboard-influx` | — | crea i topic dei risultati Q1/Q2/Q3 (one-shot) |
+| `timescaledb` | `dashboard-timescale` | 5432 | tabelle+hypertable create dagli init SQL (`01_q1`, `02_q2`, `03_q3`) |
+| `grafana` | entrambi | 3000 | provisiona i 2 datasource + le 4 dashboard (Q1 e Q3, per ciascun backend) |
+
+> **Nota (init TimescaleDB):** gli script in `timescaledb/init/` girano solo al primo
+> avvio del container (volume vuoto). Se il volume `timescaledb_data` esiste già da un
+> run precedente all'aggiunta di Q2/Q3, ricrearlo con
+> `docker compose --profile dashboard-timescale down -v` oppure eseguire a mano gli
+> init: `docker exec -i sabd2-timescaledb psql -U sabd -d sabd < dashboard/timescaledb/init/03_q3.sql`.
 
 > Credenziali **solo locale/demo** — Grafana `admin/admin` · InfluxDB `admin/admin12345`
 > · TimescaleDB `sabd/sabd`.
@@ -72,12 +79,15 @@ differenza è architetturale.
    docker compose run --rm kafka-init        # se manca il topic flights
    docker compose run --rm preprocess        # se manca il parquet
    docker compose run --rm flink-job-q1
+   docker compose run --rm flink-job-q3
    docker compose run --rm producer
    ```
 
 5. **Apri Grafana** → http://localhost:3000 (cartella **SABD**):
-   - *SABD - Q1 ... (real-time)* → InfluxDB
-   - *SABD - Q1 ... (TimescaleDB)* → TimescaleDB
+   - *SABD - Q1 ... (real-time)* / *SABD - Q1 ... (TimescaleDB)*
+   - *SABD - Q3 ... (real-time)* / *SABD - Q3 ... (TimescaleDB)* — variabili
+     in alto per scegliere compagnia e fascia oraria; il pannello "dall'inizio
+     del dataset" si popola alla chiusura della finestra globale (marker EOS).
 
    L'event-time del replay è **gen–apr 2025**: il time range è già impostato lì.
 
@@ -102,9 +112,14 @@ rebuild necessario (i flag sono letti a runtime dalla config montata).
 - **Timestamp.** InfluxDB usa `window_start` come tempo del punto (via Telegraf);
   TimescaleDB lo riceve come `timestamp` colonna di partizionamento dell'hypertable.
   Entrambi coerenti col CSV perché provengono dalla stessa vista.
-- **Pre-esistenza degli oggetti.** Il sink Kafka richiede il topic `q1_results`
-  (`dashboard-init`); il sink JDBC richiede la tabella `q1_results` (init SQL): nessuno
-  dei due crea l'oggetto a runtime. Per questo i sink sono dietro flag (default off):
+- **Pre-esistenza degli oggetti.** I sink Kafka richiedono i topic dei risultati
+  (`dashboard-init`); i sink JDBC richiedono le tabelle (init SQL): nessuno dei due
+  crea l'oggetto a runtime. Per questo i sink sono dietro flag (default off):
   evitano di rompere la pipeline certificata quando lo stack dashboard non è su.
-- **Estensione a Q2/Q3.** Stesso pattern, un sink per query. Q2 si rende meglio con un
-  *Table panel* (top-10) e la lista `delayed_flights` come stringa/`jsonb`.
+- **Q3 su InfluxDB.** `hour` è emesso come **stringa** dal sink Kafka di Q3 perché il
+  parser JSON di Telegraf accetta solo stringhe come tag; su TimescaleDB resta `int`.
+  Una misurazione per finestra (`q3_1d`, `q3_7d`, `q3_global`), punto identificato da
+  (tag `airline`+`hour`, time = inizio finestra) → re-run idempotenti su entrambi i backend.
+- **Estensione a Q2.** Stesso pattern, un sink per query (topic e tabelle sono già
+  provisionati). Q2 si rende meglio con un *Table panel* (top-10) e la lista
+  `delayed_flights` come stringa/`jsonb`.

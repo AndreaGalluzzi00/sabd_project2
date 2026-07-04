@@ -44,6 +44,47 @@ paths:
   q2_ds_merged_output_host_path_1h:     "Results/q2_ds_1h.csv"
   q2_ds_merged_output_host_path_6h:     "Results/q2_ds_6h.csv"
   q2_ds_merged_output_host_path_global: "Results/q2_ds_global.csv"
+  # Q3 – tre finestre (1 giorno, 7 giorni, dall'inizio del dataset)
+  q3_results_path_1d:     "/opt/flink/results/q3/1d"
+  q3_results_path_7d:     "/opt/flink/results/q3/7d"
+  q3_results_path_global: "/opt/flink/results/q3/global"
+
+  q3_results_host_path_1d:     "Results/q3/1d"
+  q3_results_host_path_7d:     "Results/q3/7d"
+  q3_results_host_path_global: "Results/q3/global"
+
+  q3_merged_output_host_path_1d:     "Results/q3_1d.csv"
+  q3_merged_output_host_path_7d:     "Results/q3_7d.csv"
+  q3_merged_output_host_path_global: "Results/q3_global.csv"
+
+  # Spark Structured Streaming (extra) - output separato da Flink
+  spark_q1_results_path: "/opt/spark/results/spark/q1"
+  spark_q1_results_host_path: "Results/spark/q1"
+  spark_q1_merged_output_host_path: "Results/spark_q1.csv"
+
+  spark_q2_results_path_1h:     "/opt/spark/results/spark/q2/1h"
+  spark_q2_results_path_6h:     "/opt/spark/results/spark/q2/6h"
+  spark_q2_results_path_global: "/opt/spark/results/spark/q2/global"
+
+  spark_q2_results_host_path_1h:     "Results/spark/q2/1h"
+  spark_q2_results_host_path_6h:     "Results/spark/q2/6h"
+  spark_q2_results_host_path_global: "Results/spark/q2/global"
+
+  spark_q2_merged_output_host_path_1h:     "Results/spark_q2_1h.csv"
+  spark_q2_merged_output_host_path_6h:     "Results/spark_q2_6h.csv"
+  spark_q2_merged_output_host_path_global: "Results/spark_q2_global.csv"
+
+  spark_q3_results_path_1d:     "/opt/spark/results/spark/q3/1d"
+  spark_q3_results_path_7d:     "/opt/spark/results/spark/q3/7d"
+  spark_q3_results_path_global: "/opt/spark/results/spark/q3/global"
+
+  spark_q3_results_host_path_1d:     "Results/spark/q3/1d"
+  spark_q3_results_host_path_7d:     "Results/spark/q3/7d"
+  spark_q3_results_host_path_global: "Results/spark/q3/global"
+
+  spark_q3_merged_output_host_path_1d:     "Results/spark_q3_1d.csv"
+  spark_q3_merged_output_host_path_7d:     "Results/spark_q3_7d.csv"
+  spark_q3_merged_output_host_path_global: "Results/spark_q3_global.csv"
 
 kafka:
   bootstrap_servers: "kafka:9092"
@@ -105,6 +146,13 @@ flink:
 
 spark:
   consumer_group: "spark-flight-analysis"
+  checkpoint_base_path: "/opt/spark/checkpoints"
+  shuffle_partitions: 4
+  trigger_processing_time: "5 seconds"
+  idle_timeout_seconds: 60
+  startup_timeout_seconds: 900
+  # Optional throttle for experiments, e.g. 200000. null -> Spark default.
+  max_offsets_per_trigger:
 
 q1:
   watermark_delay_seconds: 180
@@ -114,6 +162,17 @@ q2:
   # Stesso valore di Q1: un holdback_delay di 120 s con distribuzione
   # esponenziale (holdback_mean ~40 s) è coperto da 180 s con ampio margine.
   watermark_delay_seconds: 180
+
+q3:
+  # Stessa strategia di watermarking di Q1/Q2 (bounded out-of-orderness).
+  watermark_delay_seconds: 180
+  # DDSketch: errore relativo massimo garantito sui percentili (α).
+  # Più piccolo → più bucket (memoria) e più accuratezza. Con 0.01 i ritardi
+  # in minuti del dataset stanno in ~200-400 contatori per gruppo.
+  sketch_alpha: 0.01
+  # Spark Structured Streaming extra: percentile_approx accuracy. Higher means
+  # more accurate but larger state.
+  spark_percentile_accuracy: 10000
 
 # Visualizzazione real-time su Grafana (Opzionale 1 della specifica).
 # Due backend ALTERNATIVI e indipendenti, attivabili uno, l'altro o entrambi:
@@ -132,6 +191,10 @@ dashboard:
       topic_1h:     "q2_results_1h"
       topic_6h:     "q2_results_6h"
       topic_global: "q2_results_global"
+    q3:
+      topic_1d:     "q3_results_1d"
+      topic_7d:     "q3_results_7d"
+      topic_global: "q3_results_global"
   timescale:
     enabled: false
     # NB: con enabled=true le tabelle DEVONO esistere (init in dashboard/timescaledb/).
@@ -143,3 +206,7 @@ dashboard:
       table_1h:     "q2_results_1h"
       table_6h:     "q2_results_6h"
       table_global: "q2_results_global"
+    q3:
+      table_1d:     "q3_results_1d"
+      table_7d:     "q3_results_7d"
+      table_global: "q3_results_global"
