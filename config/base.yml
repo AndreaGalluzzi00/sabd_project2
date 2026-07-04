@@ -45,6 +45,35 @@ paths:
   q3_merged_output_host_path_7d:     "Results/q3_7d.csv"
   q3_merged_output_host_path_global: "Results/q3_global.csv"
 
+  # Spark Structured Streaming (extra) - output separato da Flink
+  spark_q1_results_path: "/opt/spark/results/spark/q1"
+  spark_q1_results_host_path: "Results/spark/q1"
+  spark_q1_merged_output_host_path: "Results/spark_q1.csv"
+
+  spark_q2_results_path_1h:     "/opt/spark/results/spark/q2/1h"
+  spark_q2_results_path_6h:     "/opt/spark/results/spark/q2/6h"
+  spark_q2_results_path_global: "/opt/spark/results/spark/q2/global"
+
+  spark_q2_results_host_path_1h:     "Results/spark/q2/1h"
+  spark_q2_results_host_path_6h:     "Results/spark/q2/6h"
+  spark_q2_results_host_path_global: "Results/spark/q2/global"
+
+  spark_q2_merged_output_host_path_1h:     "Results/spark_q2_1h.csv"
+  spark_q2_merged_output_host_path_6h:     "Results/spark_q2_6h.csv"
+  spark_q2_merged_output_host_path_global: "Results/spark_q2_global.csv"
+
+  spark_q3_results_path_1d:     "/opt/spark/results/spark/q3/1d"
+  spark_q3_results_path_7d:     "/opt/spark/results/spark/q3/7d"
+  spark_q3_results_path_global: "/opt/spark/results/spark/q3/global"
+
+  spark_q3_results_host_path_1d:     "Results/spark/q3/1d"
+  spark_q3_results_host_path_7d:     "Results/spark/q3/7d"
+  spark_q3_results_host_path_global: "Results/spark/q3/global"
+
+  spark_q3_merged_output_host_path_1d:     "Results/spark_q3_1d.csv"
+  spark_q3_merged_output_host_path_7d:     "Results/spark_q3_7d.csv"
+  spark_q3_merged_output_host_path_global: "Results/spark_q3_global.csv"
+
 kafka:
   bootstrap_servers: "kafka:9092"
   topic: "flights"
@@ -105,6 +134,13 @@ flink:
 
 spark:
   consumer_group: "spark-flight-analysis"
+  checkpoint_base_path: "/opt/spark/checkpoints"
+  shuffle_partitions: 4
+  trigger_processing_time: "5 seconds"
+  idle_timeout_seconds: 60
+  startup_timeout_seconds: 900
+  # Optional throttle for experiments, e.g. 200000. null -> Spark default.
+  max_offsets_per_trigger:
 
 q1:
   watermark_delay_seconds: 180
@@ -122,6 +158,9 @@ q3:
   # Più piccolo → più bucket (memoria) e più accuratezza. Con 0.01 i ritardi
   # in minuti del dataset stanno in ~200-400 contatori per gruppo.
   sketch_alpha: 0.01
+  # Spark Structured Streaming extra: percentile_approx accuracy. Higher means
+  # more accurate but larger state.
+  spark_percentile_accuracy: 10000
 
 # Visualizzazione real-time su Grafana (Opzionale 1 della specifica).
 # Due backend ALTERNATIVI e indipendenti, attivabili uno, l'altro o entrambi:
