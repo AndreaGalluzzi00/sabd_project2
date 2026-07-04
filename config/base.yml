@@ -32,6 +32,19 @@ paths:
   q2_merged_output_host_path_6h:     "Results/q2_6h.csv"
   q2_merged_output_host_path_global: "Results/q2_global.csv"
 
+  # Q2 DataStream API (job_datastream.py) – output separato per confronto
+  q2_ds_results_path_1h:     "/opt/flink/results/q2_ds/1h"
+  q2_ds_results_path_6h:     "/opt/flink/results/q2_ds/6h"
+  q2_ds_results_path_global: "/opt/flink/results/q2_ds/global"
+
+  q2_ds_results_host_path_1h:     "Results/q2_ds/1h"
+  q2_ds_results_host_path_6h:     "Results/q2_ds/6h"
+  q2_ds_results_host_path_global: "Results/q2_ds/global"
+
+  q2_ds_merged_output_host_path_1h:     "Results/q2_ds_1h.csv"
+  q2_ds_merged_output_host_path_6h:     "Results/q2_ds_6h.csv"
+  q2_ds_merged_output_host_path_global: "Results/q2_ds_global.csv"
+
 kafka:
   bootstrap_servers: "kafka:9092"
   topic: "flights"
