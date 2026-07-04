@@ -12,6 +12,7 @@
 #   docker compose run --rm flink-job-q1-ds
 #   docker compose run --rm flink-job-q2
 #   docker compose run --rm flink-job-q3
+#   docker compose --profile manual up -d spark-job-q1 spark-job-q2 spark-job-q3
 #   docker compose run --rm producer
 #
 # Chiusura pulita dei job (dopo che il producer ha finito):
@@ -22,6 +23,9 @@
 #   python scripts/merge_q1.py
 #   python scripts/merge_q2.py
 #   python scripts/merge_q3.py
+#   python scripts/merge_spark_q1.py
+#   python scripts/merge_spark_q2.py
+#   python scripts/merge_spark_q3.py
 #
 # Configurazione applicativa:
 #   config/base.yml
@@ -430,6 +434,117 @@ services:
       - sabd-net
     restart: "no"
 
+  # ----------------------------------------------------------
+  # [5a] Spark Structured Streaming Q1 (extra)
+  # Long-running local Spark job: start it before the producer with
+  # docker compose --profile manual up -d spark-job-q1
+  # ----------------------------------------------------------
+  spark-job-q1:
+    build:
+      context: .
+      dockerfile: spark_jobs/Dockerfile
+    platform: linux/amd64
+    container_name: spark-job-q1
+    profiles: ["manual"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      CONFIG_PATH: /config/base.yml
+      PYTHONPATH: /opt/spark/app:/opt/spark/app/spark_jobs:/opt/spark/app/common
+      SPARK_PACKAGES: org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.spark:spark-avro_2.12:3.5.1
+    command: >
+      bash -c "
+        echo 'Preparing Spark Q1 output/checkpoint directories...' &&
+        rm -rf /opt/spark/results/spark/q1 /opt/spark/checkpoints/q1 &&
+        mkdir -p /opt/spark/results/spark/q1 /opt/spark/checkpoints &&
+        echo 'Starting Spark Structured Q1...' &&
+        /opt/spark/bin/spark-submit --master local[*] --packages \"$$SPARK_PACKAGES\" /opt/spark/app/spark_jobs/q1/job.py
+      "
+    volumes:
+      - ./config:/config:ro
+      - ./common:/opt/spark/app/common:ro
+      - ./schema:/opt/spark/app/schema:ro
+      - ./spark_jobs:/opt/spark/app/spark_jobs:ro
+      - ./Results:/opt/spark/results
+      - ./spark-checkpoints:/opt/spark/checkpoints
+    networks:
+      - sabd-net
+    restart: "no"
+
+  # ----------------------------------------------------------
+  # [5b] Spark Structured Streaming Q2 (extra)
+  # ----------------------------------------------------------
+  spark-job-q2:
+    build:
+      context: .
+      dockerfile: spark_jobs/Dockerfile
+    platform: linux/amd64
+    container_name: spark-job-q2
+    profiles: ["manual"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      CONFIG_PATH: /config/base.yml
+      PYTHONPATH: /opt/spark/app:/opt/spark/app/spark_jobs:/opt/spark/app/common
+      SPARK_PACKAGES: org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.spark:spark-avro_2.12:3.5.1
+    command: >
+      bash -c "
+        echo 'Preparing Spark Q2 output/checkpoint directories...' &&
+        rm -rf /opt/spark/results/spark/q2 /opt/spark/checkpoints/q2 &&
+        mkdir -p /opt/spark/results/spark/q2 /opt/spark/checkpoints &&
+        echo 'Starting Spark Structured Q2...' &&
+        /opt/spark/bin/spark-submit --master local[*] --packages \"$$SPARK_PACKAGES\" /opt/spark/app/spark_jobs/q2/job.py
+      "
+    volumes:
+      - ./config:/config:ro
+      - ./common:/opt/spark/app/common:ro
+      - ./schema:/opt/spark/app/schema:ro
+      - ./spark_jobs:/opt/spark/app/spark_jobs:ro
+      - ./Results:/opt/spark/results
+      - ./spark-checkpoints:/opt/spark/checkpoints
+    networks:
+      - sabd-net
+    restart: "no"
+
+  # ----------------------------------------------------------
+  # [5c] Spark Structured Streaming Q3 (extra)
+  # Uses Spark percentile_approx for approximate quantiles.
+  # ----------------------------------------------------------
+  spark-job-q3:
+    build:
+      context: .
+      dockerfile: spark_jobs/Dockerfile
+    platform: linux/amd64
+    container_name: spark-job-q3
+    profiles: ["manual"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      CONFIG_PATH: /config/base.yml
+      PYTHONPATH: /opt/spark/app:/opt/spark/app/spark_jobs:/opt/spark/app/common
+      SPARK_PACKAGES: org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.spark:spark-avro_2.12:3.5.1
+    command: >
+      bash -c "
+        echo 'Preparing Spark Q3 output/checkpoint directories...' &&
+        rm -rf /opt/spark/results/spark/q3 /opt/spark/checkpoints/q3 &&
+        mkdir -p /opt/spark/results/spark/q3 /opt/spark/checkpoints &&
+        echo 'Starting Spark Structured Q3...' &&
+        /opt/spark/bin/spark-submit --master local[*] --packages \"$$SPARK_PACKAGES\" /opt/spark/app/spark_jobs/q3/job.py
+      "
+    volumes:
+      - ./config:/config:ro
+      - ./common:/opt/spark/app/common:ro
+      - ./schema:/opt/spark/app/schema:ro
+      - ./spark_jobs:/opt/spark/app/spark_jobs:ro
+      - ./Results:/opt/spark/results
+      - ./spark-checkpoints:/opt/spark/checkpoints
+    networks:
+      - sabd-net
+    restart: "no"
+
   # ==========================================================
   # DASHBOARD REAL-TIME (Opzionale 1)
   # Due backend ALTERNATIVI, attivabili separatamente o insieme:
@@ -583,6 +698,7 @@ volumes:
   influxdb_data:
   grafana_data:
   timescaledb_data:
+  spark-checkpoints:
 
 networks:
   sabd-net:
