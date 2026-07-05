@@ -184,7 +184,7 @@ q3:
 # Default: entrambi false → pipeline invariata.
 dashboard:
   influx:
-    enabled: false
+    enabled: true
     # NB: con enabled=true i topic DEVONO esistere (vedi servizio dashboard-init).
     results_topic: "q1_results"
     q2:
@@ -196,7 +196,7 @@ dashboard:
       topic_7d:     "q3_results_7d"
       topic_global: "q3_results_global"
   timescale:
-    enabled: false
+    enabled: true
     # NB: con enabled=true le tabelle DEVONO esistere (init in dashboard/timescaledb/).
     url: "jdbc:postgresql://timescaledb:5432/sabd"
     table: "q1_results"

@@ -144,11 +144,14 @@ CSV_SINK_DDL = """
     )
 """
 
+# airport_rank e origin_airport_id come STRING: Telegraf (parser JSON) accetta
+# solo stringhe come tag InfluxDB e qui i due identificano la serie (rank +
+# aeroporto). Stesso trattamento di 'hour' in Q3 (q3_window_ops.KAFKA_SINK_DDL).
 KAFKA_SINK_DDL = """
     CREATE TABLE {name} (
         ts                TIMESTAMP(3),
-        airport_rank      BIGINT,
-        origin_airport_id INT,
+        airport_rank      STRING,
+        origin_airport_id STRING,
         num_flights       BIGINT,
         severe_delays     BIGINT,
         dep_delay_mean    DOUBLE,

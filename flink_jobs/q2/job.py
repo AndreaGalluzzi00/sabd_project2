@@ -159,7 +159,17 @@ def build_window_pipeline(
             topic=influx_topic,
             bootstrap=cfg.kafka_bootstrap,
         ))
-        stmt_set.add_insert_sql(f"INSERT INTO {kafka_sink} {ranked_sql}")
+        # airport_rank/origin_airport_id → STRING: diventano tag InfluxDB via
+        # Telegraf (che accetta solo stringhe come tag), come 'hour' in Q3.
+        stmt_set.add_insert_sql(f"""
+            INSERT INTO {kafka_sink}
+            SELECT ts,
+                   CAST(airport_rank AS STRING)      AS airport_rank,
+                   CAST(origin_airport_id AS STRING) AS origin_airport_id,
+                   num_flights, severe_delays, dep_delay_mean, dep_delay_max,
+                   delayed_flights
+            FROM ({ranked_sql})
+        """)
         logger.info("Q2 [%s] | InfluxDB sink → Kafka topic '%s'", label, influx_topic)
 
     # ── TimescaleDB sink (optional) ────────────────────────────────────────────
