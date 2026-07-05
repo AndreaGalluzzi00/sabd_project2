@@ -25,7 +25,7 @@ COMBINAZIONI SUPPORTATE
     Flink:
         q1 table, q1 datastream
         q2 table, q2 datastream
-        q3 table, q3 datastream
+        q3 table
 
     Spark:
         q1 structured
@@ -45,13 +45,21 @@ ESPERIMENTI
         .\scripts\run_experiment.ps1 -e 06_wm_aggressive -Query q1 -Engine spark
 
 RISULTATI
-    I part-file vengono puliti a inizio run, salvo -NoCleanResults.
-    I CSV finali vengono creati dagli script di merge.
+    I part-file vengono puliti a inizio run, salvo -NoCleanResults, e restano
+    separati per esperimento/engine/implementazione/query.
 
-    Esempio per 01_baseline:
+    Esempi part-file per 01_baseline:
         Results/experiments/01_baseline/flink/table/q1/...
         Results/experiments/01_baseline/flink/datastream/q1/...
         Results/experiments/01_baseline/spark/structured/q1/...
+
+    I CSV finali dei merge vengono invece salvati direttamente in Results.
+
+    Esempi CSV finali:
+        Results/q1_flink_table_01_baseline.csv
+        Results/q1_flink_datastream_01_baseline.csv
+        Results/q1_spark_structured_01_baseline.csv
+        Results/q2_1h_flink_table_01_baseline.csv
 
 OPZIONI UTILI
     -NoPreprocess          Salta il preprocessing se e' gia' stato fatto.
@@ -422,6 +430,7 @@ function Resolve-Implementation {
         [string]$Engine,
 
         [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
         [string]$Implementation
     )
 
@@ -488,10 +497,13 @@ function Get-RunSpec {
     }
 
     if ($Implementation -eq "datastream") {
+        if ($Query -eq "q3") {
+            throw "Flink Q3 non ha piu' una variante datastream separata: usa -Implementation table. La computazione DDSketch resta DataStream dentro il job canonico."
+        }
+
         $MergeScripts = @{
             q1 = ".\scripts\merge_q1_ds.py"
             q2 = ".\scripts\merge_q2_ds.py"
-            q3 = ".\scripts\merge_q3_ds.py"
         }
 
         $PathKeys = @{
@@ -500,11 +512,6 @@ function Get-RunSpec {
                 "q2_ds_results_host_path_1h",
                 "q2_ds_results_host_path_6h",
                 "q2_ds_results_host_path_global"
-            )
-            q3 = @(
-                "q3_ds_results_host_path_1d",
-                "q3_ds_results_host_path_7d",
-                "q3_ds_results_host_path_global"
             )
         }
 

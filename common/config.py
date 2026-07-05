@@ -130,6 +130,22 @@ def _materialize_derived_paths(cfg: dict[str, Any]) -> dict[str, Any]:
     paths = cfg.setdefault("paths", {})
 
     flink_root, spark_root, host_root = _result_roots(cfg)
+    merged_host_root = str(paths["host_results_root"])
+
+    def merged_output_host_path(
+        query: str,
+        engine: str,
+        implementation: str,
+        label: str | None = None,
+    ) -> str:
+        parts = [query]
+
+        if label:
+            parts.append(label)
+
+        parts.extend([engine, implementation])
+
+        return _join_path(merged_host_root, f"{'_'.join(parts)}.csv")
 
     def flink_table_root(query: str) -> str:
         return _join_path(flink_root, "flink", "table", query)
@@ -162,7 +178,7 @@ def _materialize_derived_paths(cfg: dict[str, Any]) -> dict[str, Any]:
     _setdefault_path(
         paths,
         "q1_merged_output_host_path",
-        _join_path(flink_table_host_root("q1"), "q1.csv"),
+        merged_output_host_path("q1", "flink", "table"),
     )
 
     _setdefault_path(
@@ -178,7 +194,7 @@ def _materialize_derived_paths(cfg: dict[str, Any]) -> dict[str, Any]:
     _setdefault_path(
         paths,
         "q1_ds_merged_output_host_path",
-        _join_path(flink_datastream_host_root("q1"), "q1.csv"),
+        merged_output_host_path("q1", "flink", "datastream"),
     )
 
     for label in ("1h", "6h", "global"):
@@ -195,7 +211,7 @@ def _materialize_derived_paths(cfg: dict[str, Any]) -> dict[str, Any]:
         _setdefault_path(
             paths,
             f"q2_merged_output_host_path_{label}",
-            _join_path(flink_table_host_root("q2"), f"q2_{label}.csv"),
+            merged_output_host_path("q2", "flink", "table", label),
         )
 
         _setdefault_path(
@@ -211,7 +227,7 @@ def _materialize_derived_paths(cfg: dict[str, Any]) -> dict[str, Any]:
         _setdefault_path(
             paths,
             f"q2_ds_merged_output_host_path_{label}",
-            _join_path(flink_datastream_host_root("q2"), f"q2_{label}.csv"),
+            merged_output_host_path("q2", "flink", "datastream", label),
         )
 
     for label in ("1d", "7d", "global"):
@@ -228,24 +244,7 @@ def _materialize_derived_paths(cfg: dict[str, Any]) -> dict[str, Any]:
         _setdefault_path(
             paths,
             f"q3_merged_output_host_path_{label}",
-            _join_path(flink_table_host_root("q3"), f"q3_{label}.csv"),
-        )
-
-        # Q3 DataStream API (job_datastream.py) – output separato per confronto
-        _setdefault_path(
-            paths,
-            f"q3_ds_results_path_{label}",
-            _join_path(flink_datastream_root("q3"), label, "part_files"),
-        )
-        _setdefault_path(
-            paths,
-            f"q3_ds_results_host_path_{label}",
-            _join_path(flink_datastream_host_root("q3"), label, "part_files"),
-        )
-        _setdefault_path(
-            paths,
-            f"q3_ds_merged_output_host_path_{label}",
-            _join_path(flink_datastream_host_root("q3"), f"q3_{label}.csv"),
+            merged_output_host_path("q3", "flink", "table", label),
         )
 
     _setdefault_path(
@@ -261,7 +260,7 @@ def _materialize_derived_paths(cfg: dict[str, Any]) -> dict[str, Any]:
     _setdefault_path(
         paths,
         "spark_q1_merged_output_host_path",
-        _join_path(spark_structured_host_root("q1"), "q1.csv"),
+        merged_output_host_path("q1", "spark", "structured"),
     )
 
     for query, labels in {
@@ -282,7 +281,7 @@ def _materialize_derived_paths(cfg: dict[str, Any]) -> dict[str, Any]:
             _setdefault_path(
                 paths,
                 f"spark_{query}_merged_output_host_path_{label}",
-                _join_path(spark_structured_host_root(query), f"{query}_{label}.csv"),
+                merged_output_host_path(query, "spark", "structured", label),
             )
 
     _setdefault_path(

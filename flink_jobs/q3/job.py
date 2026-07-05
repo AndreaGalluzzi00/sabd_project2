@@ -3,14 +3,17 @@
 Q3 – Distribuzione in tempo reale dei ritardi in partenza per compagnia e
 fascia oraria (percentili approssimati con DDSketch).
 
-Il job combina le due API già usate per Q1:
+Il job combina le due API gia' usate per Q1:
 
-  Computazione (DataStream API, come q1/job_datastream.py):
-    KafkaSource (byte grezzi via ISO-8859-1) → decoder Confluent Avro
-    puro-Python (esteso con crs_dep_time) → timestamp/watermark →
-    filtro (AA/DL/UA/WN, non cancellati, non deviati, dep_delay presente) →
-    keyBy(compagnia|fascia) → finestre event-time → AggregateFunction il cui
-    accumulatore è un DDSketch (percentili senza accumulare i valori).
+  Ingestion (Table API, come q1/job.py e q2/job.py):
+    Kafka Table Connector + format avro-confluent risolvono i record Flight
+    tramite Schema Registry. Il risultato viene poi convertito a DataStream.
+
+  Computazione (DataStream API):
+    timestamp/watermark -> filtro (AA/DL/UA/WN, non cancellati, non deviati,
+    dep_delay presente) -> keyBy(compagnia|fascia) -> finestre event-time ->
+    AggregateFunction il cui accumulatore e' un DDSketch (percentili senza
+    accumulare i valori).
 
   Sink (Table API, come q1/job.py):
     ogni DataStream di risultati diventa una vista e uno StatementSet fa
@@ -36,9 +39,7 @@ import sys
 from dataclasses import asdict, dataclass
 
 from pyflink.common import Types, WatermarkStrategy
-from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.time import Duration, Time
-from pyflink.datastream.connectors.kafka import KafkaOffsetsInitializer, KafkaSource
 from pyflink.datastream import OutputTag
 from pyflink.datastream.functions import MapFunction
 from pyflink.datastream.window import TumblingEventTimeWindows
@@ -51,7 +52,6 @@ from flink_runtime import (
     build_flink_runtime_config,
     create_stream_execution_environment,
 )
-from flight_avro import decode_flight_for_q3, hour_band
 from q3_window_ops import (
     CSV_SINK_DDL,
     JDBC_SINK_DDL,
@@ -69,6 +69,11 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 AIRLINES: frozenset[str] = frozenset({"AA", "DL", "UA", "WN"})
+
+
+def hour_band(crs_dep_time: int) -> int:
+    """Scheduled departure hour bucket (0-23) from CRS_DEP_TIME in hhmm."""
+    return (crs_dep_time // 100) % 24
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -132,23 +137,42 @@ def load_q3_config() -> Q3Config:
     )
 
 
-# ── Decodifica Kafka+Avro ─────────────────────────────────────────────────────
+# -- Kafka Table ingestion -----------------------------------------------------
 
-class _FlightDecoder(MapFunction):
+class _FlightRowProjection(MapFunction):
     """
-    Recupera i byte Kafka originali dalla String ISO-8859-1 e decodifica il
-    record Flight. Ritorna (event_time_ms, airline, crs_dep_time, dep_delay,
-    cancelled, diverted) oppure None per i messaggi malformati.
+    Converte la Row prodotta dal Kafka Table Connector nella tupla usata dalla
+    pipeline DataStream: (event_time_ms, airline, crs_dep_time, dep_delay,
+    cancelled, diverted).
 
-    A differenza di Q1-DS qui NON si filtra sulla compagnia: anche il marker
-    EOS deve attraversare l'assegnazione del watermark (vedi docstring modulo).
+    Non filtra sulla compagnia: anche il marker EOS deve attraversare
+    l'assegnazione del watermark (vedi docstring modulo).
     """
 
-    def map(self, value: str):
-        try:
-            return decode_flight_for_q3(value.encode('iso-8859-1'))
-        except Exception:
-            return None
+    def map(self, value):
+        return (value[0], value[1], value[2], value[3], value[4], value[5])
+
+
+def register_q3_flights_source(t_env: StreamTableEnvironment, cfg: Q3Config) -> None:
+    t_env.execute_sql(f"""
+        CREATE TABLE q3_flights_source (
+            event_time   BIGINT,
+            airline      STRING,
+            crs_dep_time INT,
+            dep_delay    DOUBLE,
+            cancelled    DOUBLE,
+            diverted     DOUBLE
+        ) WITH (
+            'connector'                              = 'kafka',
+            'topic'                                  = '{cfg.kafka_topic}',
+            'properties.bootstrap.servers'           = '{cfg.kafka_bootstrap}',
+            'properties.group.id'                    = '{cfg.kafka_consumer_group}',
+            'scan.startup.mode'                      = 'earliest-offset',
+            'format'                                 = 'avro-confluent',
+            'avro-confluent.schema-registry.url'     = '{cfg.schema_registry_url}',
+            'avro-confluent.schema-registry.subject' = '{cfg.schema_registry_subject}'
+        )
+    """)
 
 
 class FlightTimestampAssigner:
@@ -299,27 +323,23 @@ def main() -> None:
     env = create_stream_execution_environment(cfg)
     t_env = StreamTableEnvironment.create(env)
 
-    # ── KafkaSource (byte grezzi via trucco ISO-8859-1, come Q1-DS) ───────────
-    kafka_source = (
-        KafkaSource.builder()
-        .set_bootstrap_servers(cfg.kafka_bootstrap)
-        .set_topics(cfg.kafka_topic)
-        .set_group_id(cfg.kafka_consumer_group)
-        .set_starting_offsets(KafkaOffsetsInitializer.earliest())
-        .set_value_only_deserializer(SimpleStringSchema("ISO-8859-1"))
-        .build()
+    # -- Kafka Table source: Confluent Avro deserialization via Schema Registry.
+    register_q3_flights_source(t_env, cfg)
+    logger.info(
+        "Q3 | Source format: avro-confluent via Schema Registry %s subject %s",
+        cfg.schema_registry_url,
+        cfg.schema_registry_subject,
     )
 
-    raw_ds = env.from_source(
-        kafka_source,
-        WatermarkStrategy.no_watermarks(),
-        "KafkaSource[flights]",
-    )
+    flights_source_table = t_env.sql_query("""
+        SELECT event_time, airline, crs_dep_time, dep_delay, cancelled, diverted
+        FROM q3_flights_source
+    """)
 
     decoded_ds = (
-        raw_ds
-        .map(_FlightDecoder(), output_type=Types.PICKLED_BYTE_ARRAY())
-        .filter(lambda v: v is not None)
+        t_env.to_data_stream(flights_source_table)
+        .map(_FlightRowProjection(), output_type=Types.PICKLED_BYTE_ARRAY())
+        .name("Q3FlightRows[avro-confluent]")
     )
 
     # ── Watermark PRIMA del filtro: l'EOS avanza il watermark e chiude le
