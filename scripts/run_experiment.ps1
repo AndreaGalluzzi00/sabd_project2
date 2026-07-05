@@ -1,91 +1,92 @@
 <#
-USAGE - run_experiment.ps1
+run_experiment.ps1
 
-Eseguire i comandi dalla root del progetto, cioè dalla cartella in cui si trova docker-compose.yml.
+Runner unico per eseguire una query (q1/q2/q3) su Flink o Spark, con una
+config di esperimento opzionale. Va lanciato dalla root del progetto, cioe'
+dalla cartella che contiene docker-compose.yml.
 
-Prima esecuzione:
-    docker compose build
-    docker compose up -d
-    docker compose --profile dashboard-influx --profile dashboard-timescale up -d
-    docker exec flink-jobmanager flink list -r
-    docker exec flink-jobmanager flink cancel <JOB_ID>
-
-    docker exec flink-jobmanager sh -lc '/opt/flink/bin/flink list -r | grep -Eo "[a-f0-9]{32}" | xargs -r -n1 /opt/flink/bin/flink cancel'
-
-Esecuzione con config base:
+USO RAPIDO
+    # Default: q1 + flink + table + config/base.yml
     .\scripts\run_experiment.ps1
 
-Esecuzione esperimento 1:
-    .\scripts\run_experiment.ps1 -e 01_baseline
+    # Stesso scenario sperimentale, implementazioni diverse
+    .\scripts\run_experiment.ps1 -e 01_baseline -Query q1 -Engine flink -Implementation table
+    .\scripts\run_experiment.ps1 -e 01_baseline -Query q1 -Engine flink -Implementation datastream
+    .\scripts\run_experiment.ps1 -e 01_baseline -Query q1 -Engine spark
 
-Esecuzione esperimento 2:
-    .\scripts\run_experiment.ps1 -e 02_ooo_safe
+    # Q2 / Q3
+    .\scripts\run_experiment.ps1 -Query q2 -Engine flink
+    .\scripts\run_experiment.ps1 -Query q2 -Engine flink -Implementation datastream
+    .\scripts\run_experiment.ps1 -Query q2 -Engine spark
+    .\scripts\run_experiment.ps1 -Query q3 -Engine flink
+    .\scripts\run_experiment.ps1 -Query q3 -Engine spark
 
-Esecuzione esperimento 3:
-    .\scripts\run_experiment.ps1 -e 03_ooo_late_loss
+COMBINAZIONI SUPPORTATE
+    Flink:
+        q1 table, q1 datastream
+        q2 table, q2 datastream
+        q3 table
 
-Esecuzione esperimento 4:
-    .\scripts\run_experiment.ps1 -e 04_ooo_uniform_late_loss
+    Spark:
+        q1 structured
+        q2 structured
+        q3 structured
 
-Esecuzione esperimento 5 (watermark safe, completezza ~100%):
-    .\scripts\run_experiment.ps1 -e 05_wm_safe
+    Nota: se -Implementation non viene passato, usa table per Flink e
+    structured per Spark.
 
-Esecuzione esperimento 6 (watermark aggressive, perdita attesa ~12.6%):
-    .\scripts\run_experiment.ps1 -e 06_wm_aggressive
+ESPERIMENTI
+    Gli esperimenti stanno in config/experiments/*.yml e descrivono lo
+    scenario dati/watermark/producer, non l'implementazione.
 
-Se il preprocessing è già stato eseguito:
-    .\scripts\run_experiment.ps1 -e 02_ooo_safe -NoPreprocess
+    Esempi:
+        .\scripts\run_experiment.ps1 -e 01_baseline
+        .\scripts\run_experiment.ps1 -e 02_ooo_safe -NoPreprocess
+        .\scripts\run_experiment.ps1 -e 06_wm_aggressive -Query q1 -Engine spark
 
-Per non cancellare i risultati precedenti:
-    .\scripts\run_experiment.ps1 -e 02_ooo_safe -NoPreprocess -NoCleanResults
+RISULTATI
+    I part-file vengono puliti a inizio run, salvo -NoCleanResults.
+    I CSV finali vengono creati dagli script di merge.
 
-Per cambiare il timeout dell'attesa risultati prima del merge automatico:
-    .\scripts\run_experiment.ps1 -e 02_ooo_safe -NoPreprocess -MergeTimeoutSeconds 300
+    Esempio per 01_baseline:
+        Results/experiments/01_baseline/flink/table/q1/...
+        Results/experiments/01_baseline/flink/datastream/q1/...
+        Results/experiments/01_baseline/spark/structured/q1/...
 
-Per disattivare il merge automatico:
-    .\scripts\run_experiment.ps1 -e 02_ooo_safe -NoPreprocess -NoMerge
+OPZIONI UTILI
+    -NoPreprocess          Salta il preprocessing se e' gia' stato fatto.
+    -NoResetTopic          Non resetta il topic Kafka flights.
+    -NoCleanResults        Non cancella i part-file precedenti.
+    -NoMerge               Non crea il CSV finale.
+    -MergeTimeoutSeconds   Timeout per attendere part-file stabili. Default: 180.
+    -SparkTimeoutSeconds   Timeout per attendere la fine di Spark. Default: 1200.
+    -KeepFlinkJob          Non cancella il job Flink a fine run.
 
-Esecuzione flusso completo CSV + InfluxDB + TimescaleDB + Grafana:
-    .\scripts\run_experiment.ps1 -e 05_wm_safe -NoPreprocess -FullFlow
+DASHBOARD
+    Le dashboard sono supportate solo per:
+        -Query q1 -Engine flink -Implementation table
 
-Esecuzione con un solo backend dashboard:
-    .\scripts\run_experiment.ps1 -e 05_wm_safe -NoPreprocess -DashboardInflux
-    .\scripts\run_experiment.ps1 -e 05_wm_safe -NoPreprocess -DashboardTimescale
+    Esempi:
+        .\scripts\run_experiment.ps1 -e 05_wm_safe -FullFlow
+        .\scripts\run_experiment.ps1 -e 05_wm_safe -DashboardInflux
+        .\scripts\run_experiment.ps1 -e 05_wm_safe -DashboardTimescale
 
-Merge manuale:
-    python .\scripts\merge_q1.py --exp 02_ooo_safe
-
-Dopo il merge (e prima di cancellare il job) lo script legge dal JobManager
-la metrica numLateRecordsDropped (eventi scartati come late dalle finestre)
-e la accoda a Results/late_drops.csv, una riga per esperimento. Manuale:
-    python .\scripts\report_late_drops.py --exp 02_ooo_safe
-
-Esecuzione consigliata di tutti gli esperimenti:
-    .\scripts\run_experiment.ps1 -e 01_baseline
-    .\scripts\run_experiment.ps1 -e 02_ooo_safe -NoPreprocess
-    .\scripts\run_experiment.ps1 -e 03_ooo_late_loss -NoPreprocess
-    .\scripts\run_experiment.ps1 -e 04_ooo_uniform_late_loss -NoPreprocess
-    .\scripts\run_experiment.ps1 -e 05_wm_safe -NoPreprocess
-    .\scripts\run_experiment.ps1 -e 06_wm_aggressive -NoPreprocess
-
-Parametri disponibili:
-    -e / -Exp              Nome dell'esperimento dentro config/experiments.
-    -NoPreprocess          Salta il preprocessing.
-    -NoResetTopic          Non cancella e non ricrea il topic Kafka flights.
-    -NoCleanResults        Non cancella la cartella dei part file prima del run.
-    -NoMerge               Non esegue il merge automatico.
-    -MergeTimeoutSeconds   Timeout (s) dell'attesa che i part file siano stabili
-                           prima del merge (merge_q1.py --wait). Default: 180.
-    -FullFlow              Avvia entrambi i backend dashboard e abilita i sink runtime.
-    -DashboardInflux       Avvia/abilita solo InfluxDB via Kafka+Telegraf.
-    -DashboardTimescale    Avvia/abilita solo TimescaleDB via JDBC.
-    -NoCleanDashboard      Non pulisce lo stato dashboard prima della run.
-    -KeepFlinkJob          Non cancella il job Flink a fine esperimento.
+RESET COMPLETO DOCKER
+    docker compose down -v --remove-orphans
+    docker compose up -d --build
 #>
-
 param(
     [Alias("e")]
     [string]$Exp,
+
+    [ValidateSet("q1", "q2", "q3")]
+    [string]$Query = "q1",
+
+    [ValidateSet("flink", "spark")]
+    [string]$Engine = "flink",
+
+    [ValidateSet("", "table", "datastream", "structured")]
+    [string]$Implementation = "",
 
     [switch]$NoPreprocess,
     [switch]$NoResetTopic,
@@ -98,7 +99,9 @@ param(
     [switch]$NoCleanDashboard,
     [switch]$KeepFlinkJob,
 
-    [int]$MergeTimeoutSeconds = 180
+    [int]$MergeTimeoutSeconds = 180,
+
+    [int]$SparkTimeoutSeconds = 1200
 )
 
 $ErrorActionPreference = "Stop"
@@ -122,10 +125,13 @@ function Assert-ProjectRoot {
     }
 }
 
-function Get-Q1ResultsHostPath {
+function Get-ResultsHostPaths {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$ConfigPathHost
+        [string]$ConfigPathHost,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$PathKeys
     )
 
     $PreviousConfigPath = $env:CONFIG_PATH
@@ -133,13 +139,14 @@ function Get-Q1ResultsHostPath {
     try {
         $env:CONFIG_PATH = $ConfigPathHost
 
-        $PathValue = python -c "from pathlib import Path; from common.config import load_config; print(Path(load_config()['paths']['q1_results_host_path']))"
+        $JoinedKeys = $PathKeys -join ","
+        $PathValue = python -c "from pathlib import Path; from common.config import load_config; paths=load_config()['paths']; print('\n'.join(str(Path(paths[k])) for k in '$JoinedKeys'.split(',')))"
 
         if ($LASTEXITCODE -ne 0) {
-            throw "Unable to read q1_results_host_path from config: $ConfigPathHost"
+            throw "Unable to read result path(s) from config: $ConfigPathHost"
         }
 
-        return $PathValue.Trim()
+        return @($PathValue -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     }
     finally {
         if ($null -eq $PreviousConfigPath) {
@@ -151,26 +158,29 @@ function Get-Q1ResultsHostPath {
     }
 }
 
-function Initialize-Q1ResultsDirectory {
+function Initialize-ResultsDirectories {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$ResultsHostPath,
+        [string[]]$ResultsHostPaths,
 
         [Parameter(Mandatory = $true)]
         [bool]$Clean
     )
 
     Write-Host ""
-    Write-Host "Q1 host results directory:"
-    Write-Host $ResultsHostPath
+    Write-Host "Host results director$(if ($ResultsHostPaths.Count -eq 1) { 'y' } else { 'ies' }):"
 
-    if ($Clean -and (Test-Path $ResultsHostPath)) {
-        Write-Host "Cleaning previous Q1 part files..."
-        Remove-Item -Recurse -Force $ResultsHostPath
+    foreach ($ResultsHostPath in $ResultsHostPaths) {
+        Write-Host $ResultsHostPath
+
+        if ($Clean -and (Test-Path $ResultsHostPath)) {
+            Write-Host "Cleaning previous part files..."
+            Remove-Item -Recurse -Force $ResultsHostPath
+        }
+
+        Write-Host "Ensuring host results directory exists..."
+        New-Item -ItemType Directory -Force -Path $ResultsHostPath | Out-Null
     }
-
-    Write-Host "Ensuring Q1 host results directory exists..."
-    New-Item -ItemType Directory -Force -Path $ResultsHostPath | Out-Null
 }
 
 function New-ExperimentRuntimeConfig {
@@ -195,7 +205,8 @@ function New-ExperimentRuntimeConfig {
     $RunId = "$(Get-Date -Format 'yyyyMMddHHmmss')-$PID"
     $RuntimeFileName = "$SafeLabel.$RunId.runtime.yml"
     $RuntimeHostPath = Join-Path $RuntimeDir $RuntimeFileName
-    $ConsumerGroup = "flink-flight-analysis-$SafeLabel-$RunId"
+    $FlinkConsumerGroup = "flink-flight-analysis-$SafeLabel-$RunId"
+    $SparkConsumerGroup = "spark-flight-analysis-$SafeLabel-$RunId"
 
     $BaseFileName = Split-Path $ConfigPathHost -Leaf
     if ($ConfigPathHost -like "config/experiments/*") {
@@ -212,7 +223,10 @@ function New-ExperimentRuntimeConfig {
 extends: "$ExtendsPath"
 
 flink:
-  consumer_group: "$ConsumerGroup"
+  consumer_group: "$FlinkConsumerGroup"
+
+spark:
+  consumer_group: "$SparkConsumerGroup"
 
 dashboard:
   influx:
@@ -226,7 +240,8 @@ dashboard:
     return @{
         HostPath = $RuntimeHostPath
         ContainerPath = "/config/runtime/$RuntimeFileName"
-        ConsumerGroup = $ConsumerGroup
+        FlinkConsumerGroup = $FlinkConsumerGroup
+        SparkConsumerGroup = $SparkConsumerGroup
     }
 }
 
@@ -399,15 +414,236 @@ function Clear-TimescaleQ1Results {
     }
 }
 
+function Resolve-Implementation {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("flink", "spark")]
+        [string]$Engine,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Implementation
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Implementation)) {
+        if ($Engine -eq "spark") {
+            return "structured"
+        }
+
+        return "table"
+    }
+
+    return $Implementation
+}
+
+function Get-RunSpec {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("q1", "q2", "q3")]
+        [string]$Query,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("flink", "spark")]
+        [string]$Engine,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Implementation
+    )
+
+    if ($Engine -eq "spark") {
+        if ($Implementation -ne "structured") {
+            throw "Spark supporta solo -Implementation structured."
+        }
+
+        $MergeScripts = @{
+            q1 = ".\scripts\merge_spark_q1.py"
+            q2 = ".\scripts\merge_spark_q2.py"
+            q3 = ".\scripts\merge_spark_q3.py"
+        }
+
+        $PathKeys = @{
+            q1 = @("spark_q1_results_host_path")
+            q2 = @(
+                "spark_q2_results_host_path_1h",
+                "spark_q2_results_host_path_6h",
+                "spark_q2_results_host_path_global"
+            )
+            q3 = @(
+                "spark_q3_results_host_path_1d",
+                "spark_q3_results_host_path_7d",
+                "spark_q3_results_host_path_global"
+            )
+        }
+
+        return @{
+            Service = "spark-job-$Query"
+            Container = "spark-job-$Query"
+            MergeScript = $MergeScripts[$Query]
+            PathKeys = $PathKeys[$Query]
+        }
+    }
+
+    if ($Implementation -notin @("table", "datastream")) {
+        throw "Flink supporta -Implementation table oppure datastream."
+    }
+
+    if ($Implementation -eq "datastream" -and $Query -eq "q3") {
+        throw "La DataStream API e' disponibile solo per q1 e q2; q3 ha solo l'implementazione Flink table."
+    }
+
+    if ($Implementation -eq "datastream") {
+        $MergeScripts = @{
+            q1 = ".\scripts\merge_q1_ds.py"
+            q2 = ".\scripts\merge_q2_ds.py"
+        }
+
+        $PathKeys = @{
+            q1 = @("q1_ds_results_host_path")
+            q2 = @(
+                "q2_ds_results_host_path_1h",
+                "q2_ds_results_host_path_6h",
+                "q2_ds_results_host_path_global"
+            )
+        }
+
+        return @{
+            Service = "flink-job-$Query-ds"
+            Container = $null
+            MergeScript = $MergeScripts[$Query]
+            PathKeys = $PathKeys[$Query]
+        }
+    }
+
+    $MergeScripts = @{
+        q1 = ".\scripts\merge_q1.py"
+        q2 = ".\scripts\merge_q2.py"
+        q3 = ".\scripts\merge_q3.py"
+    }
+
+    $PathKeys = @{
+        q1 = @("q1_results_host_path")
+        q2 = @(
+            "q2_results_host_path_1h",
+            "q2_results_host_path_6h",
+            "q2_results_host_path_global"
+        )
+        q3 = @(
+            "q3_results_host_path_1d",
+            "q3_results_host_path_7d",
+            "q3_results_host_path_global"
+        )
+    }
+
+    return @{
+        Service = "flink-job-$Query"
+        Container = $null
+        MergeScript = $MergeScripts[$Query]
+        PathKeys = $PathKeys[$Query]
+    }
+}
+
+function Start-SparkJob {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ConfigPathContainer,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Service
+    )
+
+    $PreviousConfigPath = $env:SABD_CONFIG_PATH
+
+    try {
+        $env:SABD_CONFIG_PATH = $ConfigPathContainer
+
+        Invoke-Checked {
+            docker compose --profile manual up -d --build --force-recreate $Service
+        }
+    }
+    finally {
+        if ($null -eq $PreviousConfigPath) {
+            Remove-Item Env:\SABD_CONFIG_PATH -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:SABD_CONFIG_PATH = $PreviousConfigPath
+        }
+    }
+}
+
+function Wait-SparkJob {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$TimeoutSeconds,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Container
+    )
+
+    $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+
+    while ((Get-Date) -lt $Deadline) {
+        $State = docker inspect -f "{{.State.Status}} {{.State.ExitCode}}" $Container
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to inspect $Container."
+        }
+
+        $Parts = $State.Trim().Split(" ", [System.StringSplitOptions]::RemoveEmptyEntries)
+        $Status = $Parts[0]
+        $ExitCode = [int]$Parts[1]
+
+        if ($Status -eq "exited") {
+            if ($ExitCode -ne 0) {
+                throw "Spark job $Container failed with exit code $ExitCode. Check logs with: docker logs $Container"
+            }
+
+            Write-Host "Spark job $Container completed successfully."
+            return
+        }
+
+        if ($Status -eq "running") {
+            Start-Sleep -Seconds 5
+            continue
+        }
+
+        throw "Unexpected $Container status: $State"
+    }
+
+    throw "Spark job $Container did not finish within $TimeoutSeconds seconds."
+}
+
 Assert-ProjectRoot
 
 if ($MergeTimeoutSeconds -le 0) {
     throw "MergeTimeoutSeconds deve essere maggiore di zero."
 }
 
+if ($SparkTimeoutSeconds -le 0) {
+    throw "SparkTimeoutSeconds deve essere maggiore di zero."
+}
+
+$Implementation = Resolve-Implementation `
+    -Engine $Engine `
+    -Implementation $Implementation
+
+$RunSpec = Get-RunSpec `
+    -Query $Query `
+    -Engine $Engine `
+    -Implementation $Implementation
+
 $EnableInflux = [bool]($FullFlow -or $DashboardInflux)
 $EnableTimescale = [bool]($FullFlow -or $DashboardTimescale)
 $DashboardEnabled = [bool]($EnableInflux -or $EnableTimescale)
+
+if (
+    $DashboardEnabled `
+    -and (
+        $Query -ne "q1" `
+        -or $Engine -ne "flink" `
+        -or $Implementation -ne "table"
+    )
+) {
+    throw "Le dashboard sono supportate da questo runner solo per -Query q1 -Engine flink -Implementation table."
+}
 
 if ([string]::IsNullOrWhiteSpace($Exp)) {
     $CfgHost = "config/base.yml"
@@ -428,25 +664,37 @@ else {
     $MergeArgs = @("--exp", $Exp)
 }
 
+$RuntimeLabel = "$Label-$Query-$Engine-$Implementation"
+
 $RuntimeCfg = New-ExperimentRuntimeConfig `
     -ConfigPathHost $CfgHost `
-    -Label $Label `
+    -Label $RuntimeLabel `
     -EnableInflux $EnableInflux `
     -EnableTimescale $EnableTimescale
 
 $SubmitCfgHost = $RuntimeCfg.HostPath
 $SubmitCfgContainer = $RuntimeCfg.ContainerPath
-$RuntimeConsumerGroup = $RuntimeCfg.ConsumerGroup
+$RuntimeConsumerGroup = if ($Engine -eq "spark") {
+    $RuntimeCfg.SparkConsumerGroup
+}
+else {
+    $RuntimeCfg.FlinkConsumerGroup
+}
 
-$Q1ResultsHostPath = Get-Q1ResultsHostPath -ConfigPathHost $CfgHost
+$ResultsHostPaths = Get-ResultsHostPaths `
+    -ConfigPathHost $CfgHost `
+    -PathKeys $RunSpec.PathKeys
 
-Initialize-Q1ResultsDirectory `
-    -ResultsHostPath $Q1ResultsHostPath `
+Initialize-ResultsDirectories `
+    -ResultsHostPaths $ResultsHostPaths `
     -Clean:(-not $NoCleanResults)
 
 Write-Host ""
 Write-Host "========================================"
-Write-Host "Running Q1 experiment: $Label"
+Write-Host "Running experiment   : $Label"
+Write-Host "Query               : $Query"
+Write-Host "Engine              : $Engine"
+Write-Host "Implementation      : $Implementation"
 Write-Host "Config host         : $CfgHost"
 Write-Host "Submit config host  : $SubmitCfgHost"
 Write-Host "Config inside Docker: $SubmitCfgContainer"
@@ -471,7 +719,9 @@ if ($DashboardEnabled) {
     }
 }
 
-Clear-RunningFlinkJobs
+if ($Engine -eq "flink") {
+    Clear-RunningFlinkJobs
+}
 
 if (-not $NoResetTopic) {
     Write-Host "Reset Kafka topic flights..."
@@ -516,13 +766,23 @@ else {
     Write-Host "Preprocessing skipped."
 }
 
-Write-Host ""
-Write-Host "Submitting Flink Q1 job..."
+if ($Engine -eq "flink") {
+    Write-Host ""
+    Write-Host "Submitting Flink $Query job ($Implementation)..."
 
-Invoke-Checked {
-    docker compose run --rm --build `
-        -e CONFIG_PATH=$SubmitCfgContainer `
-        flink-job-q1
+    Invoke-Checked {
+        docker compose run --rm --build `
+            -e CONFIG_PATH=$SubmitCfgContainer `
+            $RunSpec.Service
+    }
+}
+else {
+    Write-Host ""
+    Write-Host "Starting Spark Structured $Query job..."
+
+    Start-SparkJob `
+        -ConfigPathContainer $SubmitCfgContainer `
+        -Service $RunSpec.Service
 }
 
 Write-Host ""
@@ -535,18 +795,26 @@ Invoke-Checked {
 }
 
 Write-Host ""
-Write-Host "Flink running jobs:"
+if ($Engine -eq "flink") {
+    Write-Host "Flink running jobs:"
 
-Invoke-Checked {
-    docker exec flink-jobmanager flink list -r
+    Invoke-Checked {
+        docker exec flink-jobmanager flink list -r
+    }
+}
+else {
+    Write-Host "Waiting for Spark $Query job to finish..."
+    Wait-SparkJob `
+        -TimeoutSeconds $SparkTimeoutSeconds `
+        -Container $RunSpec.Container
 }
 
 if (-not $NoMerge) {
     Write-Host ""
-    Write-Host "Merging Q1 results (waiting for part files to stabilize)..."
+    Write-Host "Merging $Query results for $Engine/$Implementation (waiting for part files to stabilize)..."
 
     Invoke-Checked {
-        python .\scripts\merge_q1.py @MergeArgs --wait --timeout $MergeTimeoutSeconds
+        python $RunSpec.MergeScript @MergeArgs --wait --timeout $MergeTimeoutSeconds
     }
 }
 else {
@@ -554,24 +822,30 @@ else {
     Write-Host "Merge skipped."
 }
 
-Write-Host ""
-Write-Host "Collecting Flink late-drop metrics (numLateRecordsDropped)..."
+if ($Engine -eq "flink" -and $Query -eq "q1") {
+    Write-Host ""
+    Write-Host "Collecting Flink late-drop metrics (numLateRecordsDropped)..."
 
-python .\scripts\report_late_drops.py @MergeArgs
+    python .\scripts\report_late_drops.py @MergeArgs
 
-if ($LASTEXITCODE -ne 0) {
-    Write-Warning "Late-drop metrics collection failed (exit code $LASTEXITCODE); continuing."
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Late-drop metrics collection failed (exit code $LASTEXITCODE); continuing."
+    }
+}
+else {
+    Write-Host ""
+    Write-Host "Late-drop metrics skipped for $Engine/$Implementation/$Query."
 }
 
-if (-not $KeepFlinkJob) {
+if ($Engine -eq "flink" -and -not $KeepFlinkJob) {
     Write-Host ""
     Write-Host "Cancelling Flink jobs after experiment..."
     Clear-RunningFlinkJobs
 }
-else {
+elseif ($Engine -eq "flink") {
     Write-Host ""
     Write-Host "Flink job left running because -KeepFlinkJob was specified."
 }
 
 Write-Host ""
-Write-Host "Done: $Label"
+Write-Host "Done: $Label [$Query/$Engine/$Implementation]"

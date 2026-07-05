@@ -16,7 +16,7 @@ Run it after the merge (results stable => counters are final) and BEFORE
 cancelling the job: metrics disappear once the job stops.
 
 Exit codes: 0 = metric collected; 1 = no running job, REST unreachable,
-or metric not found (never silently reports 0 in those cases).
+or metric not found (never writes a fake 0 in those cases).
 """
 
 from __future__ import annotations
@@ -183,6 +183,7 @@ def main() -> None:
         job_id = job["jid"]
         job_name = job.get("name", "?")
         job_total = 0.0
+        job_metric_found = False
 
         print(f"Job {job_id} ({job_name}):")
 
@@ -191,18 +192,22 @@ def main() -> None:
 
             for metric_id, value in totals.items():
                 metric_found = True
+                job_metric_found = True
                 job_total += value
                 print(f"  {metric_id} = {int(value)}")
 
-        print(f"  TOTAL {METRIC} = {int(job_total)}  [experiment: {experiment}]")
+        if job_metric_found:
+            print(f"  TOTAL {METRIC} = {int(job_total)}  [experiment: {experiment}]")
 
-        append_output_row(
-            output_file=args.output,
-            experiment=experiment,
-            job_name=job_name,
-            job_id=job_id,
-            late_drops=job_total,
-        )
+            append_output_row(
+                output_file=args.output,
+                experiment=experiment,
+                job_name=job_name,
+                job_id=job_id,
+                late_drops=job_total,
+            )
+        else:
+            print(f"  {METRIC}: not exposed by this job")
 
     if not metric_found:
         print(

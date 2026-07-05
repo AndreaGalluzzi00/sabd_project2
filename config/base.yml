@@ -1,90 +1,12 @@
 experiment:
   name: "base"
-  output_dir_host: "Results"
-  producer_log_path: "/opt/flink/results/producer.log"
 
 paths:
   raw_dataset_path: "/data/raw/project-2-data"
   prepared_path: "/prepared/flights_prepared.csv"
-
-
-  # Path visto dentro il container Flink
-  q1_results_path: "/opt/flink/results/q1"
-  # Path visto dall'host, usato da scripts/merge_q1.py
-  q1_results_host_path: "Results/q1"
-  q1_merged_output_host_path: "Results/q1.csv"
-
-  # Q1 DataStream API (job_datastream.py) – output separato per confronto
-  q1_ds_results_path: "/opt/flink/results/q1_ds"
-  q1_ds_results_host_path: "Results/q1_ds"
-  q1_ds_merged_output_host_path: "Results/q1_ds.csv"
-
-  # Q2 – tre finestre, tre directory di part-file e tre CSV finali
-  q2_results_path_1h:     "/opt/flink/results/q2/1h"
-  q2_results_path_6h:     "/opt/flink/results/q2/6h"
-  q2_results_path_global: "/opt/flink/results/q2/global"
-
-  q2_results_host_path_1h:     "Results/q2/1h"
-  q2_results_host_path_6h:     "Results/q2/6h"
-  q2_results_host_path_global: "Results/q2/global"
-
-  q2_merged_output_host_path_1h:     "Results/q2_1h.csv"
-  q2_merged_output_host_path_6h:     "Results/q2_6h.csv"
-  q2_merged_output_host_path_global: "Results/q2_global.csv"
-
-  # Q2 DataStream API (job_datastream.py) – output separato per confronto
-  q2_ds_results_path_1h:     "/opt/flink/results/q2_ds/1h"
-  q2_ds_results_path_6h:     "/opt/flink/results/q2_ds/6h"
-  q2_ds_results_path_global: "/opt/flink/results/q2_ds/global"
-
-  q2_ds_results_host_path_1h:     "Results/q2_ds/1h"
-  q2_ds_results_host_path_6h:     "Results/q2_ds/6h"
-  q2_ds_results_host_path_global: "Results/q2_ds/global"
-
-  q2_ds_merged_output_host_path_1h:     "Results/q2_ds_1h.csv"
-  q2_ds_merged_output_host_path_6h:     "Results/q2_ds_6h.csv"
-  q2_ds_merged_output_host_path_global: "Results/q2_ds_global.csv"
-  # Q3 – tre finestre (1 giorno, 7 giorni, dall'inizio del dataset)
-  q3_results_path_1d:     "/opt/flink/results/q3/1d"
-  q3_results_path_7d:     "/opt/flink/results/q3/7d"
-  q3_results_path_global: "/opt/flink/results/q3/global"
-
-  q3_results_host_path_1d:     "Results/q3/1d"
-  q3_results_host_path_7d:     "Results/q3/7d"
-  q3_results_host_path_global: "Results/q3/global"
-
-  q3_merged_output_host_path_1d:     "Results/q3_1d.csv"
-  q3_merged_output_host_path_7d:     "Results/q3_7d.csv"
-  q3_merged_output_host_path_global: "Results/q3_global.csv"
-
-  # Spark Structured Streaming (extra) - output separato da Flink
-  spark_q1_results_path: "/opt/spark/results/spark/q1"
-  spark_q1_results_host_path: "Results/spark/q1"
-  spark_q1_merged_output_host_path: "Results/spark_q1.csv"
-
-  spark_q2_results_path_1h:     "/opt/spark/results/spark/q2/1h"
-  spark_q2_results_path_6h:     "/opt/spark/results/spark/q2/6h"
-  spark_q2_results_path_global: "/opt/spark/results/spark/q2/global"
-
-  spark_q2_results_host_path_1h:     "Results/spark/q2/1h"
-  spark_q2_results_host_path_6h:     "Results/spark/q2/6h"
-  spark_q2_results_host_path_global: "Results/spark/q2/global"
-
-  spark_q2_merged_output_host_path_1h:     "Results/spark_q2_1h.csv"
-  spark_q2_merged_output_host_path_6h:     "Results/spark_q2_6h.csv"
-  spark_q2_merged_output_host_path_global: "Results/spark_q2_global.csv"
-
-  spark_q3_results_path_1d:     "/opt/spark/results/spark/q3/1d"
-  spark_q3_results_path_7d:     "/opt/spark/results/spark/q3/7d"
-  spark_q3_results_path_global: "/opt/spark/results/spark/q3/global"
-
-  spark_q3_results_host_path_1d:     "Results/spark/q3/1d"
-  spark_q3_results_host_path_7d:     "Results/spark/q3/7d"
-  spark_q3_results_host_path_global: "Results/spark/q3/global"
-
-  spark_q3_merged_output_host_path_1d:     "Results/spark_q3_1d.csv"
-  spark_q3_merged_output_host_path_7d:     "Results/spark_q3_7d.csv"
-  spark_q3_merged_output_host_path_global: "Results/spark_q3_global.csv"
+  flink_results_root: "/opt/flink/results"
+  spark_results_root: "/opt/spark/results"
+  host_results_root: "Results"
 
 kafka:
   bootstrap_servers: "kafka:9092"
@@ -103,29 +25,21 @@ producer:
   flush_interval: 5000
   skip_if_topic_has_messages: true
 
-  # Iniezione di out-of-orderness: NON modifica l'event_time, ritarda la consegna.
-  #   holdback_probability: frazione di eventi a cui viene ritardato l'invio
-  #   holdback_delay:       ritardo MAX di consegna in secondi di event-time
-  #                         (= bound di out-of-orderness da confrontare col watermark)
+  # Iniezione di out-of-orderness: non modifica l'event_time,
+  # ritarda solo la consegna degli eventi.
   holdback_probability: 0.3
   holdback_delay: 120.0
   random_seed: 42
 
-  # Distribution used to delay held-back events:
-  #   uniform     -> random delay in [0, holdback_delay]
-  #   exponential -> many small delays, few large delays
+  # uniform: delay casuale in [0, holdback_delay]
+  # exponential: molti delay piccoli, pochi delay grandi
   holdback_distribution: "exponential"
 
-  # Used only when holdback_distribution = "exponential".
-  # Average artificial delay in event-time seconds.
-  # Recommended: around holdback_delay / 3 -> se non messo lo calcola in automatico
+  # Usato solo con holdback_distribution = "exponential".
   holdback_mean_seconds: 40.0
 
-
-  # A fine replay invia un marker con event_time nel futuro a OGNI partizione:
-  # spinge il watermark oltre l'ultima finestra → l'ultima finestra viene drenata
-  # senza 'flink stop --drain'. Il marker (airline=__EOS__, cancelled/diverted=1)
-  # è escluso da tutte le query.
+  # A fine replay invia un marker con event_time nel futuro a ogni partizione:
+  # spinge il watermark oltre l'ultima finestra e drena i risultati finali.
   emit_end_of_stream: true
   retries: 3
   linger_ms: 20
@@ -138,10 +52,8 @@ flink:
   checkpoint_interval_ms: 10000
   consumer_group: "flink-flight-analysis"
 
-  # Intervallo di emissione periodica del watermark (pipeline.auto-watermark-interval).
-  # In event-time il "salto cieco" tra due watermark vale interval_ms/1000 * accelerazione:
-  # a 57600x, 200ms -> ~11520 s (3.2h) -> schiaccia d e il disordine. Tenere 1ms negli
-  # esperimenti di completezza per rendere trascurabile questo gap (G ≈ 58 s).
+  # Intervallo di emissione periodica del watermark.
+  # A 57600x, 200ms corrispondono a circa 3.2h di event-time.
   auto_watermark_interval_ms: 200
 
 spark:
@@ -159,54 +71,51 @@ q1:
 
 q2:
   # Ritardo massimo ammesso per eventi in ritardo (event time).
-  # Stesso valore di Q1: un holdback_delay di 120 s con distribuzione
-  # esponenziale (holdback_mean ~40 s) è coperto da 180 s con ampio margine.
   watermark_delay_seconds: 180
 
 q3:
-  # Stessa strategia di watermarking di Q1/Q2 (bounded out-of-orderness).
+  # Stessa strategia di watermarking di Q1/Q2.
   watermark_delay_seconds: 180
-  # DDSketch: errore relativo massimo garantito sui percentili (α).
-  # Più piccolo → più bucket (memoria) e più accuratezza. Con 0.01 i ritardi
-  # in minuti del dataset stanno in ~200-400 contatori per gruppo.
+  # DDSketch: errore relativo massimo garantito sui percentili.
   sketch_alpha: 0.01
-  # Spark Structured Streaming extra: percentile_approx accuracy. Higher means
-  # more accurate but larger state.
+  # Spark Structured Streaming extra: percentile_approx accuracy.
   spark_percentile_accuracy: 10000
 
-# Visualizzazione real-time su Grafana (Opzionale 1 della specifica).
-# Due backend ALTERNATIVI e indipendenti, attivabili uno, l'altro o entrambi:
-#   - influx:    Q1 -> topic Kafka -> Telegraf -> InfluxDB   (time-series nativo)
-#   - timescale: Q1 -> sink JDBC   -> TimescaleDB            (SQL, connettore Flink nativo)
-# Il sink CSV resta SEMPRE attivo: le dashboard sono consumatori paralleli e non
-# sostituiscono l'output certificato. Tutti i sink leggono la stessa vista q1_agg,
-# quindi CSV/InfluxDB/TimescaleDB non possono divergere.
-# Default: entrambi false → pipeline invariata.
+# Visualizzazione real-time su Grafana (opzionale).
+# Il sink CSV resta sempre attivo; dashboard InfluxDB/TimescaleDB sono sink paralleli.
 dashboard:
   influx:
+<<<<<<< Updated upstream
     enabled: true
     # NB: con enabled=true i topic DEVONO esistere (vedi servizio dashboard-init).
+=======
+    enabled: false
+>>>>>>> Stashed changes
     results_topic: "q1_results"
     q2:
-      topic_1h:     "q2_results_1h"
-      topic_6h:     "q2_results_6h"
+      topic_1h: "q2_results_1h"
+      topic_6h: "q2_results_6h"
       topic_global: "q2_results_global"
     q3:
-      topic_1d:     "q3_results_1d"
-      topic_7d:     "q3_results_7d"
+      topic_1d: "q3_results_1d"
+      topic_7d: "q3_results_7d"
       topic_global: "q3_results_global"
   timescale:
+<<<<<<< Updated upstream
     enabled: true
     # NB: con enabled=true le tabelle DEVONO esistere (init in dashboard/timescaledb/).
+=======
+    enabled: false
+>>>>>>> Stashed changes
     url: "jdbc:postgresql://timescaledb:5432/sabd"
     table: "q1_results"
     username: "sabd"
     password: "sabd"
     q2:
-      table_1h:     "q2_results_1h"
-      table_6h:     "q2_results_6h"
+      table_1h: "q2_results_1h"
+      table_6h: "q2_results_6h"
       table_global: "q2_results_global"
     q3:
-      table_1d:     "q3_results_1d"
-      table_7d:     "q3_results_7d"
+      table_1d: "q3_results_1d"
+      table_7d: "q3_results_7d"
       table_global: "q3_results_global"

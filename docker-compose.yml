@@ -531,7 +531,7 @@ services:
       kafka:
         condition: service_healthy
     environment:
-      CONFIG_PATH: /config/base.yml
+      CONFIG_PATH: ${SABD_CONFIG_PATH:-/config/base.yml}
       PYTHONPATH: /opt/spark/app:/opt/spark/app/spark_jobs:/opt/spark/app/common
       SPARK_PACKAGES: org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.spark:spark-avro_2.12:3.5.1
     command: >
@@ -567,7 +567,7 @@ services:
       kafka:
         condition: service_healthy
     environment:
-      CONFIG_PATH: /config/base.yml
+      CONFIG_PATH: ${SABD_CONFIG_PATH:-/config/base.yml}
       PYTHONPATH: /opt/spark/app:/opt/spark/app/spark_jobs:/opt/spark/app/common
       SPARK_PACKAGES: org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.spark:spark-avro_2.12:3.5.1
     command: >
@@ -604,7 +604,7 @@ services:
       kafka:
         condition: service_healthy
     environment:
-      CONFIG_PATH: /config/base.yml
+      CONFIG_PATH: ${SABD_CONFIG_PATH:-/config/base.yml}
       PYTHONPATH: /opt/spark/app:/opt/spark/app/spark_jobs:/opt/spark/app/common
       SPARK_PACKAGES: org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.spark:spark-avro_2.12:3.5.1
     command: >

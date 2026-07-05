@@ -8,6 +8,7 @@ import yaml
 
 
 DEFAULT_CONFIG_PATH = "/config/base.yml"
+BASE_EXPERIMENT_NAME = "base"
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -65,7 +66,220 @@ def _load_config_with_extends(
     return deep_merge(base_cfg, cfg)
 
 
+def _join_path(root: str, *parts: str) -> str:
+    root = str(root).rstrip("/")
+    clean_parts = [str(part).strip("/") for part in parts if str(part)]
+
+    if not root:
+        return "/".join(clean_parts)
+
+    if not clean_parts:
+        return root
+
+    return "/".join([root, *clean_parts])
+
+
+def _ensure_child_path(root: str, child: str) -> str:
+    root = str(root).rstrip("/")
+    last_part = root.replace("\\", "/").split("/")[-1]
+
+    if last_part == child:
+        return root
+
+    return _join_path(root, child)
+
+
+def _setdefault_path(paths: dict[str, Any], key: str, value: str) -> None:
+    if paths.get(key) in (None, ""):
+        paths[key] = value
+
+
+def _result_roots(cfg: dict[str, Any]) -> tuple[str, str, str]:
+    experiment_cfg = cfg.setdefault("experiment", {})
+    paths = cfg.setdefault("paths", {})
+
+    name = str(experiment_cfg.get("name", BASE_EXPERIMENT_NAME)).strip()
+    name = name or BASE_EXPERIMENT_NAME
+
+    flink_root = str(paths.setdefault("flink_results_root", "/opt/flink/results"))
+    spark_root = str(paths.setdefault("spark_results_root", "/opt/spark/results"))
+    host_root = str(paths.setdefault("host_results_root", "Results"))
+
+    if name == BASE_EXPERIMENT_NAME:
+        return flink_root, spark_root, host_root
+
+    host_parent = str(
+        experiment_cfg.get("output_dir_host", _join_path(host_root, "experiments"))
+    )
+    flink_parent = str(
+        experiment_cfg.get("output_dir_flink", _join_path(flink_root, "experiments"))
+    )
+    spark_parent = str(
+        experiment_cfg.get("output_dir_spark", _join_path(spark_root, "experiments"))
+    )
+
+    return (
+        _ensure_child_path(flink_parent, name),
+        _ensure_child_path(spark_parent, name),
+        _ensure_child_path(host_parent, name),
+    )
+
+
+def _materialize_derived_paths(cfg: dict[str, Any]) -> dict[str, Any]:
+    experiment_cfg = cfg.setdefault("experiment", {})
+    paths = cfg.setdefault("paths", {})
+
+    flink_root, spark_root, host_root = _result_roots(cfg)
+
+    def flink_table_root(query: str) -> str:
+        return _join_path(flink_root, "flink", "table", query)
+
+    def flink_table_host_root(query: str) -> str:
+        return _join_path(host_root, "flink", "table", query)
+
+    def flink_datastream_root(query: str) -> str:
+        return _join_path(flink_root, "flink", "datastream", query)
+
+    def flink_datastream_host_root(query: str) -> str:
+        return _join_path(host_root, "flink", "datastream", query)
+
+    def spark_structured_root(query: str) -> str:
+        return _join_path(spark_root, "spark", "structured", query)
+
+    def spark_structured_host_root(query: str) -> str:
+        return _join_path(host_root, "spark", "structured", query)
+
+    _setdefault_path(
+        paths,
+        "q1_results_path",
+        _join_path(flink_table_root("q1"), "part_files"),
+    )
+    _setdefault_path(
+        paths,
+        "q1_results_host_path",
+        _join_path(flink_table_host_root("q1"), "part_files"),
+    )
+    _setdefault_path(
+        paths,
+        "q1_merged_output_host_path",
+        _join_path(flink_table_host_root("q1"), "q1.csv"),
+    )
+
+    _setdefault_path(
+        paths,
+        "q1_ds_results_path",
+        _join_path(flink_datastream_root("q1"), "part_files"),
+    )
+    _setdefault_path(
+        paths,
+        "q1_ds_results_host_path",
+        _join_path(flink_datastream_host_root("q1"), "part_files"),
+    )
+    _setdefault_path(
+        paths,
+        "q1_ds_merged_output_host_path",
+        _join_path(flink_datastream_host_root("q1"), "q1.csv"),
+    )
+
+    for label in ("1h", "6h", "global"):
+        _setdefault_path(
+            paths,
+            f"q2_results_path_{label}",
+            _join_path(flink_table_root("q2"), label, "part_files"),
+        )
+        _setdefault_path(
+            paths,
+            f"q2_results_host_path_{label}",
+            _join_path(flink_table_host_root("q2"), label, "part_files"),
+        )
+        _setdefault_path(
+            paths,
+            f"q2_merged_output_host_path_{label}",
+            _join_path(flink_table_host_root("q2"), f"q2_{label}.csv"),
+        )
+
+        _setdefault_path(
+            paths,
+            f"q2_ds_results_path_{label}",
+            _join_path(flink_datastream_root("q2"), label, "part_files"),
+        )
+        _setdefault_path(
+            paths,
+            f"q2_ds_results_host_path_{label}",
+            _join_path(flink_datastream_host_root("q2"), label, "part_files"),
+        )
+        _setdefault_path(
+            paths,
+            f"q2_ds_merged_output_host_path_{label}",
+            _join_path(flink_datastream_host_root("q2"), f"q2_{label}.csv"),
+        )
+
+    for label in ("1d", "7d", "global"):
+        _setdefault_path(
+            paths,
+            f"q3_results_path_{label}",
+            _join_path(flink_table_root("q3"), label, "part_files"),
+        )
+        _setdefault_path(
+            paths,
+            f"q3_results_host_path_{label}",
+            _join_path(flink_table_host_root("q3"), label, "part_files"),
+        )
+        _setdefault_path(
+            paths,
+            f"q3_merged_output_host_path_{label}",
+            _join_path(flink_table_host_root("q3"), f"q3_{label}.csv"),
+        )
+
+    _setdefault_path(
+        paths,
+        "spark_q1_results_path",
+        _join_path(spark_structured_root("q1"), "part_files"),
+    )
+    _setdefault_path(
+        paths,
+        "spark_q1_results_host_path",
+        _join_path(spark_structured_host_root("q1"), "part_files"),
+    )
+    _setdefault_path(
+        paths,
+        "spark_q1_merged_output_host_path",
+        _join_path(spark_structured_host_root("q1"), "q1.csv"),
+    )
+
+    for query, labels in {
+        "q2": ("1h", "6h", "global"),
+        "q3": ("1d", "7d", "global"),
+    }.items():
+        for label in labels:
+            _setdefault_path(
+                paths,
+                f"spark_{query}_results_path_{label}",
+                _join_path(spark_structured_root(query), label, "part_files"),
+            )
+            _setdefault_path(
+                paths,
+                f"spark_{query}_results_host_path_{label}",
+                _join_path(spark_structured_host_root(query), label, "part_files"),
+            )
+            _setdefault_path(
+                paths,
+                f"spark_{query}_merged_output_host_path_{label}",
+                _join_path(spark_structured_host_root(query), f"{query}_{label}.csv"),
+            )
+
+    _setdefault_path(
+        experiment_cfg,
+        "producer_log_path",
+        _join_path(flink_root, "producer.log"),
+    )
+
+    return cfg
+
+
 def load_config() -> dict[str, Any]:
     config_path = Path(os.getenv("CONFIG_PATH", DEFAULT_CONFIG_PATH)).resolve()
 
-    return _load_config_with_extends(config_path)
+    cfg = _load_config_with_extends(config_path)
+
+    return _materialize_derived_paths(cfg)
