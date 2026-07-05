@@ -873,20 +873,22 @@ else {
     Write-Host "Merge skipped."
 }
 
-# numLateRecordsDropped e' esposto dal WindowOperator della Table/SQL API
-# (Q1 table: WindowAggregate, Q2 table: WindowRank), che lo registra da se'.
-# Il window operator di PyFlink DataStream (q1/q2 datastream) NON lo registra.
-# Q3 (finestre DataStream per il DDSketch) lo ricrea a mano: side output dei
-# late data -> Q3LateDropCounter incrementa un Counter 'numLateRecordsDropped'
-# su un operatore nominato senza virgole (Q3LateDrops[...]), leggibile via REST.
-$CollectLateDrops = (
-    $Engine -eq "flink" -and (
-        ($Implementation -eq "table" -and ($Query -eq "q1" -or $Query -eq "q2")) -or
-        ($Query -eq "q3")
-    )
+# Late-record drops (completezza sotto out-of-orderness), due strade:
+#  - Q1/Q2 table: 'numLateRecordsDropped', registrata dal WindowOperator della
+#    Table/SQL API. Letta live via REST (report_late_drops.py) prima di
+#    cancellare il job.
+#  - Q3 (finestre DataStream per il DDSketch): quel counter NON e' registrato,
+#    quindi lo stesso numero si ricava dall'output mergiato. La finestra
+#    'global' chiude solo all'EOS -> non perde nulla -> e' la ground-truth N del
+#    run; per le altre finestre late_dropped = N - sum(count)
+#    (report_completeness_q3.py). Serve il merge, quindi si salta con -NoMerge.
+$CollectLateDropsMetric = (
+    $Engine -eq "flink" -and $Implementation -eq "table" `
+    -and ($Query -eq "q1" -or $Query -eq "q2")
 )
+$CollectLateDropsOutput = ($Engine -eq "flink" -and $Query -eq "q3" -and -not $NoMerge)
 
-if ($CollectLateDrops) {
+if ($CollectLateDropsMetric) {
     Write-Host ""
     Write-Host "Collecting Flink late-drop metrics (numLateRecordsDropped)..."
 
@@ -896,9 +898,19 @@ if ($CollectLateDrops) {
         Write-Warning "Late-drop metrics collection failed (exit code $LASTEXITCODE); continuing."
     }
 }
+elseif ($CollectLateDropsOutput) {
+    Write-Host ""
+    Write-Host "Computing Q3 late-record drops from merged output (global window = ground truth)..."
+
+    python .\scripts\report_completeness_q3.py @MergeArgs
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Q3 late-drop computation failed (exit code $LASTEXITCODE); continuing."
+    }
+}
 else {
     Write-Host ""
-    Write-Host "Late-drop metrics skipped for $Engine/$Implementation/$Query (numLateRecordsDropped exposed only by q1/q2 table and by q3)."
+    Write-Host "Late-drop metrics skipped for $Engine/$Implementation/$Query."
 }
 
 if ($Engine -eq "flink" -and -not $KeepFlinkJob) {
