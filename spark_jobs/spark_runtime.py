@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import csv
 import logging
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -163,16 +165,66 @@ def write_foreach_batch_stream(
     )
 
 
+# Unified perf schema, shared with scripts/report_perf.py (Flink writer), so
+# Results/perf.csv holds both engines side by side for the report.
+_PERF_HEADER = [
+    "timestamp_utc", "engine", "implementation", "query", "experiment",
+    "parallelism", "total_records", "active_seconds",
+    "throughput_rec_s_avg", "throughput_rec_s_max",
+    "latency_ms_avg", "latency_ms_max",
+    "busy_pct_avg", "backpressure_pct_avg", "notes",
+]
+
+# Default host location (./Results is bind-mounted at /opt/spark/results).
+_PERF_OUTPUT = "/opt/spark/results/perf.csv"
+
+
+def _append_perf_row(output_path: str, row: list[Any], logger: logging.Logger) -> None:
+    """Best-effort append of one perf row; never breaks the job on failure."""
+    try:
+        out = Path(output_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not out.exists()
+        with out.open("a", encoding="utf-8", newline="") as fh:
+            writer = csv.writer(fh)
+            if write_header:
+                writer.writerow(_PERF_HEADER)
+            writer.writerow(row)
+        logger.info("Spark perf row appended to %s", output_path)
+    except Exception as exc:  # noqa: BLE001 - metrics must never fail the job
+        logger.warning("Could not write Spark perf row: %s", exc)
+
+
 def await_queries_until_idle(
     queries,
     runtime_cfg: SparkRuntimeConfig,
     logger: logging.Logger,
+    *,
+    query_label: str = "",
+    experiment: str = "base",
+    perf_output: str = _PERF_OUTPUT,
 ) -> None:
-    """Stop local Spark jobs after the finite Kafka replay has gone idle."""
+    """Stop local Spark jobs after the finite Kafka replay has gone idle.
+
+    While waiting, it accumulates per-batch progress (numInputRows,
+    processedRowsPerSecond, batch triggerExecution ms) and, on exit, appends a
+    performance row to Results/perf.csv:
+      * throughput = records / active wall-clock time (avg) and peak
+        processedRowsPerSecond (max);
+      * latency    = batch processing time (durationMs.triggerExecution),
+        which is Spark's micro-batch latency.
+    All queries read the same Kafka source, so the record count is the MAX over
+    queries (not the sum), avoiding an N-fold inflation for multi-window jobs.
+    """
     started_at = time.monotonic()
     last_activity_at = started_at
     seen_input = False
     seen_batches: set[tuple[str, int]] = set()
+
+    input_by_query: dict[str, int] = {}
+    proc_rates: list[float] = []
+    batch_latencies_ms: list[float] = []
+    first_activity_at: float | None = None
 
     while any(query.isActive for query in queries):
         now = time.monotonic()
@@ -193,6 +245,21 @@ def await_queries_until_idle(
             if input_rows > 0:
                 seen_input = True
                 last_activity_at = now
+                if first_activity_at is None:
+                    first_activity_at = now
+
+                qid = str(query.id)
+                input_by_query[qid] = input_by_query.get(qid, 0) + input_rows
+
+                rate = float(progress.get("processedRowsPerSecond", 0.0) or 0.0)
+                if rate > 0.0:
+                    proc_rates.append(rate)
+
+                duration = progress.get("durationMs") or {}
+                trigger_ms = float(duration.get("triggerExecution", 0.0) or 0.0)
+                if trigger_ms > 0.0:
+                    batch_latencies_ms.append(trigger_ms)
+
                 logger.info(
                     "%s | batch=%s input_rows=%s",
                     query.name,
@@ -226,3 +293,22 @@ def await_queries_until_idle(
 
     for query in queries:
         query.awaitTermination(30)
+
+    # ── Emit the aggregate perf row ────────────────────────────────────────────
+    total_records = max(input_by_query.values(), default=0)
+    active_seconds = max((last_activity_at - first_activity_at), 1e-6) if first_activity_at else 0.0
+    thr_avg = (total_records / active_seconds) if active_seconds > 0 else 0.0
+    thr_max = max(proc_rates, default=0.0)
+    lat_avg = (sum(batch_latencies_ms) / len(batch_latencies_ms)) if batch_latencies_ms else ""
+    lat_max = max(batch_latencies_ms, default="") if batch_latencies_ms else ""
+
+    row = [
+        datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "spark", "structured", query_label or "?", experiment,
+        runtime_cfg.shuffle_partitions, int(total_records), round(active_seconds, 1),
+        round(thr_avg, 1), round(thr_max, 1),
+        (round(lat_avg, 1) if lat_avg != "" else ""),
+        (round(lat_max, 1) if lat_max != "" else ""),
+        "", "", f"spark local[*], trigger={runtime_cfg.trigger_processing_time}",
+    ]
+    _append_perf_row(perf_output, row, logger)

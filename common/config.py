@@ -231,6 +231,23 @@ def _materialize_derived_paths(cfg: dict[str, Any]) -> dict[str, Any]:
             _join_path(flink_table_host_root("q3"), f"q3_{label}.csv"),
         )
 
+        # Q3 DataStream API (job_datastream.py) – output separato per confronto
+        _setdefault_path(
+            paths,
+            f"q3_ds_results_path_{label}",
+            _join_path(flink_datastream_root("q3"), label, "part_files"),
+        )
+        _setdefault_path(
+            paths,
+            f"q3_ds_results_host_path_{label}",
+            _join_path(flink_datastream_host_root("q3"), label, "part_files"),
+        )
+        _setdefault_path(
+            paths,
+            f"q3_ds_merged_output_host_path_{label}",
+            _join_path(flink_datastream_host_root("q3"), f"q3_{label}.csv"),
+        )
+
     _setdefault_path(
         paths,
         "spark_q1_results_path",

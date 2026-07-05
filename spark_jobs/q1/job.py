@@ -100,7 +100,11 @@ def main() -> None:
         runtime_cfg=runtime_cfg,
     )
 
-    await_queries_until_idle([query], runtime_cfg, logger)
+    await_queries_until_idle(
+        [query], runtime_cfg, logger,
+        query_label="q1",
+        experiment=str(cfg.get("experiment", {}).get("name", "base")),
+    )
     spark.stop()
 
 

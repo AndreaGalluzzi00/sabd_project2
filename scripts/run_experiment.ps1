@@ -25,7 +25,7 @@ COMBINAZIONI SUPPORTATE
     Flink:
         q1 table, q1 datastream
         q2 table, q2 datastream
-        q3 table
+        q3 table, q3 datastream
 
     Spark:
         q1 structured
@@ -98,6 +98,7 @@ param(
     [switch]$DashboardTimescale,
     [switch]$NoCleanDashboard,
     [switch]$KeepFlinkJob,
+    [switch]$NoPerf,
 
     [int]$MergeTimeoutSeconds = 180,
 
@@ -486,14 +487,11 @@ function Get-RunSpec {
         throw "Flink supporta -Implementation table oppure datastream."
     }
 
-    if ($Implementation -eq "datastream" -and $Query -eq "q3") {
-        throw "La DataStream API e' disponibile solo per q1 e q2; q3 ha solo l'implementazione Flink table."
-    }
-
     if ($Implementation -eq "datastream") {
         $MergeScripts = @{
             q1 = ".\scripts\merge_q1_ds.py"
             q2 = ".\scripts\merge_q2_ds.py"
+            q3 = ".\scripts\merge_q3_ds.py"
         }
 
         $PathKeys = @{
@@ -502,6 +500,11 @@ function Get-RunSpec {
                 "q2_ds_results_host_path_1h",
                 "q2_ds_results_host_path_6h",
                 "q2_ds_results_host_path_global"
+            )
+            q3 = @(
+                "q3_ds_results_host_path_1d",
+                "q3_ds_results_host_path_7d",
+                "q3_ds_results_host_path_global"
             )
         }
 
@@ -785,6 +788,30 @@ else {
         -Service $RunSpec.Service
 }
 
+# Perf monitor (Flink): sample throughput/latency via REST WHILE the producer
+# replays and the job consumes. Spark writes its own perf row from the job.
+$PerfProcess = $null
+$PerfLog = $null
+if ($Engine -eq "flink" -and -not $NoPerf) {
+    Write-Host ""
+    Write-Host "Starting perf monitor (report_perf.py) in background..."
+
+    $PerfLog = Join-Path $env:TEMP "sabd_perf_$PID.log"
+    $PerfArgs = @(
+        ".\scripts\report_perf.py",
+        "--engine", "flink",
+        "--query", $Query,
+        "--implementation", $Implementation,
+        "--exp", $Label,
+        "--parallelism", "0"
+    )
+
+    $PerfProcess = Start-Process -FilePath "python" -ArgumentList $PerfArgs `
+        -NoNewWindow -PassThru `
+        -RedirectStandardOutput $PerfLog `
+        -RedirectStandardError "$PerfLog.err"
+}
+
 Write-Host ""
 Write-Host "Running producer..."
 
@@ -792,6 +819,23 @@ Invoke-Checked {
     docker compose run --rm --build `
         -e CONFIG_PATH=$SubmitCfgContainer `
         producer
+}
+
+if ($null -ne $PerfProcess) {
+    Write-Host ""
+    Write-Host "Waiting for perf monitor to finish (job drain + idle)..."
+
+    if (-not $PerfProcess.WaitForExit(180000)) {
+        Write-Warning "Perf monitor still running after 180s; killing it."
+        try { $PerfProcess.Kill() } catch { }
+    }
+
+    foreach ($LogPath in @($PerfLog, "$PerfLog.err")) {
+        if ($LogPath -and (Test-Path $LogPath)) {
+            Get-Content $LogPath | Where-Object { $_ } | ForEach-Object { Write-Host $_ }
+            Remove-Item $LogPath -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 Write-Host ""
@@ -822,7 +866,10 @@ else {
     Write-Host "Merge skipped."
 }
 
-if ($Engine -eq "flink" -and $Query -eq "q1") {
+# numLateRecordsDropped e' esposto SOLO dal WindowOperator della Table/SQL API.
+# Il window operator di PyFlink DataStream (q1/q2/q3 datastream) non registra
+# quel contatore, quindi la completezza si misura sull'implementazione 'table'.
+if ($Engine -eq "flink" -and $Query -eq "q1" -and $Implementation -eq "table") {
     Write-Host ""
     Write-Host "Collecting Flink late-drop metrics (numLateRecordsDropped)..."
 
@@ -834,7 +881,7 @@ if ($Engine -eq "flink" -and $Query -eq "q1") {
 }
 else {
     Write-Host ""
-    Write-Host "Late-drop metrics skipped for $Engine/$Implementation/$Query."
+    Write-Host "Late-drop metrics skipped for $Engine/$Implementation/$Query (only q1/flink/table exposes numLateRecordsDropped)."
 }
 
 if ($Engine -eq "flink" -and -not $KeepFlinkJob) {

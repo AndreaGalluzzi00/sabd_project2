@@ -125,7 +125,11 @@ def main() -> None:
         )
         logger.info("Spark Q3 [%s] | Results path: %s", label, output_path)
 
-    await_queries_until_idle(queries, runtime_cfg, logger)
+    await_queries_until_idle(
+        queries, runtime_cfg, logger,
+        query_label="q3",
+        experiment=str(cfg.get("experiment", {}).get("name", "base")),
+    )
     spark.stop()
 
 

@@ -212,7 +212,13 @@ def main() -> None:
     if not metric_found:
         print(
             f"ERROR: no '{METRIC}' metric exposed by any vertex — cannot "
-            "distinguish '0 drops' from 'not measured'.",
+            "distinguish '0 drops' from 'not measured'.\n"
+            "NOTE: only Flink's Table/SQL WindowOperator exposes "
+            f"{METRIC}. PyFlink DataStream window operators (q1/q2/q3 "
+            "'datastream') do NOT register it, so completeness must be "
+            "measured on the Table implementation (q1/flink/table). For a "
+            "DataStream completeness measure, add .side_output_late_data(tag) "
+            "to the WindowedStream and count the side output instead.",
             file=sys.stderr,
         )
         sys.exit(1)
