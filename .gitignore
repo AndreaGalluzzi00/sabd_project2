@@ -14,6 +14,14 @@ spark-checkpoints/
 # Runtime-generated configs
 config/runtime/
 
+# Partial Results
+Results/q1
+Results/q2
+Results/q3
+Results/flink
+Results/spark
+Results/experiments
+
 # Python
 __pycache__/
 *.py[cod]
