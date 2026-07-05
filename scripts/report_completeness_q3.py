@@ -1,31 +1,33 @@
 #!/usr/bin/env python3
 """
-Report Q3 late-record drops from the MERGED output (single run, no metric).
+Report Q3 late-record drops by comparing an experiment's merged output
+against the baseline run (01_baseline: no injected out-of-orderness).
 
 Flink's 'numLateRecordsDropped' is registered only by the Table/SQL
 WindowOperator (Q1/Q2 'table'). Q3 computes its windows in the DataStream API
-(DDSketch aggregator), which does not register that counter, so we recover the
-same quantity from the output itself — in the very same experiment (same
-watermark) used to collect numLateRecordsDropped for the other queries. No
-safe/aggressive watermark pair is needed.
+(DDSketch aggregator), which does not register that counter, so the same
+quantity is recovered from the output.
 
-Trick: the three Q3 windows partition the *same* filtered input, so in a
-loss-free run the sum of the exact `count` column is identical across them.
-The 'global' window is a single bucket over the whole dataset and closes only
-when the EOS marker pushes the watermark past its end, hence it never drops a
-late record -> its total is the run's ground-truth N. For every other window:
+Method: the wm experiments (0*_wm_uniform_d*, 0*_wm_expo_d*) replay the SAME
+events with the SAME producer seed as the baseline — the holdback only delays
+delivery, it never changes the event set. Therefore, per window size,
+sum(count) of the baseline is exactly the number of records each window
+SHOULD contain, and
 
-    late_dropped(w) = sum(count global) - sum(count w)
-    late_dropped(global) = 0            (reported as a sanity check)
+    late_dropped(w) = sum(count baseline w) - sum(count experiment w)
 
-Reads the same merged CSVs that scripts/merge_q3.py writes for the given
-experiment (Results/q3_<window>_flink_table_<exp>.csv) and appends one row per
-window to Results/late_drops_q3.csv.
+Comparable with the numLateRecordsDropped values collected for Q1/Q2 in the
+same experiments. The 'global' window closes only at EOS, so it should drop
+~0 even under heavy out-of-orderness (reported as a sanity check).
 
-Run it AFTER the merge (the merged CSVs must exist).
+Reads the merged CSVs that scripts/merge_q3.py writes
+(Results/q3_<window>_flink_table_<exp>.csv) and appends one row per window
+to Results/late_drops_q3.csv.
 
-Exit codes: 0 = computed; 1 = the 'global' reference or the merged files are
-missing (never writes a fabricated number in that case).
+Run it AFTER the merge, and only once the baseline has been merged too.
+
+Exit codes: 0 = computed for all windows; 1 = a merged CSV is missing or a
+negative drop shows up (never writes a fabricated number for missing input).
 """
 from __future__ import annotations
 
@@ -53,9 +55,7 @@ WINDOW_PATH_KEYS = {
     "global": "q3_merged_output_host_path_global",
 }
 
-# The window used as ground truth: it closes only at EOS, so it loses nothing.
-GROUND_TRUTH_WINDOW = "global"
-
+DEFAULT_BASELINE = "01_baseline"
 DEFAULT_OUTPUT = PROJECT_ROOT / "Results" / "late_drops_q3.csv"
 
 
@@ -70,6 +70,16 @@ def parse_args() -> argparse.Namespace:
         default=None,
         dest="experiment",
         help="Experiment name under config/experiments (default: base).",
+    )
+
+    parser.add_argument(
+        "--baseline",
+        type=str,
+        default=DEFAULT_BASELINE,
+        help=(
+            "Baseline experiment to compare against, i.e. the run with no "
+            f"injected delay (default: {DEFAULT_BASELINE})."
+        ),
     )
 
     parser.add_argument(
@@ -129,45 +139,64 @@ def sum_count(path: Path) -> tuple[int, int]:
     return total, rows
 
 
+OUTPUT_HEADER = [
+    "timestamp_utc",
+    "experiment",
+    "baseline",
+    "window",
+    "count_baseline",
+    "count_kept",
+    "late_dropped",
+    "late_dropped_pct",
+]
+
+
+def rotate_if_stale_schema(output_file: Path) -> None:
+    """Move aside an output file written with a previous schema.
+
+    Appending under a mismatched header would silently misalign columns
+    (e.g. late_drops_q3.csv left over from the discarded intra-run method).
+    """
+    if not output_file.exists():
+        return
+
+    with output_file.open("r", encoding="utf-8", newline="") as handle:
+        first_line = handle.readline().strip()
+
+    if first_line != ",".join(OUTPUT_HEADER):
+        stale = output_file.with_suffix(output_file.suffix + ".old")
+        output_file.replace(stale)
+        print(f"NOTE: existing {output_file.name} had a stale schema — moved to {stale.name}")
+
+
 def append_output_row(
     output_file: Path,
     experiment: str,
+    baseline: str,
     window: str,
-    rows: int,
+    count_baseline: int,
     count_kept: int,
-    ground_truth: int,
     late_dropped: int,
 ) -> None:
     output_file.parent.mkdir(parents=True, exist_ok=True)
     write_header = not output_file.exists()
 
-    pct = (100.0 * late_dropped / ground_truth) if ground_truth else 0.0
+    pct = (100.0 * late_dropped / count_baseline) if count_baseline else 0.0
 
     with output_file.open("a", encoding="utf-8", newline="") as out:
         writer = csv.writer(out)
 
         if write_header:
-            writer.writerow(
-                [
-                    "timestamp_utc",
-                    "experiment",
-                    "window",
-                    "rows",
-                    "count_kept",
-                    "ground_truth_global",
-                    "late_dropped",
-                    "late_dropped_pct",
-                ]
-            )
+            writer.writerow(OUTPUT_HEADER)
 
         writer.writerow(
             [
                 datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 experiment,
+                baseline,
                 window,
-                rows,
+                count_baseline,
                 count_kept,
-                ground_truth,
                 late_dropped,
                 f"{pct:.4f}",
             ]
@@ -177,66 +206,77 @@ def append_output_row(
 def main() -> None:
     args = parse_args()
 
-    experiment_name, files = resolve_window_files(args.experiment)
+    # Baseline first: resolve_window_files reconfigures CONFIG_PATH, so the
+    # experiment resolution must come last for any downstream config use.
+    baseline_name, baseline_files = resolve_window_files(args.baseline)
+    experiment_name, experiment_files = resolve_window_files(args.experiment)
 
-    print(f"Q3 completeness | experiment: {experiment_name}")
+    print(f"Q3 completeness | experiment: {experiment_name}  vs  baseline: {baseline_name}")
 
-    # ── Ground truth from the 'global' window (loses nothing) ─────────────────
-    gt_path = files[GROUND_TRUTH_WINDOW]
-    if not gt_path.exists():
+    rotate_if_stale_schema(args.output)
+
+    if experiment_name == baseline_name:
         print(
-            f"ERROR: ground-truth window '{GROUND_TRUTH_WINDOW}' file not found: "
-            f"{gt_path}\nRun the merge first (the merged CSVs must exist).",
-            file=sys.stderr,
+            "  NOTE: experiment IS the baseline — expecting 0 dropped everywhere "
+            "(sanity check)."
         )
-        sys.exit(1)
 
-    ground_truth, gt_rows = sum_count(gt_path)
-    if ground_truth <= 0:
-        print(
-            f"ERROR: ground-truth count is {ground_truth} in {gt_path} — no data "
-            "to compare against; cannot distinguish '0 drops' from 'not measured'.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    print(
-        f"  [ground truth] window '{GROUND_TRUTH_WINDOW}': "
-        f"{ground_truth} records over {gt_rows} rows  ->  N = {ground_truth}"
-    )
-
-    # ── Late drops per window = N - sum(count) ────────────────────────────────
     exit_code = 0
-    for window, path in files.items():
-        if not path.exists():
-            print(f"  [{window}] merged file not found: {path} — skipping.",
-                  file=sys.stderr)
+
+    for window in WINDOW_PATH_KEYS:
+        base_path = baseline_files[window]
+        exp_path = experiment_files[window]
+
+        missing = [p for p in (base_path, exp_path) if not p.exists()]
+        if missing:
+            for path in missing:
+                print(f"  [{window}] merged file not found: {path}", file=sys.stderr)
+            print(
+                f"  [{window}] skipped — run the merge for both '{experiment_name}' "
+                f"and '{baseline_name}' first.",
+                file=sys.stderr,
+            )
             exit_code = 1
             continue
 
-        count_kept, rows = sum_count(path)
-        late_dropped = ground_truth - count_kept
-        pct = 100.0 * late_dropped / ground_truth
+        count_baseline, base_rows = sum_count(base_path)
+        count_kept, exp_rows = sum_count(exp_path)
+
+        if count_baseline <= 0:
+            print(
+                f"  [{window}] baseline count is {count_baseline} in {base_path} — "
+                "nothing to compare against, skipping.",
+                file=sys.stderr,
+            )
+            exit_code = 1
+            continue
+
+        late_dropped = count_baseline - count_kept
+        pct = 100.0 * late_dropped / count_baseline
 
         note = ""
         if late_dropped < 0:
-            # sum(count) > N means 'global' is not the true maximum: duplicated
-            # rows, or a record slipped past the global window. Worth a look.
-            note = "  <-- NEGATIVE: global is not the max, investigate"
+            # More records than the baseline: duplicated rows in the merge or
+            # mismatched runs (different dataset/producer settings).
+            note = "  <-- NEGATIVE: experiment exceeds baseline, investigate"
             exit_code = 1
+        elif window == "global" and late_dropped > 0:
+            # The global window closes only at EOS: nothing should be late.
+            note = "  <-- unexpected: global should drop ~0"
 
         print(
-            f"  [{window}] kept={count_kept}  late_dropped={late_dropped} "
-            f"({pct:.2f}%)  rows={rows}{note}"
+            f"  [{window}] baseline={count_baseline} ({base_rows} rows)  "
+            f"kept={count_kept} ({exp_rows} rows)  "
+            f"late_dropped={late_dropped} ({pct:.4f}%){note}"
         )
 
         append_output_row(
             output_file=args.output,
             experiment=experiment_name,
+            baseline=baseline_name,
             window=window,
-            rows=rows,
+            count_baseline=count_baseline,
             count_kept=count_kept,
-            ground_truth=ground_truth,
             late_dropped=late_dropped,
         )
 

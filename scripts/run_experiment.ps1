@@ -878,10 +878,12 @@ else {
 #    Table/SQL API. Letta live via REST (report_late_drops.py) prima di
 #    cancellare il job.
 #  - Q3 (finestre DataStream per il DDSketch): quel counter NON e' registrato,
-#    quindi lo stesso numero si ricava dall'output mergiato. La finestra
-#    'global' chiude solo all'EOS -> non perde nulla -> e' la ground-truth N del
-#    run; per le altre finestre late_dropped = N - sum(count)
-#    (report_completeness_q3.py). Serve il merge, quindi si salta con -NoMerge.
+#    quindi lo stesso numero si ricava dall'output mergiato confrontandolo con
+#    il baseline (01_baseline: stesso producer/seed, nessun holdback ->
+#    sum(count) del baseline = N vero per finestra):
+#      late_dropped(w) = sum(count baseline w) - sum(count esperimento w)
+#    (report_completeness_q3.py). Serve il merge di ENTRAMBI i run, quindi si
+#    salta con -NoMerge; girare 01_baseline su q3 prima degli esperimenti wm.
 $CollectLateDropsMetric = (
     $Engine -eq "flink" -and $Implementation -eq "table" `
     -and ($Query -eq "q1" -or $Query -eq "q2")
@@ -900,7 +902,7 @@ if ($CollectLateDropsMetric) {
 }
 elseif ($CollectLateDropsOutput) {
     Write-Host ""
-    Write-Host "Computing Q3 late-record drops from merged output (global window = ground truth)..."
+    Write-Host "Computing Q3 late-record drops from merged output (vs 01_baseline)..."
 
     python .\scripts\report_completeness_q3.py @MergeArgs
 
