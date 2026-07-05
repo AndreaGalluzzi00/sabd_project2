@@ -1,15 +1,18 @@
 extends: "../base.yml"
 
+# Sweep di parallelismo (vedi perf_par1.yml per razionale e caveat).
+# Baseline fisso, cambia solo flink.parallelism. Query a runtime.
+
 experiment:
-  name: "01_baseline"
+  name: "perf_par2"
   output_dir_host: "Results/experiments"
 
 producer:
   holdback_probability: 0.0
 
-# Nessun disordine iniettato -> sanity check: attesi 0 late drop.
-# Il ritardo ammesso vale per tutte le query (q2/q3 non devono ereditare
-# il default di base.yml).
+flink:
+  parallelism: 2
+
 q1:
   watermark_delay_seconds: 30
 q2:

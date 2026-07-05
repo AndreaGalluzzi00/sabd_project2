@@ -1,0 +1,26 @@
+extends: "../base.yml"
+
+# Famiglia wm_expo (vedi 06_wm_expo_d0): mu = 1800, cambia solo d.
+#
+# d = 1800 = mu -> loss ~ 13.0% * e^(-1) ~ 4.8%
+
+experiment:
+  name: "08_wm_expo_d1800"
+  output_dir_host: "Results/experiments"
+
+producer:
+  holdback_probability: 0.3
+  holdback_delay: 14400.0
+  holdback_distribution: "exponential"
+  holdback_mean_seconds: 1800.0
+
+flink:
+  auto_watermark_interval_ms: 1
+
+# Stesso ritardo ammesso per tutte le query.
+q1:
+  watermark_delay_seconds: 1800
+q2:
+  watermark_delay_seconds: 1800
+q3:
+  watermark_delay_seconds: 1800

@@ -1,0 +1,29 @@
+extends: "../base.yml"
+
+# Famiglia wm_uniform (vedi 02_wm_uniform_d0): D = 3600 = W, cambia solo d.
+#
+# d = 3600 = D: watermark "safe", tutto il disordine rientra nel budget.
+# Perdita attesa: loss = p * (D - d)^2 / (2 * D * W) = 0%
+# a costo della latenza massima (la finestra chiude ~d dopo, in event-time).
+# Confronto chiave con 09_wm_expo_d3600: a parita' di d la coda limitata
+# si azzera, quella esponenziale no (~1.8%).
+
+experiment:
+  name: "05_wm_uniform_d3600"
+  output_dir_host: "Results/experiments"
+
+producer:
+  holdback_probability: 0.3
+  holdback_delay: 3600.0
+  holdback_distribution: "uniform"
+
+flink:
+  auto_watermark_interval_ms: 1
+
+# Stesso ritardo ammesso per tutte le query.
+q1:
+  watermark_delay_seconds: 3600
+q2:
+  watermark_delay_seconds: 3600
+q3:
+  watermark_delay_seconds: 3600

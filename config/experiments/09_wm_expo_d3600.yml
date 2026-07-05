@@ -1,0 +1,29 @@
+extends: "../base.yml"
+
+# Famiglia wm_expo (vedi 06_wm_expo_d0): mu = 1800, cambia solo d.
+#
+# d = 3600 = 2*mu -> loss ~ 13.0% * e^(-2) ~ 1.8%
+# Confronto chiave con 05_wm_uniform_d3600: stesso d, la coda limitata
+# si azzera, quella esponenziale lascia un residuo -> con code lunghe
+# nessun d finito garantisce completezza 100%.
+
+experiment:
+  name: "09_wm_expo_d3600"
+  output_dir_host: "Results/experiments"
+
+producer:
+  holdback_probability: 0.3
+  holdback_delay: 14400.0
+  holdback_distribution: "exponential"
+  holdback_mean_seconds: 1800.0
+
+flink:
+  auto_watermark_interval_ms: 1
+
+# Stesso ritardo ammesso per tutte le query.
+q1:
+  watermark_delay_seconds: 3600
+q2:
+  watermark_delay_seconds: 3600
+q3:
+  watermark_delay_seconds: 3600

@@ -1,0 +1,33 @@
+extends: "../base.yml"
+
+# Sweep di parallelismo (asse PERFORMANCE, ortogonale al watermark).
+# Scenario = baseline (nessun disordine, nessun late drop) tenuto FISSO:
+# tra perf_par1/par2/par4 cambia SOLO flink.parallelism, cosi' l'effetto
+# su throughput e latenza di processing e' isolato. Query a runtime:
+# -Query q1|q2|q3 (Q1 leggera, Q2/Q3 piu' CPU-bound -> scalano diverso).
+#
+# NB1: il topic flights ha 4 partizioni -> il source satura a p=4;
+#      p in {1,2,4} mappa 1:1 sulle partizioni. Non superare 4 senza
+#      ripartizionare Kafka (oltre 4 i task del source restano idle).
+# NB2: il producer live gira a ~12.4k ev/s. Se Flink a p=1 gia' regge quel
+#      rate, il throughput e' capato dall'ingestion e le curve escono piatte.
+#      In quel caso precaricare il topic e far consumare Flink dal backlog
+#      (skip_if_topic_has_messages: true), oppure alzare acceleration_factor.
+
+experiment:
+  name: "perf_par1"
+  output_dir_host: "Results/experiments"
+
+producer:
+  holdback_probability: 0.0
+
+flink:
+  parallelism: 1
+
+# Ritardo ammesso irrilevante qui (nessun disordine); allineato al baseline.
+q1:
+  watermark_delay_seconds: 30
+q2:
+  watermark_delay_seconds: 30
+q3:
+  watermark_delay_seconds: 30
