@@ -85,12 +85,8 @@ q3:
 # Il sink CSV resta sempre attivo; dashboard InfluxDB/TimescaleDB sono sink paralleli.
 dashboard:
   influx:
-<<<<<<< Updated upstream
     enabled: true
     # NB: con enabled=true i topic DEVONO esistere (vedi servizio dashboard-init).
-=======
-    enabled: false
->>>>>>> Stashed changes
     results_topic: "q1_results"
     q2:
       topic_1h: "q2_results_1h"
@@ -101,12 +97,8 @@ dashboard:
       topic_7d: "q3_results_7d"
       topic_global: "q3_results_global"
   timescale:
-<<<<<<< Updated upstream
     enabled: true
     # NB: con enabled=true le tabelle DEVONO esistere (init in dashboard/timescaledb/).
-=======
-    enabled: false
->>>>>>> Stashed changes
     url: "jdbc:postgresql://timescaledb:5432/sabd"
     table: "q1_results"
     username: "sabd"
