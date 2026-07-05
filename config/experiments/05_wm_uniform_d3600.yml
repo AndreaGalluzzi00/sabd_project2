@@ -19,6 +19,7 @@ producer:
 
 flink:
   auto_watermark_interval_ms: 1
+  python_bundle_time_ms: 10       # bundle Python: watermark quantizzato a ~576 s event (vs 16 h col default 1000 ms)
 
 # Stesso ritardo ammesso per tutte le query.
 q1:

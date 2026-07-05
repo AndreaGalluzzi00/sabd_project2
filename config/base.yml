@@ -56,6 +56,13 @@ flink:
   # A 57600x, 200ms corrispondono a circa 3.2h di event-time.
   auto_watermark_interval_ms: 200
 
+  # Durata massima del bundle degli operatori Python (python.fn-execution.
+  # bundle.time). I watermark vengono applicati dagli operatori Python solo al
+  # confine del bundle: col default (1000 ms ~ 16h event a 57600x) nessun
+  # record puo' mai risultare late nelle finestre DataStream di Q3. Gli
+  # esperimenti wm lo abbassano a 10 ms (~576 s event).
+  python_bundle_time_ms: 1000
+
   # ── Tolleranza ai guasti degli operatori con stato ────────────────────────
   # Meccanismo di checkpointing di Flink: ogni checkpoint_interval_ms Flink
   # esegue uno snapshot coerente (barrier-aligned) dello stato di TUTTI gli

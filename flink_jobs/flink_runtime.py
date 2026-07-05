@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from pyflink.common import RestartStrategies
+from pyflink.common import Configuration, RestartStrategies
 from pyflink.datastream import CheckpointingMode, StreamExecutionEnvironment
 from pyflink.datastream.checkpoint_config import ExternalizedCheckpointCleanup
 from pyflink.table import StreamTableEnvironment
@@ -20,6 +20,7 @@ class FlinkRuntimeConfig:
     parallelism: int
     checkpoint_interval_ms: int
     auto_watermark_interval_ms: int
+    python_bundle_time_ms: int
 
     # ── Fault tolerance (checkpointing degli operatori con stato) ─────────────
     checkpointing_mode: str
@@ -55,6 +56,9 @@ def build_flink_runtime_config(cfg: dict[str, Any]) -> FlinkRuntimeConfig:
         checkpoint_interval_ms=int(flink_cfg["checkpoint_interval_ms"]),
         auto_watermark_interval_ms=int(
             flink_cfg.get("auto_watermark_interval_ms", 200)
+        ),
+        python_bundle_time_ms=int(
+            flink_cfg.get("python_bundle_time_ms", 1000)
         ),
         checkpointing_mode=str(ckp.get("mode", "EXACTLY_ONCE")).upper(),
         checkpoint_min_pause_ms=int(ckp.get("min_pause_ms", 5000)),
@@ -115,7 +119,18 @@ def _configure_fault_tolerance(
 def create_stream_execution_environment(
     runtime_cfg: FlinkRuntimeConfig,
 ) -> StreamExecutionEnvironment:
-    env = StreamExecutionEnvironment.get_execution_environment()
+    # Gli operatori Python (finestre DataStream di Q3, UDAF di Q2) processano i
+    # record a bundle e applicano i watermark SOLO al confine del bundle: il
+    # default di 1000 ms, a 57600x, quantizza il watermark visto dall'operatore
+    # a ~16 ore di event time -> nessun record risulterebbe mai late, qualunque
+    # sia auto_watermark_interval_ms (che agisce solo sul generatore). Gli
+    # esperimenti wm lo abbassano (10 ms ~ 576 s event) per rendere osservabili
+    # i late drop anche nel path Python.
+    config = Configuration()
+    config.set_integer(
+        "python.fn-execution.bundle.time", runtime_cfg.python_bundle_time_ms
+    )
+    env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_parallelism(runtime_cfg.parallelism)
 
     _configure_fault_tolerance(env, runtime_cfg)
