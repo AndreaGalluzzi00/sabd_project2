@@ -92,16 +92,16 @@ def http_get_json(url: str, timeout: float = 10.0):
         return json.load(resp)
 
 
-def pick_job(flink_url: str, query: str, job_id: str | None) -> dict:
+def pick_job(flink_url: str, query: str, job_id: str | None) -> dict | None:
     data = http_get_json(f"{flink_url}/jobs/overview")
     running = [j for j in data.get("jobs", []) if j.get("state") == "RUNNING"]
     if job_id:
         for j in running:
             if j["jid"] == job_id:
                 return j
-        raise SystemExit(f"Job id {job_id} is not RUNNING.")
+        return None
     if not running:
-        raise SystemExit("No RUNNING Flink job found (start the job first).")
+        return None
     if query:
         matches = [j for j in running if f".{query}_" in j.get("name", "") or query in j.get("name", "")]
         if matches:
@@ -130,10 +130,25 @@ def main() -> None:
     experiment = args.experiment or "base"
     flink_url = args.flink_url.rstrip("/")
 
-    try:
-        job = pick_job(flink_url, args.query, args.job_id)
-    except (urllib.error.URLError, OSError) as exc:
-        print(f"ERROR: cannot reach Flink REST at {flink_url}: {exc}", file=sys.stderr)
+    # Attende che un job sia RUNNING: i job PyFlink impiegano alcune decine di
+    # secondi a partire (setup worker Python), e il runner avvia questo tool
+    # subito dopo la submit.
+    deadline = time.monotonic() + args.startup_timeout
+    job = None
+    while time.monotonic() < deadline:
+        try:
+            job = pick_job(flink_url, args.query, args.job_id)
+        except (urllib.error.URLError, OSError):
+            job = None  # cluster/REST ancora non pronto
+        if job:
+            break
+        time.sleep(2.0)
+
+    if not job:
+        print(
+            f"ERROR: no RUNNING Flink job found within {args.startup_timeout:.0f}s.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     jid = job["jid"]

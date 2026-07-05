@@ -56,6 +56,36 @@ flink:
   # A 57600x, 200ms corrispondono a circa 3.2h di event-time.
   auto_watermark_interval_ms: 200
 
+  # ── Tolleranza ai guasti degli operatori con stato ────────────────────────
+  # Meccanismo di checkpointing di Flink: ogni checkpoint_interval_ms Flink
+  # esegue uno snapshot coerente (barrier-aligned) dello stato di TUTTI gli
+  # operatori + degli offset Kafka. In caso di guasto (crash di un operatore o
+  # dell'intero TaskManager) la restart strategy riavvia il job e ne ripristina
+  # lo stato dall'ultimo checkpoint completato; la sorgente Kafka riparte dagli
+  # offset salvati -> nessuna perdita ne duplicazione nei risultati.
+  checkpointing:
+    # EXACTLY_ONCE (barrier allineate) oppure AT_LEAST_ONCE (piu' veloce ma
+    # possibili riletture). Per il confronto prestazionale con/senza guasto.
+    mode: "EXACTLY_ONCE"
+    # Pausa minima tra la fine di un checkpoint e l'inizio del successivo:
+    # garantisce progresso all'elaborazione anche se i checkpoint sono lenti.
+    min_pause_ms: 5000
+    # Un checkpoint che supera questo tempo viene abortito (non fa fallire il job).
+    timeout_ms: 60000
+    # Checkpoint concorrenti: 1 e' obbligatorio con EXACTLY_ONCE allineato.
+    max_concurrent: 1
+    # Fallimenti di checkpoint consecutivi tollerati prima di far fallire il job.
+    tolerable_failures: 3
+    # RETAIN_ON_CANCELLATION: conserva l'ultimo checkpoint su disco anche dopo
+    # cancellazione/guasto, cosi' e' riutilizzabile per il recovery manuale.
+    externalized: true
+
+  # Strategia di riavvio applicata a TUTTI gli operatori in caso di guasto.
+  # Senza di essa il job muore invece di ripristinarsi dal checkpoint.
+  restart:
+    attempts: 10          # tentativi di riavvio prima di dichiarare fallito il job
+    delay_ms: 10000       # attesa tra un tentativo e il successivo (>= riavvio TaskManager)
+
 spark:
   consumer_group: "spark-flight-analysis"
   checkpoint_base_path: "/opt/spark/checkpoints"

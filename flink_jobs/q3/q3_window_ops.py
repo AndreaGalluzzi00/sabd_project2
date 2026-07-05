@@ -14,9 +14,42 @@ from datetime import datetime, timezone
 
 from pyflink.common import Row
 from pyflink.common.typeinfo import Types
-from pyflink.datastream.functions import AggregateFunction, ProcessWindowFunction
+from pyflink.datastream.functions import (
+    AggregateFunction,
+    MapFunction,
+    ProcessWindowFunction,
+)
 
 from delay_sketch import DelayDDSketch
+
+
+# ── Contatore late-drop per il side output delle finestre ─────────────────────
+# Le finestre Q3 sono operatori DataStream (aggregazione DDSketch in Python):
+# NON registrano il contatore 'numLateRecordsDropped' del WindowOperator SQL.
+# Lo ricreiamo a mano sul side output dei late data, con lo STESSO nome, così
+# scripts/report_late_drops.py lo trova via REST come per Q1/Q2-Table.
+
+LATE_DROPS_METRIC = "numLateRecordsDropped"
+
+
+class Q3LateDropCounter(MapFunction):
+    """Passthrough che conta i record scartati perché in ritardo.
+
+    Incrementa un Counter Flink chiamato 'numLateRecordsDropped' sul proprio
+    operatore (nominato per finestra in job.py → metrica per-finestra via REST).
+    L'output (un LONG fittizio) alimenta un sink blackhole aggiunto allo
+    StatementSet, al solo scopo di far girare il branch del side output.
+    """
+
+    def __init__(self) -> None:
+        self._counter = None
+
+    def open(self, runtime_context) -> None:
+        self._counter = runtime_context.get_metrics_group().counter(LATE_DROPS_METRIC)
+
+    def map(self, value):
+        self._counter.inc()
+        return 1
 
 
 # ── Chiave di raggruppamento (compagnia, fascia oraria) ───────────────────────

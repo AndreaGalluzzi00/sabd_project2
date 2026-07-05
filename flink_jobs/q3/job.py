@@ -39,6 +39,7 @@ from pyflink.common import Types, WatermarkStrategy
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.time import Duration, Time
 from pyflink.datastream.connectors.kafka import KafkaOffsetsInitializer, KafkaSource
+from pyflink.datastream import OutputTag
 from pyflink.datastream.functions import MapFunction
 from pyflink.datastream.window import TumblingEventTimeWindows
 from pyflink.table import DataTypes, Schema, StreamTableEnvironment
@@ -57,6 +58,7 @@ from q3_window_ops import (
     KAFKA_SINK_DDL,
     Q3_OUTPUT_TYPE,
     Q3AggregateFunction,
+    Q3LateDropCounter,
     Q3WindowFunction,
     group_key,
 )
@@ -187,9 +189,16 @@ def build_window_pipeline(
 ) -> None:
     """Finestra → sketch → vista Table → sink (CSV + dashboard opzionali)."""
 
+    # Side output dei record scartati perché in ritardo: le finestre DataStream
+    # non espongono 'numLateRecordsDropped', quindi lo ricreiamo contando questo
+    # tag (vedi Q3LateDropCounter). Il tipo del tag = tipo degli elementi in
+    # ingresso alla finestra (tuple proiettate, PICKLED_BYTE_ARRAY).
+    late_tag = OutputTag(f"q3-late-{label}", Types.PICKLED_BYTE_ARRAY())
+
     result_ds = (
         keyed_stream
         .window(window_assigner)
+        .side_output_late_data(late_tag)
         .aggregate(
             Q3AggregateFunction(cfg.sketch_alpha),
             window_function=Q3WindowFunction(),
@@ -201,6 +210,25 @@ def build_window_pipeline(
         # via REST (scripts/report_late_drops.py).
         .name(f"Q3Window[{label}]")
     )
+
+    # ── Late data → contatore 'numLateRecordsDropped' (per finestra) ──────────
+    # Il branch del side output termina su un sink blackhole aggiunto allo
+    # StatementSet: senza un sink Table il ramo DataStream non verrebbe eseguito
+    # da stmt_set.execute(). Il conteggio avviene come side-effect nella map.
+    late_ds = (
+        result_ds
+        .get_side_output(late_tag)
+        .map(Q3LateDropCounter(), output_type=Types.LONG())
+        .name(f"Q3LateDrops[{label}]")
+    )
+    late_view = f"q3_late_{label}"
+    t_env.create_temporary_view(late_view, t_env.from_data_stream(late_ds))
+    blackhole = f"q3_blackhole_{label}"
+    t_env.execute_sql(
+        f"CREATE TABLE {blackhole} (c BIGINT) WITH ('connector' = 'blackhole')"
+    )
+    stmt_set.add_insert_sql(f"INSERT INTO {blackhole} SELECT * FROM {late_view}")
+    logger.info("Q3 [%s] | late-drop counter → blackhole sink", label)
 
     view = f"q3_{label}"
     table = t_env.from_data_stream(

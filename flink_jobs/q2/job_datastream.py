@@ -37,7 +37,6 @@ from datetime import datetime, timezone
 from pyflink.common import Row, Types, WatermarkStrategy
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.time import Duration, Time
-from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.connectors.kafka import KafkaSource, KafkaOffsetsInitializer
 from pyflink.datastream.functions import (
     AggregateFunction,
@@ -49,7 +48,11 @@ from pyflink.datastream.window import TumblingEventTimeWindows
 
 from common.config import load_config
 from common.logging_utils import configure_logging
-from flink_runtime import FlinkRuntimeConfig, build_flink_runtime_config
+from flink_runtime import (
+    FlinkRuntimeConfig,
+    build_flink_runtime_config,
+    create_stream_execution_environment,
+)
 
 import logging
 
@@ -377,10 +380,9 @@ def main() -> None:
     logger.info("Q2-DS | Parallelism: %d", cfg.parallelism)
     logger.info("Q2-DS | Watermark delay: %d s", cfg.watermark_delay_seconds)
 
-    env = StreamExecutionEnvironment.get_execution_environment()
-    env.set_parallelism(cfg.parallelism)
-    env.enable_checkpointing(cfg.checkpoint_interval_ms)
-    env.get_config().set_auto_watermark_interval(cfg.auto_watermark_interval_ms)
+    # Checkpointing EXACTLY_ONCE + restart strategy per la tolleranza ai guasti
+    # degli operatori con stato (configurazione uniforme a tutti i job Flink).
+    env = create_stream_execution_environment(cfg)
 
     kafka_source = (
         KafkaSource.builder()
