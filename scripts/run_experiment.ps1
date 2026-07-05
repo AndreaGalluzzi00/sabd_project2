@@ -866,15 +866,17 @@ else {
     Write-Host "Merge skipped."
 }
 
-# numLateRecordsDropped e' esposto SOLO dal WindowOperator della Table/SQL API
-# (Q1 table: WindowAggregate, Q2 table: WindowRank). Il window operator di
-# PyFlink DataStream (q1/q2 datastream) e Q3 in OGNI versione (finestre calcolate
-# in DataStream per il DDSketch) NON lo registrano. Per Q3 la completezza si
-# misura dall'output (somma della colonna count: watermark safe vs aggressive).
+# numLateRecordsDropped e' esposto dal WindowOperator della Table/SQL API
+# (Q1 table: WindowAggregate, Q2 table: WindowRank), che lo registra da se'.
+# Il window operator di PyFlink DataStream (q1/q2 datastream) NON lo registra.
+# Q3 (finestre DataStream per il DDSketch) lo ricrea a mano: side output dei
+# late data -> Q3LateDropCounter incrementa un Counter 'numLateRecordsDropped'
+# su un operatore nominato senza virgole (Q3LateDrops[...]), leggibile via REST.
 $CollectLateDrops = (
-    $Engine -eq "flink" `
-    -and $Implementation -eq "table" `
-    -and ($Query -eq "q1" -or $Query -eq "q2")
+    $Engine -eq "flink" -and (
+        ($Implementation -eq "table" -and ($Query -eq "q1" -or $Query -eq "q2")) -or
+        ($Query -eq "q3")
+    )
 )
 
 if ($CollectLateDrops) {
@@ -889,7 +891,7 @@ if ($CollectLateDrops) {
 }
 else {
     Write-Host ""
-    Write-Host "Late-drop metrics skipped for $Engine/$Implementation/$Query (exposed by q1/q2 table and q3 datastream)."
+    Write-Host "Late-drop metrics skipped for $Engine/$Implementation/$Query (numLateRecordsDropped exposed only by q1/q2 table and by q3)."
 }
 
 if ($Engine -eq "flink" -and -not $KeepFlinkJob) {
