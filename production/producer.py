@@ -221,31 +221,33 @@ def _row_to_payload(row: Any) -> dict[str, Any]:
     }
 
 
-def _fetch_schema_info(
-    schema_registry_url: str,
-    subject: str,
-) -> tuple[int, Any]:
-    """Return (schema_id, parsed_schema) from Confluent Schema Registry."""
-    url = f"{schema_registry_url}/subjects/{subject}/versions/latest"
-    resp = requests.get(url, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
-    schema_id: int = data["id"]
-    parsed_schema = fastavro.parse_schema(json.loads(data["schema"]))
-    return schema_id, parsed_schema
+@dataclass(frozen=True)
+class ConfluentAvroEncoder:
+    schema_id: int
+    parsed_schema: Any
 
+    @classmethod
+    def from_schema_registry(
+        cls,
+        schema_registry_url: str,
+        subject: str,
+    ) -> "ConfluentAvroEncoder":
+        url = f"{schema_registry_url}/subjects/{subject}/versions/latest"
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
 
-def _encode_avro_confluent(
-    record: dict[str, Any],
-    schema_id: int,
-    parsed_schema: Any,
-) -> bytes:
-    """Encode a record as Confluent Avro wire format: magic + 4-byte ID + datum."""
-    buf = io.BytesIO()
-    buf.write(b"\x00")
-    buf.write(struct.pack(">I", schema_id))
-    fastavro.schemaless_writer(buf, parsed_schema, record)
-    return buf.getvalue()
+        return cls(
+            schema_id=int(data["id"]),
+            parsed_schema=fastavro.parse_schema(json.loads(data["schema"])),
+        )
+
+    def encode(self, record: dict[str, Any]) -> bytes:
+        buf = io.BytesIO()
+        buf.write(b"\x00")
+        buf.write(struct.pack(">I", self.schema_id))
+        fastavro.schemaless_writer(buf, self.parsed_schema, record)
+        return buf.getvalue()
 
 
 def create_producer(
@@ -327,7 +329,6 @@ def topic_has_messages(cfg: ProducerConfig) -> bool:
 
 
 def _sleep_until(wall_start: float, target_wall: float) -> None:
-    """Sleep until `target_wall` seconds have elapsed since `wall_start`."""
     wait = target_wall - (time.monotonic() - wall_start)
 
     if wait > 0.001:
@@ -338,8 +339,7 @@ def replay_events(
     producer: KafkaProducer,
     df: pd.DataFrame,
     cfg: ProducerConfig,
-    schema_id: int,
-    parsed_schema: Any,
+    avro_encoder: ConfluentAvroEncoder,
 ) -> None:
     n = len(df)
 
@@ -387,7 +387,7 @@ def replay_events(
         else:
             max_emitted_event_time = event_time
 
-        encoded = _encode_avro_confluent(payload, schema_id, parsed_schema)
+        encoded = avro_encoder.encode(payload)
         producer.send(cfg.kafka_topic, value=encoded)
         sent += 1
 
@@ -404,8 +404,8 @@ def replay_events(
                 elapsed,
                 throughput,
             )
-
     for row in df.itertuples(index=False):
+        # A quanti secondi dall’inizio del replay dovrei mandare il volo
         target_wall = (
             (int(row.event_time) - first_ts) / 1000.0
         ) / cfg.acceleration_factor
@@ -473,13 +473,12 @@ END_OF_STREAM_EVENT_TIME_MS = int(
 )
 
 
-def emit_end_of_stream_markers(producer: KafkaProducer, cfg: ProducerConfig) -> None:
-    """Append a future-dated marker as the last record of every partition.
+def emit_end_of_stream_markers(
+    producer: KafkaProducer,
+    cfg: ProducerConfig,
+    avro_encoder: ConfluentAvroEncoder,
+) -> None:
 
-    Encoded as Confluent Avro (magic byte + schema ID + binary datum) so Flink
-    can deserialise it with the avro-confluent format. The marker's airline field
-    is '__EOS__' which is excluded by all Flink queries.
-    """
     partitions = producer.partitions_for(cfg.kafka_topic)
 
     if not partitions:
@@ -489,12 +488,6 @@ def emit_end_of_stream_markers(producer: KafkaProducer, cfg: ProducerConfig) -> 
         )
         return
 
-    producer.flush()
-
-    schema_id, parsed_schema = _fetch_schema_info(
-        cfg.schema_registry_url,
-        cfg.schema_registry_subject,
-    )
 
     eos_record: dict[str, Any] = {
         "event_time": END_OF_STREAM_EVENT_TIME_MS,
@@ -516,7 +509,7 @@ def emit_end_of_stream_markers(producer: KafkaProducer, cfg: ProducerConfig) -> 
         "late_aircraft_delay": None,
     }
 
-    encoded = _encode_avro_confluent(eos_record, schema_id, parsed_schema)
+    encoded = avro_encoder.encode(eos_record)
 
     for partition in sorted(partitions):
         producer.send(cfg.kafka_topic, value=encoded, partition=partition)
@@ -588,7 +581,7 @@ def main() -> None:
     producer = create_producer(cfg)
 
     try:
-        schema_id, parsed_schema = _fetch_schema_info(
+        avro_encoder = ConfluentAvroEncoder.from_schema_registry(
             cfg.schema_registry_url,
             cfg.schema_registry_subject,
         )
@@ -597,14 +590,14 @@ def main() -> None:
             producer=producer,
             df=df,
             cfg=cfg,
-            schema_id=schema_id,
-            parsed_schema=parsed_schema,
+            avro_encoder=avro_encoder,
         )
 
         if cfg.emit_end_of_stream:
             emit_end_of_stream_markers(
                 producer=producer,
                 cfg=cfg,
+                avro_encoder=avro_encoder,
             )
     finally:
         producer.close()
