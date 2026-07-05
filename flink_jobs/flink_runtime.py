@@ -14,6 +14,8 @@ class FlinkRuntimeConfig:
     kafka_bootstrap: str
     kafka_topic: str
     kafka_consumer_group: str
+    schema_registry_url: str
+    schema_registry_subject: str
 
     parallelism: int
     checkpoint_interval_ms: int
@@ -32,6 +34,7 @@ class FlinkRuntimeConfig:
 
 
 def build_flink_runtime_config(cfg: dict[str, Any]) -> FlinkRuntimeConfig:
+    schema_registry_cfg = cfg.get("schema_registry", {})
     flink_cfg = cfg["flink"]
     # I parametri di fault tolerance hanno default sicuri: gli esperimenti che
     # non li ridefiniscono (config/experiments/*.yml) restano validi.
@@ -42,6 +45,12 @@ def build_flink_runtime_config(cfg: dict[str, Any]) -> FlinkRuntimeConfig:
         kafka_bootstrap=cfg["kafka"]["bootstrap_servers"],
         kafka_topic=cfg["kafka"]["topic"],
         kafka_consumer_group=flink_cfg["consumer_group"],
+        schema_registry_url=str(
+            schema_registry_cfg.get("url", "http://schema-registry:8081")
+        ),
+        schema_registry_subject=str(
+            schema_registry_cfg.get("subject", "flights-value")
+        ),
         parallelism=int(flink_cfg["parallelism"]),
         checkpoint_interval_ms=int(flink_cfg["checkpoint_interval_ms"]),
         auto_watermark_interval_ms=int(

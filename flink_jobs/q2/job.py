@@ -221,8 +221,8 @@ def main() -> None:
             'properties.group.id'          = '{cfg.kafka_consumer_group}',
             'scan.startup.mode'                        = 'earliest-offset',
             'format'                                   = 'avro-confluent',
-            'avro-confluent.schema-registry.url'       = 'http://schema-registry:8081',
-            'avro-confluent.schema-registry.subject'   = 'flights-value'
+            'avro-confluent.schema-registry.url'       = '{cfg.schema_registry_url}',
+            'avro-confluent.schema-registry.subject'   = '{cfg.schema_registry_subject}'
         )
     """)
 
