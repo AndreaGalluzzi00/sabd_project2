@@ -1,2 +1,2 @@
 timestamp_utc,experiment,job_name,job_id,numLateRecordsDropped
-2026-07-05T10:24:20+00:00,01_baseline,insert-into_default_catalog.default_database.q1_results,925c5826152e6c7ec5810392d2315f33,0
+2026-07-05T18:26:25+00:00,01_baseline,insert-into_default_catalog.default_database.q1_results,f27809d292483d8c79ab1c3dacd1c832,0
