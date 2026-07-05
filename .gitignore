@@ -1,5 +1,15 @@
-# Savepoints
+# Flink Savepoints
 flink-savepoints/
+
+# Flink Checkpoints
+flink-checkpoints/
+
+# Spark Savepoints
+spark-savepoints/
+
+# Spark Checkpoints
+spark-checkpoints/
+
 
 # Runtime-generated configs
 config/runtime/
