@@ -18,3 +18,9 @@ timestamp_utc,engine,implementation,query,experiment,parallelism,total_records,a
 2026-07-06T14:33:45+00:00,flink,table,q2,02_wm_uniform_d0,4,64972,8.2,7905.1,698.4,,,0.9,0.0,latency: enable metrics.latency.interval
 2026-07-06T14:39:09+00:00,flink,table,q2,02_wm_uniform_d0,4,22892,8.2,2790.3,92.5,,,13.0,0.0,latency: enable metrics.latency.interval
 2026-07-06T14:46:00+00:00,flink,table,q2,02_wm_uniform_d0,4,108632,18.9,5741.0,1706.8,,140.0,27.3,0.0,latency: enable metrics.latency.interval
+2026-07-06T15:46:23+00:00,flink,table,q3,02_wm_uniform_d0,4,4,9.3,0.4,0.1,,,54.4,0.0,latency: enable metrics.latency.interval
+2026-07-06T16:00:56+00:00,flink,table,q3,02_wm_uniform_d0,4,23013,8.3,2779.0,128.0,,,35.5,0.0,latency: enable metrics.latency.interval
+2026-07-06T17:37:24+00:00,flink,table,q2,02_wm_uniform_d0,4,208577,28.2,7399.5,2815.6,,382.0,22.4,0.0,latency: enable metrics.latency.interval
+2026-07-06T18:04:07+00:00,flink,table,q2,02_wm_uniform_d0,4,55246,8.4,6584.7,188.9,,,18.3,0.0,latency: enable metrics.latency.interval
+2026-07-06T18:09:16+00:00,flink,table,q2,02_wm_uniform_d0,4,59945,8.4,7144.8,372.4,,,0.0,0.0,latency: enable metrics.latency.interval
+2026-07-06T18:10:41+00:00,flink,table,q3,02_wm_uniform_d0,4,35065,8.1,4307.7,129.5,,,20.7,0.0,latency: enable metrics.latency.interval

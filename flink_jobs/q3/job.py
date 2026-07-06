@@ -39,7 +39,7 @@ from __future__ import annotations
 import sys
 from dataclasses import asdict, dataclass
 
-from pyflink.common import Row, Types, WatermarkStrategy
+from pyflink.common import Types, WatermarkStrategy
 from pyflink.common.time import Duration, Time
 from pyflink.datastream import OutputTag
 from pyflink.datastream.window import TumblingEventTimeWindows
@@ -70,11 +70,6 @@ logger = logging.getLogger(__name__)
 
 AIRLINES: frozenset[str] = frozenset({"AA", "DL", "UA", "WN"})
 Q3_WINDOW_CHOICES = ("1d", "7d", "global", "all")
-
-Q3_EVENT_TYPE = Types.ROW_NAMED(
-    ["event_time", "airline", "hour", "dep_delay"],
-    [Types.LONG(), Types.STRING(), Types.INT(), Types.DOUBLE()],
-)
 
 
 def hour_band(crs_dep_time: int) -> int:
@@ -220,9 +215,9 @@ def enabled_q3_windows(
     return [window for window in windows if window[0] == cfg.window]
 
 
-def _project_q3_event(value) -> Row:
-    """Flight Row -> typed Q3 event Row after the watermark-bearing filter."""
-    return Row(value[0], value[1], hour_band(value[2]), float(value[3]))
+def _project_q3_event(value):
+    """Flight Row -> compact Q3 event tuple after the watermark-bearing filter."""
+    return (value[0], value[1], hour_band(value[2]), float(value[3]))
 
 
 # ── Per-window pipeline ───────────────────────────────────────────────────────
@@ -242,9 +237,10 @@ def build_window_pipeline(
 
     # Side output dei record scartati perché in ritardo: le finestre DataStream
     # non espongono 'numLateRecordsDropped', quindi lo ricreiamo contando questo
-    # tag (vedi Q3LateDropCounter). Il tipo del tag = tipo degli elementi in
-    # ingresso alla finestra (record Q3 tipizzati).
-    late_tag = OutputTag(f"q3-late-{label}", Q3_EVENT_TYPE)
+    # tag (vedi Q3LateDropCounter). PyFlink 1.20 non serializza in modo stabile
+    # OutputTag con tipi compositi; per il piccolo record Python di finestra
+    # usiamo Pickle e teniamo tipizzato l'output finale della window.
+    late_tag = OutputTag(f"q3-late-{label}", Types.PICKLED_BYTE_ARRAY())
 
     result_ds = (
         keyed_stream
@@ -376,9 +372,9 @@ def main() -> None:
         .filter(_is_q3_relevant)
         .map(
             _project_q3_event,
-            output_type=Q3_EVENT_TYPE,
+            output_type=Types.PICKLED_BYTE_ARRAY(),
         )
-        .name("Q3Events[typed]")
+        .name("Q3Events[python]")
     )
 
     keyed_stream = flights_ds.key_by(
