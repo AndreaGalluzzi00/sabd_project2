@@ -18,7 +18,7 @@ experiment:
 
 producer:
   holdback_probability: 0.3
-  holdback_delay: 86400.0          # disordine uniforme in [0, 3600] s di event-time
+  holdback_delay: 21600.0          # disordine uniforme in [0, 3600] s di event-time
   holdback_distribution: "uniform"
 
 flink:
@@ -27,10 +27,7 @@ flink:
 
 # Stesso ritardo ammesso per tutte le query.
 q1:
-  watermark_delay_seconds: 43200.0
+  watermark_delay_seconds: 0
 q2:
   window: "all"   # 1h | 6h | global | all
-  watermark_delay_seconds: 43200.0
-q3:
-  window: "1d"  # 1d | 7d | global | all
-  watermark_delay_seconds: 43200.0
+  watermark_delay_seconds: 0

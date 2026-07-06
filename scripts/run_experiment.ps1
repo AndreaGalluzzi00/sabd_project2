@@ -301,6 +301,34 @@ function Start-DashboardStack {
     }
 }
 
+function Start-ExperimentInfrastructure {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("flink", "spark")]
+        [string]$Engine
+    )
+
+    Write-Host ""
+
+    if ($Engine -eq "flink") {
+        Write-Host "Starting Kafka, Schema Registry and Flink infrastructure..."
+
+        Invoke-Checked {
+            docker compose up -d `
+                kafka kafka2 schema-registry schema-init flink-jobmanager flink-taskmanager
+        }
+
+        return
+    }
+
+    Write-Host "Starting Kafka and Schema Registry infrastructure..."
+
+    Invoke-Checked {
+        docker compose up -d `
+            kafka kafka2 schema-registry schema-init
+    }
+}
+
 function Test-DockerContainerRunning {
     param(
         [Parameter(Mandatory = $true)]
@@ -981,6 +1009,9 @@ if ($DashboardEnabled) {
     if ($EnableTimescale -and -not $NoCleanDashboard) {
         Clear-TimescaleDashboardResults -Query $Query
     }
+}
+else {
+    Start-ExperimentInfrastructure -Engine $Engine
 }
 
 if ($Engine -eq "flink") {

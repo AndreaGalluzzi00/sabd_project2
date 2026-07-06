@@ -1,2 +1,0 @@
-timestamp_utc,experiment,baseline,window,count_baseline,count_kept,late_dropped,late_dropped_pct
-2026-07-06T12:48:25+00:00,02_wm_uniform_d0,01_baseline,1d,1303310,1303245,65,0.0050

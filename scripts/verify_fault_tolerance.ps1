@@ -195,7 +195,10 @@ Write-Host "========================================================"
 Write-Host ""
 
 Write-Host "Avvio cluster Flink (jobmanager + taskmanager)..."
-Invoke-Checked { docker compose up -d flink-jobmanager flink-taskmanager }
+Invoke-Checked {
+    docker compose up -d `
+        kafka kafka2 schema-registry schema-init flink-jobmanager flink-taskmanager
+}
 
 # Attende la REST del JobManager.
 Write-Host "Attendo la REST del JobManager su $FlinkUrl ..."
