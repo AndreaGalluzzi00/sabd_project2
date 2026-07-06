@@ -23,6 +23,34 @@ from spark_runtime import (
 
 
 AIRLINES = ["AA", "DL", "UA", "WN"]
+Q3_WINDOW_CHOICES = ("1d", "7d", "global", "all")
+
+
+def selected_q3_window(value: object) -> str:
+    window = str(value or "all").strip().lower()
+    if window not in Q3_WINDOW_CHOICES:
+        raise ValueError(
+            "q3.window must be one of: "
+            + ", ".join(Q3_WINDOW_CHOICES)
+        )
+    return window
+
+
+def enabled_q3_windows(
+    selected_window: str,
+    paths: dict,
+) -> list[tuple[str, str, str | None, str]]:
+    windows = [
+        # Spec Q3 windows: 1 day, 7 days, and global.
+        ("1d", "1 day", None, paths["spark_q3_results_path_1d"]),
+        # Start offset 6 days aligns weekly buckets to 2025-01-01.
+        ("7d", "7 days", "6 days", paths["spark_q3_results_path_7d"]),
+        # Start offset 14 days aligns the 365-day bucket to 2025-01-01.
+        ("global", "365 days", "14 days", paths["spark_q3_results_path_global"]),
+    ]
+    if selected_window == "all":
+        return windows
+    return [window for window in windows if window[0] == selected_window]
 
 
 def build_distribution(
@@ -89,10 +117,12 @@ def main() -> None:
 
     paths = cfg["paths"]
     q3_cfg = cfg["q3"]
+    selected_window = selected_q3_window(q3_cfg.get("window", "all"))
     watermark_delay = int(q3_cfg["watermark_delay_seconds"])
     accuracy = int(q3_cfg.get("spark_percentile_accuracy", 10000))
 
     logger.info("Spark Q3 | Kafka: %s topic: %s", runtime_cfg.kafka_bootstrap, runtime_cfg.kafka_topic)
+    logger.info("Spark Q3 | Enabled window(s): %s", selected_window)
     logger.info("Spark Q3 | percentile_approx accuracy: %d", accuracy)
 
     flights = (
@@ -100,11 +130,7 @@ def main() -> None:
         .withWatermark("rowtime", f"{watermark_delay} seconds")
     )
 
-    windows = [
-        ("1d", "1 day", None, paths["spark_q3_results_path_1d"]),
-        ("7d", "7 days", "6 days", paths["spark_q3_results_path_7d"]),
-        ("global", "365 days", "14 days", paths["spark_q3_results_path_global"]),
-    ]
+    windows = enabled_q3_windows(selected_window, paths)
 
     queries = []
     for label, duration, start_time, output_path in windows:

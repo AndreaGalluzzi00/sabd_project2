@@ -101,6 +101,33 @@ def list_vertices(flink_url: str, job_id: str) -> list[dict]:
     return data.get("vertices", [])
 
 
+def normalize_plan_window_size(size: str) -> str:
+    compact = size.strip().lower().replace(" ", "")
+    if compact in {"1h", "6h", "1d", "7d"}:
+        return compact
+    if compact in {"365d", "365day", "365days"}:
+        return "global"
+    return compact
+
+
+def job_plan_windows(flink_url: str, job_id: str) -> dict[str, str]:
+    """Return {operator_number: logical_window_label} from the Flink plan."""
+    data = http_get_json(f"{flink_url}/jobs/{job_id}/plan")
+    nodes = data.get("plan", {}).get("nodes", [])
+    windows: dict[str, str] = {}
+
+    for node in nodes:
+        description = str(node.get("description", ""))
+        for match in re.finditer(
+            r"\[(\d+)\]:(?:GlobalWindowAggregate|LocalWindowAggregate|WindowRank)"
+            r"[^<]*?size=\[([^\]]+)\]",
+            description,
+        ):
+            windows[match.group(1)] = normalize_plan_window_size(match.group(2))
+
+    return windows
+
+
 def vertex_late_drops(
     flink_url: str,
     job_id: str,
@@ -161,9 +188,41 @@ def metric_operator(metric_id: str) -> str:
     return metric_id
 
 
-def metric_window(operator: str) -> str:
+def single_window_from_job_name(job_name: str) -> str:
+    labels = []
+    for label in ("1h", "6h", "global", "1d", "7d"):
+        if re.search(rf"_(?:csv|kafka|jdbc|blackhole)_{label}\b", job_name):
+            labels.append(label)
+    labels = list(dict.fromkeys(labels))
+    return labels[0] if len(labels) == 1 else ""
+
+
+def metric_window(
+    operator: str,
+    *,
+    vertex_name: str,
+    job_name: str,
+    plan_windows: dict[str, str],
+) -> str:
+    q3_match = re.search(r"Q3LateDrops\[([^\]]+)\]", operator)
+    if q3_match:
+        return q3_match.group(1)
+
     match = re.search(r"\[([^\]]+)\]", operator)
-    return match.group(1) if match else ""
+    if match:
+        bracket_value = match.group(1)
+        if bracket_value in plan_windows:
+            return plan_windows[bracket_value]
+        if not bracket_value.isdigit():
+            return bracket_value
+
+    for text in (operator, vertex_name):
+        for label in ("1h", "6h", "global", "1d", "7d"):
+            if re.search(rf"_(?:csv|kafka|jdbc|blackhole)_{label}\b", text):
+                return label
+
+    return single_window_from_job_name(job_name)
+
 
 
 def rotate_if_stale_schema(output_file: Path) -> None:
@@ -231,6 +290,14 @@ def main() -> None:
         output_rows: list[list[object]] = []
 
         print(f"Job {job_id} ({job_name}):")
+        try:
+            plan_windows = job_plan_windows(args.flink_url, job_id)
+        except (urllib.error.URLError, OSError, KeyError, ValueError) as exc:
+            print(
+                f"WARNING: cannot read Flink plan for window labels: {exc}",
+                file=sys.stderr,
+            )
+            plan_windows = {}
 
         for vertex in list_vertices(args.flink_url, job_id):
             vertex_name = vertex.get("name", "?")
@@ -242,7 +309,12 @@ def main() -> None:
                 job_total += value
 
                 operator = metric_operator(metric_id)
-                window = metric_window(operator)
+                window = metric_window(
+                    operator,
+                    vertex_name=vertex_name,
+                    job_name=job_name,
+                    plan_windows=plan_windows,
+                )
                 window_note = f"  [window: {window}]" if window else ""
                 print(f"  {metric_id} = {int(value)}{window_note}")
 

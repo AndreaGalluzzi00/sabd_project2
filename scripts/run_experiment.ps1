@@ -65,17 +65,20 @@ OPZIONI UTILI
     -NoPreprocess          Salta il preprocessing se e' gia' stato fatto.
     -NoResetTopic          Non resetta il topic Kafka flights.
     -NoCleanResults        Non cancella i part-file precedenti.
+    -NoCleanDashboard      Non svuota InfluxDB/TimescaleDB prima della run.
     -NoMerge               Non crea il CSV finale.
     -MergeTimeoutSeconds   Timeout per attendere part-file stabili. Default: 180.
     -SparkTimeoutSeconds   Timeout per attendere la fine di Spark. Default: 1200.
     -KeepFlinkJob          Non cancella il job Flink a fine run.
 
 DASHBOARD
-    Le dashboard sono supportate solo per:
-        -Query q1 -Engine flink -Implementation table
+    Le dashboard sono supportate per i job Flink table di Q1, Q2 e Q3:
+        -Query q1|q2|q3 -Engine flink -Implementation table
 
     Esempi:
         .\scripts\run_experiment.ps1 -e 05_wm_safe -FullFlow
+        .\scripts\run_experiment.ps1 -e 05_wm_safe -Query q2 -FullFlow
+        .\scripts\run_experiment.ps1 -e 05_wm_safe -Query q3 -FullFlow
         .\scripts\run_experiment.ps1 -e 05_wm_safe -DashboardInflux
         .\scripts\run_experiment.ps1 -e 05_wm_safe -DashboardTimescale
 
@@ -409,17 +412,261 @@ function Wait-TimescaleDb {
     throw "TimescaleDB non pronto dopo 60 secondi."
 }
 
-function Clear-TimescaleQ1Results {
-    Write-Host ""
-    Write-Host "Cleaning TimescaleDB q1_results..."
+function Wait-InfluxDb {
+    for ($Attempt = 1; $Attempt -le 30; $Attempt++) {
+        docker exec sabd2-influxdb influx ping --host http://localhost:8086 | Out-Null
 
-    Wait-TimescaleDb
+        if ($LASTEXITCODE -eq 0) {
+            return
+        }
+
+        Start-Sleep -Seconds 2
+    }
+
+    throw "InfluxDB non pronto dopo 60 secondi."
+}
+
+function Get-DashboardKafkaTopics {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("q1", "q2", "q3")]
+        [string]$Query
+    )
+
+    switch ($Query) {
+        "q1" {
+            return @(
+                [pscustomobject]@{ Name = "q1_results"; Partitions = 4 }
+            )
+        }
+        "q2" {
+            return @(
+                [pscustomobject]@{ Name = "q2_results_1h"; Partitions = 1 },
+                [pscustomobject]@{ Name = "q2_results_6h"; Partitions = 1 },
+                [pscustomobject]@{ Name = "q2_results_global"; Partitions = 1 }
+            )
+        }
+        "q3" {
+            return @(
+                [pscustomobject]@{ Name = "q3_results_1d"; Partitions = 1 },
+                [pscustomobject]@{ Name = "q3_results_7d"; Partitions = 1 },
+                [pscustomobject]@{ Name = "q3_results_global"; Partitions = 1 }
+            )
+        }
+    }
+}
+
+function Get-DashboardTelegrafConsumerGroups {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("q1", "q2", "q3")]
+        [string]$Query
+    )
+
+    switch ($Query) {
+        "q1" { return @("telegraf-q1") }
+        "q2" { return @("telegraf-q2-1h", "telegraf-q2-6h", "telegraf-q2-global") }
+        "q3" { return @("telegraf-q3-1d", "telegraf-q3-7d", "telegraf-q3-global") }
+    }
+}
+
+function Get-DashboardInfluxMeasurements {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("q1", "q2", "q3")]
+        [string]$Query
+    )
+
+    switch ($Query) {
+        "q1" { return @("q1") }
+        "q2" { return @("q2_1h", "q2_6h", "q2_global") }
+        "q3" { return @("q3_1d", "q3_7d", "q3_global") }
+    }
+}
+
+function Get-DashboardTimescaleTables {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("q1", "q2", "q3")]
+        [string]$Query
+    )
+
+    switch ($Query) {
+        "q1" { return @("q1_results") }
+        "q2" { return @("q2_results_1h", "q2_results_6h", "q2_results_global") }
+        "q3" { return @("q3_results_1d", "q3_results_7d", "q3_results_global") }
+    }
+}
+
+function Get-DashboardTimescaleInitScript {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("q1", "q2", "q3")]
+        [string]$Query
+    )
+
+    switch ($Query) {
+        "q1" { return "/docker-entrypoint-initdb.d/01_q1.sql" }
+        "q2" { return "/docker-entrypoint-initdb.d/02_q2.sql" }
+        "q3" { return "/docker-entrypoint-initdb.d/03_q3.sql" }
+    }
+}
+
+function Ensure-TimescaleDashboardSchema {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("q1", "q2", "q3")]
+        [string]$Query
+    )
+
+    $InitScript = Get-DashboardTimescaleInitScript -Query $Query
+
+    Write-Host "Ensuring TimescaleDB schema for $Query..."
 
     Invoke-Checked {
         docker exec sabd2-timescaledb psql `
+            -v ON_ERROR_STOP=1 `
             -U sabd `
             -d sabd `
-            -c "TRUNCATE TABLE q1_results;"
+            -f $InitScript
+    }
+}
+
+function Clear-InfluxDashboardResults {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("q1", "q2", "q3")]
+        [string]$Query
+    )
+
+    $Measurements = @(Get-DashboardInfluxMeasurements -Query $Query)
+
+    Write-Host ""
+    Write-Host "Cleaning InfluxDB dashboard measurements for ${Query}: $($Measurements -join ', ')"
+
+    Wait-InfluxDb
+
+    foreach ($Measurement in $Measurements) {
+        $Predicate = "_measurement=`"$Measurement`""
+
+        Invoke-Checked {
+            docker exec sabd2-influxdb influx delete `
+                --host http://localhost:8086 `
+                --org sabd `
+                --bucket flights `
+                --token sabd-dev-token-please-change `
+                --start 1970-01-01T00:00:00Z `
+                --stop 2100-01-01T00:00:00Z `
+                --predicate $Predicate
+        }
+    }
+}
+
+function Clear-TimescaleDashboardResults {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("q1", "q2", "q3")]
+        [string]$Query
+    )
+
+    $Tables = @(Get-DashboardTimescaleTables -Query $Query)
+    $Sql = "TRUNCATE TABLE " + ($Tables -join ", ") + ";"
+
+    Write-Host ""
+    Write-Host "Cleaning TimescaleDB dashboard tables for ${Query}: $($Tables -join ', ')"
+
+    Wait-TimescaleDb
+    Ensure-TimescaleDashboardSchema -Query $Query
+
+    Invoke-Checked {
+        docker exec sabd2-timescaledb psql `
+            -v ON_ERROR_STOP=1 `
+            -U sabd `
+            -d sabd `
+            -c $Sql
+    }
+}
+
+function Stop-TelegrafDashboardBridge {
+    Write-Host ""
+    Write-Host "Stopping Telegraf dashboard bridge before Kafka result-topic reset..."
+
+    Invoke-Checked {
+        docker compose --profile dashboard-influx stop telegraf
+    }
+}
+
+function Start-TelegrafDashboardBridge {
+    Write-Host ""
+    Write-Host "Starting Telegraf dashboard bridge with fresh Kafka offsets..."
+
+    Invoke-Checked {
+        docker compose --profile dashboard-influx up -d --no-deps --force-recreate telegraf
+    }
+}
+
+function Clear-DashboardKafkaConsumerGroups {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("q1", "q2", "q3")]
+        [string]$Query
+    )
+
+    foreach ($Group in @(Get-DashboardTelegrafConsumerGroups -Query $Query)) {
+        Write-Host "Reset Telegraf Kafka consumer group $Group..."
+
+        $PreviousErrorActionPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $Output = @(docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh `
+                --bootstrap-server kafka:9092 `
+                --delete `
+                --group $Group 2>&1)
+            $ExitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $PreviousErrorActionPreference
+        }
+
+        if ($ExitCode -eq 0) {
+            continue
+        }
+
+        $Text = $Output -join " "
+        if ($Text -match "does not exist|not found|Non-existing group|Group id .* not found") {
+            Write-Host "Consumer group $Group already absent."
+            continue
+        }
+
+        Write-Warning "Unable to delete consumer group $Group; continuing. Output: $Text"
+    }
+}
+
+function Reset-DashboardKafkaTopics {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("q1", "q2", "q3")]
+        [string]$Query
+    )
+
+    foreach ($TopicSpec in @(Get-DashboardKafkaTopics -Query $Query)) {
+        Write-Host "Reset Kafka topic $($TopicSpec.Name)..."
+        Reset-KafkaTopic -Topic $TopicSpec.Name
+    }
+}
+
+function Ensure-DashboardKafkaTopics {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("q1", "q2", "q3")]
+        [string]$Query
+    )
+
+    foreach ($TopicSpec in @(Get-DashboardKafkaTopics -Query $Query)) {
+        Ensure-KafkaTopic `
+            -Topic $TopicSpec.Name `
+            -Partitions $TopicSpec.Partitions `
+            -ReplicationFactor 1
     }
 }
 
@@ -538,8 +785,8 @@ function Get-RunSpec {
         )
         q3 = @(
             "q3_results_host_path_1d"
-            # "q3_results_host_path_7d"
-            # "q3_results_host_path_global"
+            "q3_results_host_path_7d"
+            "q3_results_host_path_global"
         )
     }
 
@@ -647,12 +894,11 @@ $DashboardEnabled = [bool]($EnableInflux -or $EnableTimescale)
 if (
     $DashboardEnabled `
     -and (
-        $Query -ne "q1" `
-        -or $Engine -ne "flink" `
+        $Engine -ne "flink" `
         -or $Implementation -ne "table"
     )
 ) {
-    throw "Le dashboard sono supportate da questo runner solo per -Query q1 -Engine flink -Implementation table."
+    throw "Le dashboard sono supportate da questo runner solo per -Query q1|q2|q3 -Engine flink -Implementation table."
 }
 
 if ([string]::IsNullOrWhiteSpace($Exp)) {
@@ -724,8 +970,16 @@ if ($DashboardEnabled) {
         -EnableInflux $EnableInflux `
         -EnableTimescale $EnableTimescale
 
+    if ($EnableInflux -and -not $NoResetTopic) {
+        Stop-TelegrafDashboardBridge
+    }
+
+    if ($EnableInflux -and -not $NoCleanDashboard) {
+        Clear-InfluxDashboardResults -Query $Query
+    }
+
     if ($EnableTimescale -and -not $NoCleanDashboard) {
-        Clear-TimescaleQ1Results
+        Clear-TimescaleDashboardResults -Query $Query
     }
 }
 
@@ -739,8 +993,8 @@ if (-not $NoResetTopic) {
     Reset-KafkaTopic -Topic "flights"
 
     if ($EnableInflux) {
-        Write-Host "Reset Kafka topic q1_results..."
-        Reset-KafkaTopic -Topic "q1_results"
+        Clear-DashboardKafkaConsumerGroups -Query $Query
+        Reset-DashboardKafkaTopics -Query $Query
     }
 
     Start-Sleep -Seconds 3
@@ -750,14 +1004,15 @@ if (-not $NoResetTopic) {
     }
 
     if ($EnableInflux) {
-        Ensure-KafkaTopic -Topic "q1_results" -Partitions 4 -ReplicationFactor 1
+        Ensure-DashboardKafkaTopics -Query $Query
+        Start-TelegrafDashboardBridge
     }
 }
 else {
     Write-Host "Kafka topic reset skipped."
 
     if ($EnableInflux) {
-        Ensure-KafkaTopic -Topic "q1_results" -Partitions 4 -ReplicationFactor 1
+        Ensure-DashboardKafkaTopics -Query $Query
     }
 }
 

@@ -107,10 +107,16 @@ q1:
   watermark_delay_seconds: 180
 
 q2:
+  # Finestra Q2 da eseguire.
+  # Specifica: 1h, 6h, global. Usa "all" per eseguirle tutte nello stesso job.
+  window: "all"
   # Ritardo massimo ammesso per eventi in ritardo (event time).
   watermark_delay_seconds: 180
 
 q3:
+  # Finestra Q3 da eseguire.
+  # Specifica: 1d, 7d, global. Usa "all" per eseguirle tutte nello stesso job.
+  window: "all"
   # Stessa strategia di watermarking di Q1/Q2.
   watermark_delay_seconds: 180
   # DDSketch: errore relativo massimo garantito sui percentili.

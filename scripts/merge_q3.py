@@ -47,6 +47,7 @@ HEADER = "ts,airline,hour,count,min,p25,p50,p75,p90,max"
 COL_TS = 0
 COL_AIRLINE = 1
 COL_HOUR = 2
+Q3_WINDOW_CHOICES = ("1d", "7d", "global", "all")
 
 
 @dataclass(frozen=True)
@@ -57,11 +58,22 @@ class WindowMergeConfig:
     label: str  # "1d" | "7d" | "global"
 
 
+def selected_q3_window(cfg: dict) -> str:
+    window = str(cfg.get("q3", {}).get("window", "all")).strip().lower()
+    if window not in Q3_WINDOW_CHOICES:
+        raise ValueError(
+            "q3.window must be one of: "
+            + ", ".join(Q3_WINDOW_CHOICES)
+        )
+    return window
+
+
 def load_merge_config() -> list[WindowMergeConfig]:
     cfg = load_config()
     paths = cfg["paths"]
     experiment = get_experiment_name(cfg)
     stable_for = stability_window_seconds(cfg)
+    selected_window = selected_q3_window(cfg)
 
     def make(dir_key: str, out_key: str, label: str) -> WindowMergeConfig:
         out = resolve_project_path(paths[out_key])
@@ -73,11 +85,14 @@ def load_merge_config() -> list[WindowMergeConfig]:
             label=label,
         )
 
-    return [
+    configs = [
         make("q3_results_host_path_1d",     "q3_merged_output_host_path_1d",     "1d"),
-        # make("q3_results_host_path_7d",     "q3_merged_output_host_path_7d",     "7d"),
-        # make("q3_results_host_path_global", "q3_merged_output_host_path_global", "global"),
+        make("q3_results_host_path_7d",     "q3_merged_output_host_path_7d",     "7d"),
+        make("q3_results_host_path_global", "q3_merged_output_host_path_global", "global"),
     ]
+    if selected_window == "all":
+        return configs
+    return [config for config in configs if config.label == selected_window]
 
 
 def find_finalized_part_files(results_dir: Path) -> list[Path]:
@@ -149,12 +164,6 @@ def main() -> None:
     window_configs = load_merge_config()
 
     if ARGS.wait:
-        # Q3's global window emits only after the EOS watermark. It is the
-        # safest completion barrier: if we merge 1d/7d first, they can look
-        # stable during a processing lull while the job is still catching up.
-        # global_config = next(wc for wc in window_configs if wc.label == "global")
-        # print(f"\n[global] Waiting for EOS/global output before merging Q3...")
-        # wait_for_window(global_config)
         wait_config = window_configs[-1]
         print(f"\n[{wait_config.label}] Waiting for enabled Q3 output before merging...")
         wait_for_window(wait_config)

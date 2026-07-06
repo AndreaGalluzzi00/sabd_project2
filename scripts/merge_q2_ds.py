@@ -47,6 +47,7 @@ HEADER = (
 #   0: ts  1: rank  2: origin_airport_id  ...
 COL_TS = 0
 COL_RANK = 1
+Q2_WINDOW_CHOICES = ("1h", "6h", "global", "all")
 
 
 @dataclass(frozen=True)
@@ -56,10 +57,21 @@ class WindowMergeConfig:
     label: str  # "1h" | "6h" | "global"
 
 
+def selected_q2_window(cfg: dict) -> str:
+    window = str(cfg.get("q2", {}).get("window", "all")).strip().lower()
+    if window not in Q2_WINDOW_CHOICES:
+        raise ValueError(
+            "q2.window must be one of: "
+            + ", ".join(Q2_WINDOW_CHOICES)
+        )
+    return window
+
+
 def load_merge_config() -> list[WindowMergeConfig]:
     cfg = load_config()
     paths = cfg["paths"]
     experiment = get_experiment_name(cfg)
+    selected_window = selected_q2_window(cfg)
 
     def make(dir_key: str, out_key: str, label: str) -> WindowMergeConfig:
         out = resolve_project_path(paths[out_key])
@@ -70,11 +82,14 @@ def load_merge_config() -> list[WindowMergeConfig]:
             label=label,
         )
 
-    return [
+    configs = [
         make("q2_ds_results_host_path_1h",     "q2_ds_merged_output_host_path_1h",     "1h"),
         make("q2_ds_results_host_path_6h",     "q2_ds_merged_output_host_path_6h",     "6h"),
         make("q2_ds_results_host_path_global", "q2_ds_merged_output_host_path_global", "global"),
     ]
+    if selected_window == "all":
+        return configs
+    return [config for config in configs if config.label == selected_window]
 
 
 def find_finalized_part_files(results_dir: Path) -> list[Path]:

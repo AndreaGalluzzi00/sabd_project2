@@ -23,6 +23,7 @@ from common.config import load_config  # noqa: E402
 
 
 HEADER = ["ts", "airline", "hour", "count", "min", "p25", "p50", "p75", "p90", "max"]
+Q3_WINDOW_CHOICES = ("1d", "7d", "global", "all")
 
 
 @dataclass(frozen=True)
@@ -32,10 +33,21 @@ class WindowMergeConfig:
     label: str
 
 
+def selected_q3_window(cfg: dict) -> str:
+    window = str(cfg.get("q3", {}).get("window", "all")).strip().lower()
+    if window not in Q3_WINDOW_CHOICES:
+        raise ValueError(
+            "q3.window must be one of: "
+            + ", ".join(Q3_WINDOW_CHOICES)
+        )
+    return window
+
+
 def load_merge_config() -> list[WindowMergeConfig]:
     cfg = load_config()
     paths = cfg["paths"]
     experiment = get_experiment_name(cfg)
+    selected_window = selected_q3_window(cfg)
 
     def make(dir_key: str, out_key: str, label: str) -> WindowMergeConfig:
         output = add_experiment_name_to_output_file(
@@ -48,11 +60,14 @@ def load_merge_config() -> list[WindowMergeConfig]:
             label=label,
         )
 
-    return [
+    configs = [
         make("spark_q3_results_host_path_1d", "spark_q3_merged_output_host_path_1d", "1d"),
         make("spark_q3_results_host_path_7d", "spark_q3_merged_output_host_path_7d", "7d"),
         make("spark_q3_results_host_path_global", "spark_q3_merged_output_host_path_global", "global"),
     ]
+    if selected_window == "all":
+        return configs
+    return [config for config in configs if config.label == selected_window]
 
 
 def find_part_files(results_dir: Path) -> list[Path]:

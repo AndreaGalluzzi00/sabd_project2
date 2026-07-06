@@ -24,8 +24,7 @@ Finestre disponibili (event-time, allineate all'inizio del dataset 2025-01-01
 tramite offset del tumbling):
     1 giorno · 7 giorni · dall'inizio del dataset (365 giorni, un solo bucket
     che copre gen–apr 2025 e si chiude col marker EOS, come il global di Q2).
-    Per la prova corrente di completezza, il codice abilita solo 1d e lascia
-    7d/global commentate nella lista windows.
+    q3.window seleziona 1d, 7d, global oppure all.
 
 Nota watermark: timestamp e watermark sono assegnati PRIMA del filtro sulle
 compagnie, quindi il marker EOS (event_time nel 2200) avanza il watermark e
@@ -40,10 +39,9 @@ from __future__ import annotations
 import sys
 from dataclasses import asdict, dataclass
 
-from pyflink.common import Types, WatermarkStrategy
+from pyflink.common import Row, Types, WatermarkStrategy
 from pyflink.common.time import Duration, Time
 from pyflink.datastream import OutputTag
-from pyflink.datastream.functions import MapFunction
 from pyflink.datastream.window import TumblingEventTimeWindows
 from pyflink.table import DataTypes, Schema, StreamTableEnvironment
 
@@ -71,6 +69,12 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 AIRLINES: frozenset[str] = frozenset({"AA", "DL", "UA", "WN"})
+Q3_WINDOW_CHOICES = ("1d", "7d", "global", "all")
+
+Q3_EVENT_TYPE = Types.ROW_NAMED(
+    ["event_time", "airline", "hour", "dep_delay"],
+    [Types.LONG(), Types.STRING(), Types.INT(), Types.DOUBLE()],
+)
 
 
 def hour_band(crs_dep_time: int) -> int:
@@ -85,6 +89,7 @@ class Q3Config(FlinkRuntimeConfig):
     results_path_1d: str
     results_path_7d: str
     results_path_global: str
+    window: str
     watermark_delay_seconds: int
     sketch_alpha: float
 
@@ -102,9 +107,20 @@ class Q3Config(FlinkRuntimeConfig):
     timescale_password: str
 
 
+def selected_q3_window(value: object) -> str:
+    window = str(value or "all").strip().lower()
+    if window not in Q3_WINDOW_CHOICES:
+        raise ValueError(
+            "q3.window must be one of: "
+            + ", ".join(Q3_WINDOW_CHOICES)
+        )
+    return window
+
+
 def load_q3_config() -> Q3Config:
     cfg = load_config()
     flink_cfg = build_flink_runtime_config(cfg)
+    q3_cfg = cfg["q3"]
 
     # Q3 usa un proprio consumer group per poter girare insieme a Q1/Q2.
     flink_dict = asdict(flink_cfg)
@@ -123,8 +139,9 @@ def load_q3_config() -> Q3Config:
         results_path_1d=cfg["paths"]["q3_results_path_1d"],
         results_path_7d=cfg["paths"]["q3_results_path_7d"],
         results_path_global=cfg["paths"]["q3_results_path_global"],
-        watermark_delay_seconds=int(cfg["q3"]["watermark_delay_seconds"]),
-        sketch_alpha=float(cfg["q3"].get("sketch_alpha", 0.01)),
+        window=selected_q3_window(q3_cfg.get("window", "all")),
+        watermark_delay_seconds=int(q3_cfg["watermark_delay_seconds"]),
+        sketch_alpha=float(q3_cfg.get("sketch_alpha", 0.01)),
         influx_enabled=bool(influx.get("enabled", False)),
         influx_topic_1d=str(q3_influx.get("topic_1d", "q3_results_1d")),
         influx_topic_7d=str(q3_influx.get("topic_7d", "q3_results_7d")),
@@ -137,22 +154,6 @@ def load_q3_config() -> Q3Config:
         timescale_username=str(timescale.get("username", "")),
         timescale_password=str(timescale.get("password", "")),
     )
-
-
-# -- Kafka Table ingestion -----------------------------------------------------
-
-class _FlightRowProjection(MapFunction):
-    """
-    Converte la Row prodotta dal Kafka Table Connector nella tupla usata dalla
-    pipeline DataStream: (event_time_ms, airline, crs_dep_time, dep_delay,
-    cancelled, diverted).
-
-    Non filtra sulla compagnia: anche il marker EOS deve attraversare
-    l'assegnazione del watermark (vedi docstring modulo).
-    """
-
-    def map(self, value):
-        return (value[0], value[1], value[2], value[3], value[4], value[5])
 
 
 def register_q3_flights_source(t_env: StreamTableEnvironment, cfg: Q3Config) -> None:
@@ -178,7 +179,7 @@ def register_q3_flights_source(t_env: StreamTableEnvironment, cfg: Q3Config) -> 
 
 
 class FlightTimestampAssigner:
-    """Duck-type timestamp assigner (PyFlink 1.20): event_time ms in tuple[0]."""
+    """Duck-type timestamp assigner (PyFlink 1.20): event_time ms in row[0]."""
     def extract_timestamp(self, value, record_timestamp: int) -> int:
         return value[0]
 
@@ -200,6 +201,30 @@ def _is_q3_relevant(value) -> bool:
     )
 
 
+def enabled_q3_windows(
+    cfg: Q3Config,
+) -> list[tuple[str, TumblingEventTimeWindows, str, str, str]]:
+    windows = [
+        # Spec Q3 windows: 1 day, 7 days, and global.
+        ("1d", TumblingEventTimeWindows.of(Time.days(1)),
+         cfg.results_path_1d, cfg.influx_topic_1d, cfg.timescale_table_1d),
+        # Offset 6 days aligns weekly buckets to 2025-01-01.
+        ("7d", TumblingEventTimeWindows.of(Time.days(7), Time.days(6)),
+         cfg.results_path_7d, cfg.influx_topic_7d, cfg.timescale_table_7d),
+        # Offset 14 days aligns the 365-day bucket to 2025-01-01.
+        ("global", TumblingEventTimeWindows.of(Time.days(365), Time.days(14)),
+         cfg.results_path_global, cfg.influx_topic_global, cfg.timescale_table_global),
+    ]
+    if cfg.window == "all":
+        return windows
+    return [window for window in windows if window[0] == cfg.window]
+
+
+def _project_q3_event(value) -> Row:
+    """Flight Row -> typed Q3 event Row after the watermark-bearing filter."""
+    return Row(value[0], value[1], hour_band(value[2]), float(value[3]))
+
+
 # ── Per-window pipeline ───────────────────────────────────────────────────────
 
 def build_window_pipeline(
@@ -218,8 +243,8 @@ def build_window_pipeline(
     # Side output dei record scartati perché in ritardo: le finestre DataStream
     # non espongono 'numLateRecordsDropped', quindi lo ricreiamo contando questo
     # tag (vedi Q3LateDropCounter). Il tipo del tag = tipo degli elementi in
-    # ingresso alla finestra (tuple proiettate, PICKLED_BYTE_ARRAY).
-    late_tag = OutputTag(f"q3-late-{label}", Types.PICKLED_BYTE_ARRAY())
+    # ingresso alla finestra (record Q3 tipizzati).
+    late_tag = OutputTag(f"q3-late-{label}", Q3_EVENT_TYPE)
 
     result_ds = (
         keyed_stream
@@ -319,6 +344,7 @@ def main() -> None:
     logger.info("Q3 | Kafka: %s  topic: %s", cfg.kafka_bootstrap, cfg.kafka_topic)
     logger.info("Q3 | Consumer group: %s", cfg.kafka_consumer_group)
     logger.info("Q3 | Parallelism: %d", cfg.parallelism)
+    logger.info("Q3 | Enabled window(s): %s", cfg.window)
     logger.info("Q3 | Watermark delay: %d s (event time)", cfg.watermark_delay_seconds)
     logger.info("Q3 | DDSketch alpha: %g (errore relativo max sui percentili)", cfg.sketch_alpha)
 
@@ -333,16 +359,7 @@ def main() -> None:
         cfg.schema_registry_subject,
     )
 
-    flights_source_table = t_env.sql_query("""
-        SELECT event_time, airline, crs_dep_time, dep_delay, cancelled, diverted
-        FROM q3_flights_source
-    """)
-
-    decoded_ds = (
-        t_env.to_data_stream(flights_source_table)
-        .map(_FlightRowProjection(), output_type=Types.PICKLED_BYTE_ARRAY())
-        .name("Q3FlightRows[avro-confluent]")
-    )
+    decoded_ds = t_env.to_data_stream(t_env.from_path("q3_flights_source"))
 
     # ── Watermark PRIMA del filtro: l'EOS avanza il watermark e chiude le
     #    finestre finali; il filtro successivo lo esclude dai risultati. ───────
@@ -358,9 +375,10 @@ def main() -> None:
         decoded_ds
         .filter(_is_q3_relevant)
         .map(
-            lambda v: (v[0], v[1], hour_band(v[2]), float(v[3])),
-            output_type=Types.PICKLED_BYTE_ARRAY(),
+            _project_q3_event,
+            output_type=Q3_EVENT_TYPE,
         )
+        .name("Q3Events[typed]")
     )
 
     keyed_stream = flights_ds.key_by(
@@ -376,16 +394,7 @@ def main() -> None:
     # → settimane 01/01, 08/01, … e finestra globale [2025-01-01, 2026-01-01),
     # che copre l'intero dataset (gen–apr 2025) in un solo bucket e si chiude
     # col watermark spinto dal marker EOS (stessa semantica del global di Q2).
-    # Prova di completezza Q3: per ora eseguiamo solo la finestra 1d.
-    # I rami 7d/global restano sotto commento nella lista windows.
-    windows = [
-        ("1d",     TumblingEventTimeWindows.of(Time.days(1)),
-         cfg.results_path_1d,     cfg.influx_topic_1d,     cfg.timescale_table_1d),
-        # ("7d",     TumblingEventTimeWindows.of(Time.days(7),   Time.days(6)),
-        #  cfg.results_path_7d,     cfg.influx_topic_7d,     cfg.timescale_table_7d),
-        # ("global", TumblingEventTimeWindows.of(Time.days(365), Time.days(14)),
-        #  cfg.results_path_global, cfg.influx_topic_global, cfg.timescale_table_global),
-    ]
+    windows = enabled_q3_windows(cfg)
 
     stmt_set = t_env.create_statement_set()
 
@@ -406,7 +415,7 @@ def main() -> None:
         logger.info("Q3 | Dashboard sinks disabled (CSV-only run).")
 
     # ── Submit: un solo job, sorgente letta una volta, fan-out sui sink ───────
-    logger.info("Q3 | Submitting job (%d enabled window pipeline(s)) …", len(windows))
+    logger.info("Q3 | Submitting job (%d enabled window pipeline(s)) ...", len(windows))
     stmt_set.execute()
     logger.info("Q3 | Job submitted successfully.")
     sys.exit(0)

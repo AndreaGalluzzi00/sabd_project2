@@ -6,7 +6,8 @@ Pure DataStream reimplementation of q2/job.py (which uses Flink SQL Window Top-N
 kept side by side for the Table-API-vs-DataStream comparison — same pattern as Q1
 (q1/job.py vs q1/job_datastream.py). Produces the same result under q2_ds/.
 
-Pipeline (three window sizes 1h / 6h / 365-day global, in one job):
+Pipeline window selection is controlled by q2.window in the config:
+1h, 6h, global, or all.
 
   Stage 1 — keyBy(origin_airport_id) → TumblingEventTimeWindow → AggregateFunction
     computes per (window, airport): num_flights, severe_delays (dep_delay > 30),
@@ -61,6 +62,7 @@ logger = logging.getLogger(__name__)
 
 # Max severe flights listed per airport (spec: at most 20, sorted by delay desc).
 TOP_N = 20
+Q2_WINDOW_CHOICES = ("1h", "6h", "global", "all")
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -70,19 +72,44 @@ class Q2DSConfig(FlinkRuntimeConfig):
     results_path_1h: str
     results_path_6h: str
     results_path_global: str
+    window: str
     watermark_delay_seconds: int
+
+
+def selected_q2_window(value: object) -> str:
+    window = str(value or "all").strip().lower()
+    if window not in Q2_WINDOW_CHOICES:
+        raise ValueError(
+            "q2.window must be one of: "
+            + ", ".join(Q2_WINDOW_CHOICES)
+        )
+    return window
 
 
 def load_q2_ds_config() -> Q2DSConfig:
     cfg = load_config()
     flink_cfg = build_flink_runtime_config(cfg)
+    q2_cfg = cfg["q2"]
     return Q2DSConfig(
         **asdict(flink_cfg),
         results_path_1h=cfg["paths"]["q2_ds_results_path_1h"],
         results_path_6h=cfg["paths"]["q2_ds_results_path_6h"],
         results_path_global=cfg["paths"]["q2_ds_results_path_global"],
-        watermark_delay_seconds=int(cfg["q2"]["watermark_delay_seconds"]),
+        window=selected_q2_window(q2_cfg.get("window", "all")),
+        watermark_delay_seconds=int(q2_cfg["watermark_delay_seconds"]),
     )
+
+
+def enabled_q2_windows(cfg: Q2DSConfig) -> list[tuple[str, Time, str]]:
+    windows = [
+        ("1h", Time.hours(1), cfg.results_path_1h),
+        ("6h", Time.hours(6), cfg.results_path_6h),
+        # Spec "global": one bucket covering the whole Jan-Apr 2025 dataset.
+        ("global", Time.days(365), cfg.results_path_global),
+    ]
+    if cfg.window == "all":
+        return windows
+    return [window for window in windows if window[0] == cfg.window]
 
 
 # ── Pure-Python Avro binary decoder ──────────────────────────────────────────
@@ -406,15 +433,12 @@ def main() -> None:
         .with_timestamp_assigner(FlightTimestampAssigner())
     )
 
-    windows = [
-        ("1h",     Time.hours(1),   cfg.results_path_1h),
-        ("6h",     Time.hours(6),   cfg.results_path_6h),
-        ("global", Time.days(365),  cfg.results_path_global),
-    ]
+    windows = enabled_q2_windows(cfg)
+    logger.info("Q2-DS | Enabled window(s): %s", cfg.window)
     for label, window_time, results_path in windows:
         build_window_pipeline(flights_ds, window_time, results_path, label)
 
-    logger.info("Q2-DS | Submitting job (3 window pipelines) …")
+    logger.info("Q2-DS | Submitting job (%d window pipeline(s)) ...", len(windows))
     env.execute("Q2-DS")
     logger.info("Q2-DS | Job submitted successfully.")
     sys.exit(0)

@@ -51,9 +51,10 @@ COUNT_COLUMN = "count"
 # Window label -> config key of its merged output path (same keys as merge_q3).
 WINDOW_PATH_KEYS = {
     "1d": "q3_merged_output_host_path_1d",
-    # "7d": "q3_merged_output_host_path_7d",
-    # "global": "q3_merged_output_host_path_global",
+    "7d": "q3_merged_output_host_path_7d",
+    "global": "q3_merged_output_host_path_global",
 }
+Q3_WINDOW_CHOICES = ("1d", "7d", "global", "all")
 
 DEFAULT_BASELINE = "01_baseline"
 DEFAULT_OUTPUT = PROJECT_ROOT / "Results" / "late_drops_q3.csv"
@@ -92,6 +93,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def selected_q3_window(cfg: dict) -> str:
+    window = str(cfg.get("q3", {}).get("window", "all")).strip().lower()
+    if window not in Q3_WINDOW_CHOICES:
+        raise ValueError(
+            "q3.window must be one of: "
+            + ", ".join(Q3_WINDOW_CHOICES)
+        )
+    return window
+
+
 def resolve_window_files(experiment: str | None) -> tuple[str, dict[str, Path]]:
     """Return (experiment_name, {window_label: merged_csv_path}).
 
@@ -105,12 +116,16 @@ def resolve_window_files(experiment: str | None) -> tuple[str, dict[str, Path]]:
     cfg = load_config()
     paths = cfg["paths"]
     experiment_name = get_experiment_name(cfg)
+    selected_window = selected_q3_window(cfg)
+    path_keys = WINDOW_PATH_KEYS
+    if selected_window != "all":
+        path_keys = {selected_window: WINDOW_PATH_KEYS[selected_window]}
 
     files = {
         label: add_experiment_name_to_output_file(
             resolve_project_path(paths[key]), experiment_name
         )
-        for label, key in WINDOW_PATH_KEYS.items()
+        for label, key in path_keys.items()
     }
 
     return experiment_name, files
@@ -223,7 +238,15 @@ def main() -> None:
 
     exit_code = 0
 
-    for window in WINDOW_PATH_KEYS:
+    windows = [window for window in WINDOW_PATH_KEYS if window in baseline_files and window in experiment_files]
+    if not windows:
+        print(
+            "  No common Q3 window outputs between experiment and baseline configs.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    for window in windows:
         base_path = baseline_files[window]
         exp_path = experiment_files[window]
 

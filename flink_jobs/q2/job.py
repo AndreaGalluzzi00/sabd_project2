@@ -2,8 +2,8 @@
 """
 Q2 – Real-time ranking of departure airports with significant delays.
 
-Option B — pure Flink SQL, fully append-only, one job with three window
-pipelines (1h, 6h, 365-day global):
+Option B — pure Flink SQL, fully append-only. The enabled window pipeline is
+selected by q2.window in the config: 1h, 6h, global, or all.
 
   Stage 1 — Windowing TVF aggregation (append-only, fires once per window):
     per (window, airport) num_flights, severe_delays, dep_delay_mean,
@@ -47,6 +47,8 @@ import logging
 configure_logging()
 logger = logging.getLogger(__name__)
 
+Q2_WINDOW_CHOICES = ("1h", "6h", "global", "all")
+
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -55,6 +57,7 @@ class Q2Config(FlinkRuntimeConfig):
     results_path_1h: str
     results_path_6h: str
     results_path_global: str
+    window: str
     watermark_delay_seconds: int
 
     influx_enabled: bool
@@ -71,9 +74,20 @@ class Q2Config(FlinkRuntimeConfig):
     timescale_password: str
 
 
+def selected_q2_window(value: object) -> str:
+    window = str(value or "all").strip().lower()
+    if window not in Q2_WINDOW_CHOICES:
+        raise ValueError(
+            "q2.window must be one of: "
+            + ", ".join(Q2_WINDOW_CHOICES)
+        )
+    return window
+
+
 def load_q2_config() -> Q2Config:
     cfg = load_config()
     flink_cfg = build_flink_runtime_config(cfg)
+    q2_cfg = cfg["q2"]
 
     # Q2 uses its own consumer group so it can run concurrently with Q1.
     flink_dict = asdict(flink_cfg)
@@ -92,7 +106,8 @@ def load_q2_config() -> Q2Config:
         results_path_1h=cfg["paths"]["q2_results_path_1h"],
         results_path_6h=cfg["paths"]["q2_results_path_6h"],
         results_path_global=cfg["paths"]["q2_results_path_global"],
-        watermark_delay_seconds=int(cfg["q2"]["watermark_delay_seconds"]),
+        window=selected_q2_window(q2_cfg.get("window", "all")),
+        watermark_delay_seconds=int(q2_cfg["watermark_delay_seconds"]),
         influx_enabled=bool(influx.get("enabled", False)),
         influx_topic_1h=str(q2_influx.get("topic_1h", "q2_results_1h")),
         influx_topic_6h=str(q2_influx.get("topic_6h", "q2_results_6h")),
@@ -115,6 +130,38 @@ def sql_watermark_interval(seconds: int) -> str:
     if seconds % 60 == 0:
         return f"INTERVAL '{seconds // 60}' MINUTE"
     return f"INTERVAL '{seconds}' SECOND"
+
+
+def enabled_q2_windows(cfg: Q2Config) -> list[tuple[str, str, str, str, str]]:
+    windows = [
+        # (label, SQL interval, results path, influx topic, timescale table)
+        (
+            "1h",
+            "INTERVAL '1' HOUR",
+            cfg.results_path_1h,
+            cfg.influx_topic_1h,
+            cfg.timescale_table_1h,
+        ),
+        (
+            "6h",
+            "INTERVAL '6' HOUR",
+            cfg.results_path_6h,
+            cfg.influx_topic_6h,
+            cfg.timescale_table_6h,
+        ),
+        # Spec "global": one bucket covering the whole Jan-Apr 2025 dataset.
+        # DAY(3) precision is required because default DAY(2) only allows 99 days.
+        (
+            "global",
+            "INTERVAL '365' DAY(3)",
+            cfg.results_path_global,
+            cfg.influx_topic_global,
+            cfg.timescale_table_global,
+        ),
+    ]
+    if cfg.window == "all":
+        return windows
+    return [window for window in windows if window[0] == cfg.window]
 
 
 # ── Per-window pipeline ───────────────────────────────────────────────────────
@@ -195,6 +242,7 @@ def main() -> None:
 
     logger.info("Q2 | Kafka: %s  topic: %s", cfg.kafka_bootstrap, cfg.kafka_topic)
     logger.info("Q2 | Consumer group: %s", cfg.kafka_consumer_group)
+    logger.info("Q2 | Enabled window(s): %s", cfg.window)
     logger.info("Q2 | Watermark delay: %d s (event time)", cfg.watermark_delay_seconds)
 
     # ── Register the scalar UDF used to format the delayed_flights list ───────
@@ -240,16 +288,7 @@ def main() -> None:
     # ── Build one pipeline per window size ────────────────────────────────────
     stmt_set = t_env.create_statement_set()
 
-    windows = [
-        # (label,    SQL interval,            results path,             influx topic,            timescale table)
-        ("1h",     "INTERVAL '1' HOUR",     cfg.results_path_1h,     cfg.influx_topic_1h,     cfg.timescale_table_1h),
-        ("6h",     "INTERVAL '6' HOUR",     cfg.results_path_6h,     cfg.influx_topic_6h,     cfg.timescale_table_6h),
-        # 365-day window: the entire Jan–Apr 2025 dataset fits in one bucket.
-        # The window fires once after the EOS marker. ts = Flink's epoch-aligned
-        # window_start (late 2024); document this alignment in the report.
-        # DAY(3) precision required: default DAY(2) only allows up to 99 days.
-        ("global", "INTERVAL '365' DAY(3)", cfg.results_path_global, cfg.influx_topic_global, cfg.timescale_table_global),
-    ]
+    windows = enabled_q2_windows(cfg)
 
     for label, window_sql, results_path, influx_topic, timescale_table in windows:
         build_window_pipeline(
@@ -264,7 +303,7 @@ def main() -> None:
         )
 
     # ── Submit ────────────────────────────────────────────────────────────────
-    logger.info("Q2 | Submitting job (3 window pipelines) …")
+    logger.info("Q2 | Submitting job (%d window pipeline(s)) ...", len(windows))
     stmt_set.execute()
     logger.info("Q2 | Job submitted successfully.")
     sys.exit(0)

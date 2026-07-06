@@ -21,6 +21,34 @@ from spark_runtime import (
     write_foreach_batch_stream,
 )
 
+Q2_WINDOW_CHOICES = ("1h", "6h", "global", "all")
+
+
+def selected_q2_window(value: object) -> str:
+    window = str(value or "all").strip().lower()
+    if window not in Q2_WINDOW_CHOICES:
+        raise ValueError(
+            "q2.window must be one of: "
+            + ", ".join(Q2_WINDOW_CHOICES)
+        )
+    return window
+
+
+def enabled_q2_windows(
+    selected_window: str,
+    paths: dict,
+) -> list[tuple[str, str, str | None, str]]:
+    windows = [
+        # Spec Q2 windows: 1 hour, 6 hours, and global.
+        ("1h", "1 hour", None, paths["spark_q2_results_path_1h"]),
+        ("6h", "6 hours", None, paths["spark_q2_results_path_6h"]),
+        # Start offset 14 days aligns the 365-day bucket to 2025-01-01.
+        ("global", "365 days", "14 days", paths["spark_q2_results_path_global"]),
+    ]
+    if selected_window == "all":
+        return windows
+    return [window for window in windows if window[0] == selected_window]
+
 
 def build_stats(
     flights: DataFrame,
@@ -136,20 +164,19 @@ def main() -> None:
     spark = create_spark_session("SparkStructuredQ2", runtime_cfg)
 
     paths = cfg["paths"]
-    watermark_delay = int(cfg["q2"]["watermark_delay_seconds"])
+    q2_cfg = cfg["q2"]
+    selected_window = selected_q2_window(q2_cfg.get("window", "all"))
+    watermark_delay = int(q2_cfg["watermark_delay_seconds"])
 
     logger.info("Spark Q2 | Kafka: %s topic: %s", runtime_cfg.kafka_bootstrap, runtime_cfg.kafka_topic)
+    logger.info("Spark Q2 | Enabled window(s): %s", selected_window)
 
     flights = (
         read_flights_stream(spark, runtime_cfg, "q2")
         .withWatermark("rowtime", f"{watermark_delay} seconds")
     )
 
-    windows = [
-        ("1h", "1 hour", None, paths["spark_q2_results_path_1h"]),
-        ("6h", "6 hours", None, paths["spark_q2_results_path_6h"]),
-        ("global", "365 days", "14 days", paths["spark_q2_results_path_global"]),
-    ]
+    windows = enabled_q2_windows(selected_window, paths)
 
     queries = []
     for label, duration, start_time, output_path in windows:
