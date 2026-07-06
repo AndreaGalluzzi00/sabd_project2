@@ -23,7 +23,7 @@ producer:
   acceleration_factor: 57600
   log_interval: 100000
   flush_interval: 5000
-  skip_if_topic_has_messages: true
+  skip_if_topic_has_messages: false
 
   # Iniezione di out-of-orderness: non modifica l'event_time,
   # ritarda solo la consegna degli eventi.

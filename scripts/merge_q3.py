@@ -117,20 +117,20 @@ def write_output(rows: list[str], output_file: Path) -> None:
         for row in rows:
             f.write(row + "\n")
 
+def wait_for_window(wc: WindowMergeConfig) -> None:
+    try:
+        wait_for_stable_results(
+            find_part_files=lambda: find_finalized_part_files(wc.results_dir),
+            stable_for_seconds=wc.stable_for_seconds,
+            timeout_seconds=ARGS.timeout,
+        )
+    except TimeoutError as exc:
+        print(f"[{wc.label}] ERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
+
 
 def merge_window(wc: WindowMergeConfig) -> None:
     print(f"\n[{wc.label}] Results dir: {wc.results_dir}")
-
-    if ARGS.wait:
-        try:
-            wait_for_stable_results(
-                find_part_files=lambda: find_finalized_part_files(wc.results_dir),
-                stable_for_seconds=wc.stable_for_seconds,
-                timeout_seconds=ARGS.timeout,
-            )
-        except TimeoutError as exc:
-            print(f"[{wc.label}] ERROR: {exc}", file=sys.stderr)
-            sys.exit(1)
 
     part_files = find_finalized_part_files(wc.results_dir)
 
@@ -146,7 +146,17 @@ def merge_window(wc: WindowMergeConfig) -> None:
 
 def main() -> None:
     print(f"Using config: {CONFIG_PATH}")
-    for wc in load_merge_config():
+    window_configs = load_merge_config()
+
+    if ARGS.wait:
+        # Q3's global window emits only after the EOS watermark. It is the
+        # safest completion barrier: if we merge 1d/7d first, they can look
+        # stable during a processing lull while the job is still catching up.
+        global_config = next(wc for wc in window_configs if wc.label == "global")
+        print(f"\n[global] Waiting for EOS/global output before merging Q3...")
+        wait_for_window(global_config)
+
+    for wc in window_configs:
         merge_window(wc)
 
 

@@ -873,22 +873,15 @@ else {
     Write-Host "Merge skipped."
 }
 
-# Late-record drops (completezza sotto out-of-orderness), due strade:
-#  - Q1/Q2 table: 'numLateRecordsDropped', registrata dal WindowOperator della
-#    Table/SQL API. Letta live via REST (report_late_drops.py) prima di
-#    cancellare il job.
-#  - Q3 (finestre DataStream per il DDSketch): quel counter NON e' registrato,
-#    quindi lo stesso numero si ricava dall'output mergiato confrontandolo con
-#    il baseline (01_baseline: stesso producer/seed, nessun holdback ->
-#    sum(count) del baseline = N vero per finestra):
-#      late_dropped(w) = sum(count baseline w) - sum(count esperimento w)
-#    (report_completeness_q3.py). Serve il merge di ENTRAMBI i run, quindi si
-#    salta con -NoMerge; girare 01_baseline su q3 prima degli esperimenti wm.
+# Late-record drops (completezza sotto out-of-orderness):
+#  - Q1/Q2 table: 'numLateRecordsDropped' e' registrata dal WindowOperator
+#    della Table/SQL API.
+#  - Q3: le finestre DDSketch sono DataStream, quindi il job registra un
+#    counter equivalente sul side output dei late data (Q3LateDrops[...]).
+# In entrambi i casi si legge live via REST prima di cancellare il job.
 $CollectLateDropsMetric = (
-    $Engine -eq "flink" -and $Implementation -eq "table" `
-    -and ($Query -eq "q1" -or $Query -eq "q2")
+    $Engine -eq "flink" -and $Implementation -eq "table"
 )
-$CollectLateDropsOutput = ($Engine -eq "flink" -and $Query -eq "q3" -and -not $NoMerge)
 
 if ($CollectLateDropsMetric) {
     Write-Host ""
@@ -898,16 +891,6 @@ if ($CollectLateDropsMetric) {
 
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "Late-drop metrics collection failed (exit code $LASTEXITCODE); continuing."
-    }
-}
-elseif ($CollectLateDropsOutput) {
-    Write-Host ""
-    Write-Host "Computing Q3 late-record drops from merged output (vs 01_baseline)..."
-
-    python .\scripts\report_completeness_q3.py @MergeArgs
-
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warning "Q3 late-drop computation failed (exit code $LASTEXITCODE); continuing."
     }
 }
 else {

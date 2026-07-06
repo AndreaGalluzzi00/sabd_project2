@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Report Q3 late-record drops by comparing an experiment's merged output
-against the baseline run (01_baseline: no injected out-of-orderness).
+Legacy/sanity Q3 completeness check by comparing an experiment's merged
+output against the baseline run (01_baseline: no injected out-of-orderness).
 
-Flink's 'numLateRecordsDropped' is registered only by the Table/SQL
-WindowOperator (Q1/Q2 'table'). Q3 computes its windows in the DataStream API
-(DDSketch aggregator), which does not register that counter, so the same
-quantity is recovered from the output.
+The primary Q3 late-drop measure is now the live side-output counter collected
+by scripts/report_late_drops.py. This script remains useful as a secondary
+completeness check: it estimates how many records disappeared from the final
+aggregate output, assuming the baseline and experiment replay the same input.
 
 Method: the wm experiments (0*_wm_uniform_d*, 0*_wm_expo_d*) replay the SAME
 events with the SAME producer seed as the baseline — the holdback only delays
@@ -16,9 +16,9 @@ SHOULD contain, and
 
     late_dropped(w) = sum(count baseline w) - sum(count experiment w)
 
-Comparable with the numLateRecordsDropped values collected for Q1/Q2 in the
-same experiments. The 'global' window closes only at EOS, so it should drop
-~0 even under heavy out-of-orderness (reported as a sanity check).
+This is not a replacement for numLateRecordsDropped: it is an output-level
+sanity check. The 'global' window closes only at EOS, so it should drop ~0
+even under heavy out-of-orderness.
 
 Reads the merged CSVs that scripts/merge_q3.py writes
 (Results/q3_<window>_flink_table_<exp>.csv) and appends one row per window

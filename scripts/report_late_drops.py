@@ -3,14 +3,16 @@
 Report Flink 'numLateRecordsDropped' for the RUNNING job(s).
 
 Walks every vertex of every RUNNING job via the JobManager REST API, sums
-the per-subtask 'numLateRecordsDropped' counters and appends one row per
-job to Results/late_drops.csv (experiment, job, total).
+the per-subtask 'numLateRecordsDropped' counters and appends detailed rows
+plus an operator-total row per job to Results/late_drops.csv.
 
 The counter measures events discarded by the window operators because they
 arrived after the watermark had passed their window end — the number that
 links the injected out-of-orderness to the completeness loss. In the Q1
 SQL job the airline filter runs before the windowing, so only events of
-the four target carriers can be counted.
+the four target carriers can be counted. Q3 computes the DDSketch windows
+with the DataStream API, so this script reads the built-in record counter on
+each late-data side output branch (Map__Q3LateDrops[1d], [7d], [global]).
 
 Run it after the merge (results stable => counters are final) and BEFORE
 cancelling the job: metrics disappear once the job stops.
@@ -24,6 +26,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -34,8 +37,21 @@ from pathlib import Path
 from merge_utils import PROJECT_ROOT
 
 METRIC = "numLateRecordsDropped"
+Q3_LATE_RECORDS_RE = re.compile(r"^Map__Q3LateDrops\[[^\]]+\]\.numRecordsIn$")
 DEFAULT_FLINK_URL = "http://localhost:8081"
 DEFAULT_OUTPUT = PROJECT_ROOT / "Results" / "late_drops.csv"
+OUTPUT_HEADER = [
+    "timestamp_utc",
+    "experiment",
+    "job_name",
+    "job_id",
+    "vertex_name",
+    "metric_id",
+    "operator",
+    "window",
+    "is_total",
+    METRIC,
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -99,11 +115,18 @@ def vertex_late_drops(
     metrics_url = f"{flink_url}/jobs/{job_id}/vertices/{vertex_id}/subtasks/metrics"
 
     available = http_get_json(metrics_url)
-    metric_ids = [
-        m["id"]
-        for m in available
-        if m["id"] == METRIC or m["id"].endswith(f".{METRIC}")
-    ]
+    metric_ids = []
+    for metric in available:
+        metric_id = metric["id"]
+        if Q3_LATE_RECORDS_RE.match(metric_id):
+            metric_ids.append(metric_id)
+            continue
+
+        if "Q3LateDrops[" in metric_id:
+            continue
+
+        if metric_id == METRIC or metric_id.endswith(f".{METRIC}"):
+            metric_ids.append(metric_id)
 
     totals: dict[str, float] = {}
 
@@ -127,33 +150,53 @@ def vertex_late_drops(
     return totals
 
 
-def append_output_row(
-    output_file: Path,
-    experiment: str,
-    job_name: str,
-    job_id: str,
-    late_drops: float,
-) -> None:
+def metric_operator(metric_id: str) -> str:
+    if metric_id == METRIC:
+        return ""
+
+    for suffix in (f".{METRIC}", ".numRecordsIn"):
+        if metric_id.endswith(suffix):
+            return metric_id[: -len(suffix)]
+
+    return metric_id
+
+
+def metric_window(operator: str) -> str:
+    match = re.search(r"\[([^\]]+)\]", operator)
+    return match.group(1) if match else ""
+
+
+def rotate_if_stale_schema(output_file: Path) -> None:
+    if not output_file.exists():
+        return
+
+    with output_file.open("r", encoding="utf-8", newline="") as handle:
+        first_line = handle.readline().strip()
+
+    if first_line == ",".join(OUTPUT_HEADER):
+        return
+
+    stale = output_file.with_suffix(output_file.suffix + ".old")
+    if stale.exists():
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        stale = output_file.with_suffix(output_file.suffix + f".{timestamp}.old")
+
+    output_file.replace(stale)
+    print(f"NOTE: existing {output_file.name} had a stale schema; moved to {stale.name}")
+
+
+def append_output_rows(output_file: Path, rows: list[list[object]]) -> None:
     output_file.parent.mkdir(parents=True, exist_ok=True)
+    rotate_if_stale_schema(output_file)
     write_header = not output_file.exists()
 
     with output_file.open("a", encoding="utf-8", newline="") as out:
         writer = csv.writer(out)
 
         if write_header:
-            writer.writerow(
-                ["timestamp_utc", "experiment", "job_name", "job_id", METRIC]
-            )
+            writer.writerow(OUTPUT_HEADER)
 
-        writer.writerow(
-            [
-                datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                experiment,
-                job_name,
-                job_id,
-                int(late_drops),
-            ]
-        )
+        writer.writerows(rows)
 
 
 def main() -> None:
@@ -184,28 +227,61 @@ def main() -> None:
         job_name = job.get("name", "?")
         job_total = 0.0
         job_metric_found = False
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        output_rows: list[list[object]] = []
 
         print(f"Job {job_id} ({job_name}):")
 
         for vertex in list_vertices(args.flink_url, job_id):
+            vertex_name = vertex.get("name", "?")
             totals = vertex_late_drops(args.flink_url, job_id, vertex["id"])
 
             for metric_id, value in totals.items():
                 metric_found = True
                 job_metric_found = True
                 job_total += value
-                print(f"  {metric_id} = {int(value)}")
+
+                operator = metric_operator(metric_id)
+                window = metric_window(operator)
+                window_note = f"  [window: {window}]" if window else ""
+                print(f"  {metric_id} = {int(value)}{window_note}")
+
+                output_rows.append(
+                    [
+                        timestamp,
+                        experiment,
+                        job_name,
+                        job_id,
+                        vertex_name,
+                        metric_id,
+                        operator,
+                        window,
+                        "false",
+                        int(value),
+                    ]
+                )
 
         if job_metric_found:
-            print(f"  TOTAL {METRIC} = {int(job_total)}  [experiment: {experiment}]")
-
-            append_output_row(
-                output_file=args.output,
-                experiment=experiment,
-                job_name=job_name,
-                job_id=job_id,
-                late_drops=job_total,
+            print(
+                f"  TOTAL {METRIC} across exposed counters = {int(job_total)}  "
+                f"[experiment: {experiment}]"
             )
+
+            output_rows.append(
+                [
+                    timestamp,
+                    experiment,
+                    job_name,
+                    job_id,
+                    "",
+                    "TOTAL",
+                    "",
+                    "all_operators",
+                    "true",
+                    int(job_total),
+                ]
+            )
+            append_output_rows(args.output, output_rows)
         else:
             print(f"  {METRIC}: not exposed by this job")
 
@@ -213,12 +289,9 @@ def main() -> None:
         print(
             f"ERROR: no '{METRIC}' metric exposed by any vertex — cannot "
             "distinguish '0 drops' from 'not measured'.\n"
-            "NOTE: only Flink's Table/SQL WindowOperator exposes "
-            f"{METRIC}. PyFlink DataStream window operators (q1/q2/q3 "
-            "'datastream') do NOT register it, so completeness must be "
-            "measured on the Table implementation (q1/flink/table). For a "
-            "DataStream completeness measure, add .side_output_late_data(tag) "
-            "to the WindowedStream and count the side output instead.",
+            "NOTE: Flink's Table/SQL WindowOperator exposes this counter "
+            "natively. Q3 DataStream windows are measured through the "
+            "Map__Q3LateDrops[window].numRecordsIn side-output counters.",
             file=sys.stderr,
         )
         sys.exit(1)

@@ -1,0 +1,7 @@
+timestamp_utc,experiment,baseline,window,count_baseline,count_kept,late_dropped,late_dropped_pct
+2026-07-05T23:16:48+00:00,01_baseline,01_baseline,1d,1303310,1303310,0,0.0000
+2026-07-05T23:16:48+00:00,01_baseline,01_baseline,7d,1303310,1303310,0,0.0000
+2026-07-05T23:16:48+00:00,01_baseline,01_baseline,global,1303310,1303310,0,0.0000
+2026-07-05T23:22:16+00:00,02_wm_uniform_d0,01_baseline,1d,1303310,1303310,0,0.0000
+2026-07-05T23:22:16+00:00,02_wm_uniform_d0,01_baseline,7d,1303310,1303310,0,0.0000
+2026-07-05T23:22:16+00:00,02_wm_uniform_d0,01_baseline,global,1303310,1303310,0,0.0000
