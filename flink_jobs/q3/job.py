@@ -20,10 +20,12 @@ Il job combina le due API gia' usate per Q1:
     fan-out verso CSV (sempre) + Kafka→InfluxDB e JDBC→TimescaleDB
     (opzionali, per la dashboard Grafana). Un solo job Flink.
 
-Finestre (tutte event-time, allineate all'inizio del dataset 2025-01-01
+Finestre disponibili (event-time, allineate all'inizio del dataset 2025-01-01
 tramite offset del tumbling):
     1 giorno · 7 giorni · dall'inizio del dataset (365 giorni, un solo bucket
     che copre gen–apr 2025 e si chiude col marker EOS, come il global di Q2).
+    Per la prova corrente di completezza, il codice abilita solo 1d e lascia
+    7d/global commentate nella lista windows.
 
 Nota watermark: timestamp e watermark sono assegnati PRIMA del filtro sulle
 compagnie, quindi il marker EOS (event_time nel 2200) avanza il watermark e
@@ -366,7 +368,7 @@ def main() -> None:
         key_type=Types.STRING(),
     )
 
-    # ── Tre finestre tumbling event-time ──────────────────────────────────────
+    # ── Finestre tumbling event-time ──────────────────────────────────────────
     # I tumbling di Flink sono allineati a epoch (1970-01-01, un giovedì): senza
     # offset le finestre da 7 e 365 giorni partirebbero rispettivamente il
     # 2024-12-26 e il 2024-12-18. L'offset le allinea all'inizio del dataset:
@@ -374,13 +376,15 @@ def main() -> None:
     # → settimane 01/01, 08/01, … e finestra globale [2025-01-01, 2026-01-01),
     # che copre l'intero dataset (gen–apr 2025) in un solo bucket e si chiude
     # col watermark spinto dal marker EOS (stessa semantica del global di Q2).
+    # Prova di completezza Q3: per ora eseguiamo solo la finestra 1d.
+    # I rami 7d/global restano sotto commento nella lista windows.
     windows = [
         ("1d",     TumblingEventTimeWindows.of(Time.days(1)),
          cfg.results_path_1d,     cfg.influx_topic_1d,     cfg.timescale_table_1d),
-        ("7d",     TumblingEventTimeWindows.of(Time.days(7),   Time.days(6)),
-         cfg.results_path_7d,     cfg.influx_topic_7d,     cfg.timescale_table_7d),
-        ("global", TumblingEventTimeWindows.of(Time.days(365), Time.days(14)),
-         cfg.results_path_global, cfg.influx_topic_global, cfg.timescale_table_global),
+        # ("7d",     TumblingEventTimeWindows.of(Time.days(7),   Time.days(6)),
+        #  cfg.results_path_7d,     cfg.influx_topic_7d,     cfg.timescale_table_7d),
+        # ("global", TumblingEventTimeWindows.of(Time.days(365), Time.days(14)),
+        #  cfg.results_path_global, cfg.influx_topic_global, cfg.timescale_table_global),
     ]
 
     stmt_set = t_env.create_statement_set()
@@ -402,7 +406,7 @@ def main() -> None:
         logger.info("Q3 | Dashboard sinks disabled (CSV-only run).")
 
     # ── Submit: un solo job, sorgente letta una volta, fan-out sui sink ───────
-    logger.info("Q3 | Submitting job (3 window pipelines) …")
+    logger.info("Q3 | Submitting job (%d enabled window pipeline(s)) …", len(windows))
     stmt_set.execute()
     logger.info("Q3 | Job submitted successfully.")
     sys.exit(0)

@@ -537,9 +537,9 @@ function Get-RunSpec {
             "q2_results_host_path_global"
         )
         q3 = @(
-            "q3_results_host_path_1d",
-            "q3_results_host_path_7d",
-            "q3_results_host_path_global"
+            "q3_results_host_path_1d"
+            # "q3_results_host_path_7d"
+            # "q3_results_host_path_global"
         )
     }
 

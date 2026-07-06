@@ -51,8 +51,8 @@ COUNT_COLUMN = "count"
 # Window label -> config key of its merged output path (same keys as merge_q3).
 WINDOW_PATH_KEYS = {
     "1d": "q3_merged_output_host_path_1d",
-    "7d": "q3_merged_output_host_path_7d",
-    "global": "q3_merged_output_host_path_global",
+    # "7d": "q3_merged_output_host_path_7d",
+    # "global": "q3_merged_output_host_path_global",
 }
 
 DEFAULT_BASELINE = "01_baseline"
