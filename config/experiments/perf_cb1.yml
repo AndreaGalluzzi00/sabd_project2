@@ -1,0 +1,25 @@
+extends: "perf_par1.yml"
+
+# Compute-bound: come perf_par1 (baseline, parallelism = 1) ma il producer non
+# e' piu' paced a ~12k ev/s. Con acceleration_factor enorme gli sleep del replay
+# vanno a zero (vedi producer.replay_events) e il topic viene floodato al massimo
+# fisico: cosi' il collo di bottiglia si sposta dall'ingestione al COMPUTE di
+# Flink, e il throughput misurato riflette la capacita' di elaborazione a p=1.
+# Contrappunto di perf_par1 (ingestion-bound) per isolare l'impatto del parallelismo.
+
+experiment:
+  name: "perf_cb1"
+
+producer:
+  acceleration_factor: 10000000
+  # Pre-load once, then each parallelism run consumes the SAME backlog: the
+  # producer skips when the topic already holds messages.
+  skip_if_topic_has_messages: true
+
+# CSV-only: senza run_experiment i sink dashboard non sono predisposti, quindi
+# vanno disattivati altrimenti il job va in crash-loop.
+dashboard:
+  influx:
+    enabled: false
+  timescale:
+    enabled: false

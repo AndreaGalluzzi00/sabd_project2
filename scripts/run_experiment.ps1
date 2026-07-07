@@ -1110,8 +1110,8 @@ if ($null -ne $PerfProcess) {
     Write-Host ""
     Write-Host "Waiting for perf monitor to finish (job drain + idle)..."
 
-    if (-not $PerfProcess.WaitForExit(180000)) {
-        Write-Warning "Perf monitor still running after 180s; killing it."
+    if (-not $PerfProcess.WaitForExit(600000)) {
+        Write-Warning "Perf monitor still running after 600s; killing it."
         try { $PerfProcess.Kill() } catch { }
     }
 
