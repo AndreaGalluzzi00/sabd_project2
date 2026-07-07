@@ -38,7 +38,7 @@ class Q2Config(FlinkRuntimeConfig):
     results_path_cumulative: str
     window: str
     watermark_delay_seconds: int
-    cumulative_emit_event_interval_ms: int
+    cumulative_snapshot_event_step_ms: int
 
     influx_enabled: bool
     influx_topic_1h: str
@@ -90,8 +90,8 @@ def load_q2_config() -> Q2Config:
         results_path_cumulative=cfg["paths"]["q2_results_path_cumulative"],
         window=selected_q2_window(q2_cfg.get("window", "all")),
         watermark_delay_seconds=int(q2_cfg["watermark_delay_seconds"]),
-        cumulative_emit_event_interval_ms=int(
-            q2_cfg.get("cumulative_emit_event_interval_ms", 2_700_000)
+        cumulative_snapshot_event_step_ms=int(
+            q2_cfg.get("cumulative_snapshot_event_step_ms", 2_700_000)
         ),
         influx_enabled=bool(influx.get("enabled", False)),
         influx_topic_1h=str(q2_influx.get("topic_1h", "q2_results_1h")),
@@ -195,7 +195,7 @@ def build_cumulative_pipeline(
         .map(_project_q2_event, output_type=Types.PICKLED_BYTE_ARRAY())
         .key_by(lambda _: "q2-cumulative", key_type=Types.STRING())
         .process(
-            Q2CumulativeTopN(cfg.cumulative_emit_event_interval_ms),
+            Q2CumulativeTopN(cfg.cumulative_snapshot_event_step_ms),
             output_type=Q2_CUMULATIVE_OUTPUT_TYPE,
         )
         .name("Q2CumulativeTopN")

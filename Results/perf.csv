@@ -17,3 +17,7 @@ timestamp_utc,engine,implementation,query,experiment,parallelism,total_records,a
 2026-07-07T16:19:51+00:00,flink,table,q2,baseline,4,40000,9.0,4467.8,0.0,,97.0,0.7,0.0,latency: enable metrics.latency.interval
 2026-07-07T16:28:13+00:00,flink,table,q2,baseline,4,49390,8.8,5614.4,173.2,,99.0,44.3,0.0,latency: enable metrics.latency.interval
 2026-07-07T16:53:11+00:00,flink,table,q2,baseline,4,27004,9.0,3005.8,428.3,,99.0,24.5,0.0,latency: enable metrics.latency.interval
+2026-07-07T17:34:44+00:00,flink,table,q3,baseline,4,23459,8.4,2790.7,350.8,,,36.0,0.0,latency: enable metrics.latency.interval
+2026-07-07T17:49:55+00:00,flink,table,q3,baseline,4,26657,8.2,3256.0,377.6,,,43.1,0.0,latency: enable metrics.latency.interval
+2026-07-07T17:57:05+00:00,flink,table,q3,baseline,4,33997,8.5,4007.2,319.1,,,44.2,0.0,latency: enable metrics.latency.interval
+2026-07-07T18:16:29+00:00,flink,table,q3,baseline,4,13645,8.6,1590.7,0.0,,,38.0,0.0,latency: enable metrics.latency.interval

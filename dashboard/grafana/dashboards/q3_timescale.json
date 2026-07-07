@@ -61,7 +61,7 @@
       }
     ]
   },
-  "time": { "from": "2025-01-01T00:00:00.000Z", "to": "2025-05-01T00:00:00.000Z" },
+  "time": { "from": "2024-12-01T00:00:00.000Z", "to": "2026-01-01T00:00:00.000Z" },
   "timepicker": {},
   "timezone": "utc",
   "title": "SABD - Q3 Distribuzione ritardi per compagnia e fascia (TimescaleDB)",
@@ -171,7 +171,7 @@
     {
       "id": 5,
       "type": "table",
-      "title": "Distribuzione dall'inizio del dataset - $airline per fascia oraria (cumulative live)",
+      "title": "Distribuzione dall'inizio del dataset - $airline per fascia oraria (global finale)",
       "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 18 },
       "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
@@ -183,7 +183,26 @@
           "format": "table",
           "editorMode": "code",
           "rawQuery": true,
-          "rawSql": "SELECT hour, num_flights, delay_min, p25, p50, p75, p90, delay_max FROM q3_results_cumulative WHERE airline = '${airline}' ORDER BY hour"
+          "rawSql": "SELECT hour, num_flights, delay_min, p25, p50, p75, p90, delay_max FROM q3_results_global WHERE airline = '${airline}' AND ts = (SELECT max(ts) FROM q3_results_global) ORDER BY hour"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Distribuzione dall'inizio del dataset - $airline per fascia oraria (cumulative live)",
+      "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 28 },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
+          "format": "table",
+          "editorMode": "code",
+          "rawQuery": true,
+          "rawSql": "SELECT hour, num_flights, delay_min, p25, p50, p75, p90, delay_max FROM q3_results_cumulative WHERE airline = '${airline}' AND ts = (SELECT max(ts) FROM q3_results_cumulative) ORDER BY hour"
         }
       ]
     }

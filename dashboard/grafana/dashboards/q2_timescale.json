@@ -8,7 +8,7 @@
   "schemaVersion": 39,
   "tags": ["sabd", "q2", "timescaledb"],
   "templating": { "list": [] },
-  "time": { "from": "2025-01-01T00:00:00.000Z", "to": "2025-05-01T00:00:00.000Z" },
+  "time": { "from": "2024-12-01T00:00:00.000Z", "to": "2026-01-01T00:00:00.000Z" },
   "timepicker": {},
   "timezone": "utc",
   "title": "SABD - Q2 Aeroporti con ritardi in partenza significativi (TimescaleDB)",
@@ -81,9 +81,28 @@
     {
       "id": 4,
       "type": "table",
-      "title": "Top-10 aeroporti dall'inizio del dataset - cumulative live",
+      "title": "Top-10 aeroporti dall'inizio del dataset - global finale",
       "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 20 },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
+          "format": "table",
+          "editorMode": "code",
+          "rawQuery": true,
+          "rawSql": "SELECT airport_rank AS \"rank\", origin_airport_id, num_flights, severe_delays, round(dep_delay_mean::numeric, 1) AS dep_delay_mean, round(dep_delay_max::numeric, 1) AS dep_delay_max, delayed_flights FROM q2_results_global WHERE ts = (SELECT max(ts) FROM q2_results_global) ORDER BY airport_rank"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Top-10 aeroporti dall'inizio del dataset - cumulative live",
+      "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 30 },
       "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
       "options": { "showHeader": true },
       "targets": [

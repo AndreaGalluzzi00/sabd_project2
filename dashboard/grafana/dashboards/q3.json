@@ -61,7 +61,7 @@
       }
     ]
   },
-  "time": { "from": "2025-01-01T00:00:00.000Z", "to": "2025-05-01T00:00:00.000Z" },
+  "time": { "from": "2024-12-01T00:00:00.000Z", "to": "2026-01-01T00:00:00.000Z" },
   "timepicker": {},
   "timezone": "utc",
   "title": "SABD - Q3 Distribuzione ritardi per compagnia e fascia (real-time)",
@@ -159,9 +159,36 @@
     {
       "id": 5,
       "type": "table",
-      "title": "Distribuzione dall'inizio del dataset - $airline per fascia oraria (cumulative live)",
+      "title": "Distribuzione dall'inizio del dataset - $airline per fascia oraria (global finale)",
       "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 18 },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
+      "options": { "showHeader": true },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "hour": 0, "num_flights": 1, "delay_min": 2,
+              "p25": 3, "p50": 4, "p75": 5, "p90": 6, "delay_max": 7
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
+          "query": "from(bucket: \"flights\") |> range(start: 2024-01-01T00:00:00Z, stop: 2201-01-01T00:00:00Z) |> filter(fn: (r) => r[\"_measurement\"] == \"q3_global\" and r[\"airline\"] == \"${airline}\") |> filter(fn: (r) => r[\"_field\"] == \"num_flights\" or r[\"_field\"] == \"delay_min\" or r[\"_field\"] == \"p25\" or r[\"_field\"] == \"p50\" or r[\"_field\"] == \"p75\" or r[\"_field\"] == \"p90\" or r[\"_field\"] == \"delay_max\") |> group(columns: [\"hour\", \"_field\"]) |> last() |> keep(columns: [\"hour\", \"_field\", \"_value\"]) |> group() |> pivot(rowKey: [\"hour\"], columnKey: [\"_field\"], valueColumn: \"_value\") |> map(fn: (r) => ({ r with hour: int(v: r.hour) })) |> sort(columns: [\"hour\"])"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Distribuzione dall'inizio del dataset - $airline per fascia oraria (cumulative live)",
+      "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 28 },
       "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
       "options": { "showHeader": true },
       "transformations": [

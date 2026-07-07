@@ -114,10 +114,10 @@ def _format_top_delayed(flights: list[tuple[float, str, int]]) -> str:
     ) + "]"
 
 
-def cumulative_batch_writer(output_path: str, emit_event_interval_ms: int):
+def cumulative_batch_writer(output_path: str, snapshot_event_step_ms: int):
     airport_states: dict[int, dict] = {}
     max_event_time_ms: int | None = None
-    next_emit_event_time_ms = DATASET_START_MS + max(1, int(emit_event_interval_ms))
+    next_emit_event_time_ms = DATASET_START_MS + max(1, int(snapshot_event_step_ms))
     last_snapshot_event_time_ms: int | None = None
     dirty_since_snapshot = False
 
@@ -200,7 +200,7 @@ def cumulative_batch_writer(output_path: str, emit_event_interval_ms: int):
                         dirty_since_snapshot = False
                     next_emit_event_time_ms = _next_emit_after(
                         max_event_time_ms,
-                        emit_event_interval_ms,
+                        snapshot_event_step_ms,
                     )
                 continue
 
@@ -234,7 +234,7 @@ def cumulative_batch_writer(output_path: str, emit_event_interval_ms: int):
                     dirty_since_snapshot = False
                 next_emit_event_time_ms = _next_emit_after(
                     max_event_time_ms,
-                    emit_event_interval_ms,
+                    snapshot_event_step_ms,
                 )
 
         if saw_eos and (
@@ -417,11 +417,11 @@ def main() -> None:
 
     if cumulative_q2_enabled(selected_window):
         output_path = paths["spark_q2_results_path_cumulative"]
-        emit_event_interval_ms = int(q2_cfg.get("cumulative_emit_event_interval_ms", 2_700_000))
+        snapshot_event_step_ms = int(q2_cfg.get("cumulative_snapshot_event_step_ms", 2_700_000))
         queries.append(
             write_foreach_batch_stream(
                 flights,
-                writer=cumulative_batch_writer(output_path, emit_event_interval_ms),
+                writer=cumulative_batch_writer(output_path, snapshot_event_step_ms),
                 checkpoint=checkpoint_path(runtime_cfg, "q2", "cumulative"),
                 query_name="spark-q2-cumulative",
                 runtime_cfg=runtime_cfg,

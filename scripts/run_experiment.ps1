@@ -63,7 +63,7 @@ OPZIONI UTILI
     -NoCleanResults        Non cancella i part-file precedenti.
     -NoCleanDashboard      Non svuota InfluxDB/TimescaleDB prima della run.
     -NoMerge               Non crea il CSV finale.
-    -MergeTimeoutSeconds   Timeout per attendere part-file stabili. Default: 180.
+    -MergeTimeoutSeconds   Timeout per attendere part-file stabili. Default: 900.
     -SparkTimeoutSeconds   Timeout per attendere la fine di Spark. Default: 1200.
     -KeepFlinkJob          Non cancella il job Flink a fine run.
 
@@ -107,7 +107,7 @@ param(
     [switch]$KeepFlinkJob,
     [switch]$NoPerf,
 
-    [int]$MergeTimeoutSeconds = 180,
+    [int]$MergeTimeoutSeconds = 900,
 
     [int]$SparkTimeoutSeconds = 1200
 )
