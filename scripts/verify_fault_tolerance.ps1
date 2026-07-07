@@ -56,7 +56,7 @@ param(
     [ValidateSet("q1")]
     [string]$Query = "q1",
 
-    [int]$AccelerationFactor = 2000,
+    [int]$AccelerationFactor = 57600,
     [int]$CheckpointsBeforeFault = 1,
 
     [switch]$NoPreprocess,
@@ -171,6 +171,12 @@ flink:
 
 producer:
   acceleration_factor: $Acceleration
+
+dashboard:
+  influx:
+    enabled: false
+  timescale:
+    enabled: false
 "@
     Set-Content -Path $hostPath -Value $content -Encoding UTF8
 
