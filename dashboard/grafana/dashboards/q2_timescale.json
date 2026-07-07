@@ -131,7 +131,7 @@
     {
       "id": 6,
       "type": "table",
-      "title": "Top-10 aeroporti dall'inizio del dataset - global finale",
+      "title": "Top-10 aeroporti dall'inizio del dataset - global (finale)",
       "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 38 },
       "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
@@ -148,11 +148,11 @@
       ]
     },
     {
-      "id": 5,
+      "id": 7,
       "type": "table",
       "title": "Top-10 aeroporti dall'inizio del dataset - cumulative live",
       "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 30 },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 48 },
       "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
       "options": { "showHeader": true },
       "targets": [

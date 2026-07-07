@@ -85,7 +85,6 @@
       "id": 4,
       "type": "table",
       "title": "Top-10 aeroporti per ritardi gravi - finestra 1h (ultima finestra)",
-      "title": "Top-10 aeroporti dall'inizio del dataset - global finale",
       "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 18 },
       "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
@@ -143,7 +142,7 @@
     {
       "id": 6,
       "type": "table",
-      "title": "Top-10 aeroporti dall'inizio del dataset - cumulative live",
+      "title": "Top-10 aeroporti dall'inizio del dataset - global (finale)",
       "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 38 },
       "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
@@ -169,11 +168,11 @@
       ]
     },
     {
-      "id": 5,
+      "id": 7,
       "type": "table",
       "title": "Top-10 aeroporti dall'inizio del dataset - cumulative live",
       "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 28 },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 48 },
       "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
       "options": { "showHeader": true },
       "transformations": [

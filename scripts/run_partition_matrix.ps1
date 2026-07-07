@@ -19,6 +19,12 @@ USO (dalla root del progetto):
   powershell -ExecutionPolicy Bypass -File .\scripts\run_partition_matrix.ps1 -Query q2 -Combos "1:1","2:2","4:4"
   powershell -ExecutionPolicy Bypass -File .\scripts\run_partition_matrix.ps1 -Query q1 -ReplicationFactor 2
 
+OPZIONI setup-specifiche (non necessarie ovunque):
+  -PythonHome "<dir>"    antepone al PATH un Python specifico (se 'python' non
+                         e' quello giusto, es. stub del Microsoft Store).
+  -FixCheckpointPerms    chmod delle cartelle checkpoint; serve SOLO con
+                         Docker Desktop su Windows (bind-mount root-only).
+
 VALIDITA': una riga e' valida se total_records ~= 2.229.45x (x = n partizioni,
 per i marker EOS). Valori piccoli (1, 50000, 157091...) = run fallita (OOM o
 troncamento) -> per q2/q3 servono i fix (direct memory del TM + cap 180s).
@@ -32,14 +38,17 @@ param(
 
     [int]$ReplicationFactor = 1,
 
-    [string]$PythonHome = "C:\Users\uazap\AppData\Local\Programs\Python\Python314",
+    # Opzionale (setup con 'python' assente/errato nel PATH, es. stub del
+    # Microsoft Store): cartella del Python vero da anteporre al PATH.
+    # Vuoto = usa il 'python' gia' presente nel PATH.
+    [string]$PythonHome = "",
 
-    # Salta il chmod dei checkpoint (utile se non hai ricreato i container).
-    [switch]$NoChmod
+    # Opzionale, SOLO Docker Desktop su Windows: rende scrivibili le cartelle
+    # dei checkpoint (il bind-mount le presenta root-only). Non serve altrove.
+    [switch]$FixCheckpointPerms
 )
 
 $ErrorActionPreference = "Stop"
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
 # Vai alla root del progetto (questo script sta in scripts/).
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
@@ -49,12 +58,14 @@ if (-not (Test-Path ".\docker-compose.yml")) {
     throw "docker-compose.yml non trovato in $ProjectRoot"
 }
 
-# 'python' di sistema e' lo stub del Microsoft Store: metti quello vero davanti.
-if (Test-Path $PythonHome) {
-    $env:PATH = "$PythonHome;$PythonHome\Scripts;$env:PATH"
-}
-else {
-    Write-Warning "PythonHome non trovato: $PythonHome (report_perf potrebbe fallire)."
+# Opzionale: anteponi un Python specifico al PATH (vedi -PythonHome).
+if ($PythonHome) {
+    if (Test-Path $PythonHome) {
+        $env:PATH = "$PythonHome;$PythonHome\Scripts;$env:PATH"
+    }
+    else {
+        Write-Warning "PythonHome non trovato: $PythonHome"
+    }
 }
 
 function Reset-FlightsTopic {
@@ -67,8 +78,8 @@ function Reset-FlightsTopic {
         --create --topic flights --partitions $Partitions --replication-factor $ReplicationFactor
 }
 
-if (-not $NoChmod) {
-    Write-Host "Fix permessi checkpoint..."
+if ($FixCheckpointPerms) {
+    Write-Host "Fix permessi checkpoint (Docker Desktop su Windows)..."
     docker exec -u root flink-taskmanager sh -c "chmod -R 777 /opt/flink/checkpoints /opt/flink/savepoints"
     docker exec -u root flink-jobmanager  sh -c "chmod -R 777 /opt/flink/checkpoints /opt/flink/savepoints"
 }
