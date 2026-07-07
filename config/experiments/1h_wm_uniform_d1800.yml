@@ -7,7 +7,7 @@ extends: "../base.yml"
 #              = 0.3 * 1800^2 / (2 * 3600 * 3600) = 3.75%
 
 experiment:
-  name: "04_wm_uniform_d1800"
+  name: "1h_wm_uniform_d1800"
   output_dir_host: "Results/experiments"
 
 producer:

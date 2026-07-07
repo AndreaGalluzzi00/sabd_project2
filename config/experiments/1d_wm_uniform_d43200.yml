@@ -13,7 +13,7 @@ extends: "../base.yml"
 # Con d = 0 il budget effettivo e' ~G (1 ms * accel ~ 58 s) -> atteso ~14.7%.
 
 experiment:
-  name: "02_wm_uniform_d0"
+  name: "1d_wm_uniform_d43200"
   output_dir_host: "Results/experiments"
 
 producer:

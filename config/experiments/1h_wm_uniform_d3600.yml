@@ -9,7 +9,7 @@ extends: "../base.yml"
 # si azzera, quella esponenziale no (~1.8%).
 
 experiment:
-  name: "05_wm_uniform_d3600"
+  name: "1h_wm_uniform_d3600"
   output_dir_host: "Results/experiments"
 
 producer:
