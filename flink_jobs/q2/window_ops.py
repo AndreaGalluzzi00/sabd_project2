@@ -43,11 +43,13 @@ def format_top_delayed(flights) -> str:
     """
     if not flights:
         return "[]"
-    top = sorted(
-        flights,
-        key=lambda r: r[0] if r[0] is not None else float("-inf"),
-        reverse=True,
-    )[:TOP_N]
+    def sort_key(row):
+        delay = row[0] if row[0] is not None else float("-inf")
+        carrier = row[1] or ""
+        dest = 0 if row[2] is None else row[2]
+        return (-delay, carrier, dest)
+
+    top = sorted(flights, key=sort_key)[:TOP_N]
     return "[" + ",".join(
         f"({r[1]},{0 if r[2] is None else r[2]},{r[0]:.2f})" for r in top
     ) + "]"
@@ -115,7 +117,7 @@ def make_topn_sql(stats_view: str, top_n_airports: int = 10) -> str:
             SELECT *,
                 ROW_NUMBER() OVER (
                     PARTITION BY window_start, window_end
-                    ORDER BY severe_delays DESC, dep_delay_mean DESC
+                    ORDER BY severe_delays DESC, dep_delay_mean DESC, origin_airport_id ASC
                 ) AS rn
             FROM {stats_view}
         )

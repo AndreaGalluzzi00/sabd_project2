@@ -43,27 +43,44 @@ def main() -> None:
         .withWatermark("rowtime", f"{watermark_delay} seconds")
     )
 
-    # Keep the EOS marker through the stateful operator so its far-future
-    # event time advances the watermark and closes the last real 1h window.
-    # It is filtered out after aggregation, so it never appears in the CSV.
-    q1_input = flights.filter(
-        F.col("airline").isin(AIRLINES) | (F.col("airline") == "__EOS__")
+    is_eos = F.col("airline") == "__EOS__"
+    is_target_airline = F.col("airline").isin(AIRLINES)
+
+    # Keep EOS rows inside the stateful aggregation. A post-aggregate filter on
+    # the grouping key can be pushed below the aggregate by Spark's optimizer,
+    # which would drop "__EOS__" before it advances the watermark. Instead, map
+    # every EOS marker to the real Q1 airline keys and mark it as non-real: it
+    # advances event time but contributes zero to all metrics.
+    q1_input = (
+        flights.filter(is_target_airline | is_eos)
+        .withColumn("_source_airline", F.col("airline"))
+        .withColumn(
+            "_q1_airlines",
+            F.when(
+                F.col("_source_airline") == "__EOS__",
+                F.array(*[F.lit(airline) for airline in AIRLINES]),
+            ).otherwise(F.array(F.col("_source_airline"))),
+        )
+        .withColumn("airline", F.explode(F.col("_q1_airlines")))
+        .withColumn("_is_real", F.col("_source_airline") != "__EOS__")
     )
 
     is_not_cancelled = not_cancelled()
     is_not_diverted = not_diverted()
+    is_real = F.col("_is_real")
 
     aggregated = (
         q1_input.groupBy(F.window("rowtime", "1 hour").alias("w"), F.col("airline"))
         .agg(
-            F.count(F.lit(1)).alias("num_flights"),
-            F.sum(F.when(is_not_cancelled & is_not_diverted, 1).otherwise(0)).cast("long").alias("completed"),
-            F.sum(F.when(~is_not_cancelled, 1).otherwise(0)).cast("long").alias("cancelled"),
-            F.sum(F.when(~is_not_diverted, 1).otherwise(0)).cast("long").alias("diverted"),
-            F.avg(F.when(is_not_cancelled, F.col("dep_delay"))).alias("dep_delay_mean"),
-            F.sum(F.when(is_not_cancelled, 1).otherwise(0)).cast("long").alias("_non_cancelled"),
-            F.sum(F.when(is_not_cancelled & (F.col("dep_delay") > 15.0), 1).otherwise(0)).cast("long").alias("_late_departures"),
+            F.sum(F.when(is_real, 1).otherwise(0)).cast("long").alias("num_flights"),
+            F.sum(F.when(is_real & is_not_cancelled & is_not_diverted, 1).otherwise(0)).cast("long").alias("completed"),
+            F.sum(F.when(is_real & ~is_not_cancelled, 1).otherwise(0)).cast("long").alias("cancelled"),
+            F.sum(F.when(is_real & ~is_not_diverted, 1).otherwise(0)).cast("long").alias("diverted"),
+            F.avg(F.when(is_real & is_not_cancelled, F.col("dep_delay"))).alias("dep_delay_mean"),
+            F.sum(F.when(is_real & is_not_cancelled, 1).otherwise(0)).cast("long").alias("_non_cancelled"),
+            F.sum(F.when(is_real & is_not_cancelled & (F.col("dep_delay") > 15.0), 1).otherwise(0)).cast("long").alias("_late_departures"),
         )
+        .filter(F.col("num_flights") > 0)
         .withColumn(
             "cancellation_rate",
             F.col("cancelled").cast("double") * F.lit(100.0) / F.col("num_flights"),
@@ -88,8 +105,6 @@ def main() -> None:
         "dep_delay_mean",
         "cancellation_rate",
         "late_departure_rate",
-    ).filter(
-        F.col("airline").isin(AIRLINES)
     )
 
     query = write_csv_stream(
