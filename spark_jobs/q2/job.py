@@ -71,7 +71,7 @@ def build_stats(
         F.struct(
             (-F.col("dep_delay")).alias("sort_delay"),
             F.col("airline").alias("airline"),
-            F.col("dest_airport_id").alias("dest_airport_id"),
+            F.coalesce(F.col("dest_airport_id"), F.lit(0)).alias("dest_airport_id"),
             F.col("dep_delay").alias("dep_delay"),
         ),
     )
@@ -105,7 +105,7 @@ def build_stats(
                         ')'
                       )
                     ),
-                    ', '
+                    ','
                   ),
                   ']'
                 )
@@ -132,6 +132,7 @@ def ranked_batch_writer(output_path: str):
 
         rank_window = Window.partitionBy("ts").orderBy(
             F.desc("severe_delays"),
+            F.desc("dep_delay_mean"),
             F.asc("origin_airport_id"),
         )
 

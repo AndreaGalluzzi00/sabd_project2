@@ -61,6 +61,7 @@ def create_spark_session(
         .config("spark.sql.session.timeZone", "UTC")
         .config("spark.sql.shuffle.partitions", runtime_cfg.shuffle_partitions)
         .config("spark.sql.streaming.statefulOperator.checkCorrectness.enabled", "false")
+        .config("spark.sql.streaming.noDataMicroBatches.enabled", "true")
         .getOrCreate()
     )
 
@@ -195,6 +196,23 @@ def _append_perf_row(output_path: str, row: list[Any], logger: logging.Logger) -
         logger.warning("Could not write Spark perf row: %s", exc)
 
 
+def _recent_progress(query) -> list[dict[str, Any]]:
+    progress = list(query.recentProgress or [])
+    if progress:
+        return progress
+
+    last = query.lastProgress
+    return [last] if last else []
+
+
+def _progress_event_time(progress: dict[str, Any]) -> tuple[str, str]:
+    event_time = progress.get("eventTime") or {}
+    return (
+        str(event_time.get("watermark", "")),
+        str(event_time.get("max", "")),
+    )
+
+
 def await_queries_until_idle(
     queries,
     runtime_cfg: SparkRuntimeConfig,
@@ -220,6 +238,11 @@ def await_queries_until_idle(
     last_activity_at = started_at
     seen_input = False
     seen_batches: set[tuple[str, int]] = set()
+    input_seen_by_query: set[str] = set()
+    drained_after_input_by_query: set[str] = set()
+    last_input_batch_by_query: dict[str, int] = {}
+    query_names: dict[str, str] = {str(query.id): query.name for query in queries}
+    final_drain_started_at: float | None = None
 
     input_by_query: dict[str, int] = {}
     proc_rates: list[float] = []
@@ -230,52 +253,96 @@ def await_queries_until_idle(
         now = time.monotonic()
 
         for query in queries:
-            progress = query.lastProgress
-            if not progress:
-                continue
+            for progress in _recent_progress(query):
+                batch_id = int(progress.get("batchId", -1))
+                key = (str(query.id), batch_id)
+                if key in seen_batches:
+                    continue
 
-            batch_id = int(progress.get("batchId", -1))
-            key = (str(query.id), batch_id)
-            if key in seen_batches:
-                continue
-
-            seen_batches.add(key)
-            input_rows = int(progress.get("numInputRows", 0))
-
-            if input_rows > 0:
-                seen_input = True
-                last_activity_at = now
-                if first_activity_at is None:
-                    first_activity_at = now
-
+                seen_batches.add(key)
+                input_rows = int(progress.get("numInputRows", 0))
+                watermark, max_event_time = _progress_event_time(progress)
                 qid = str(query.id)
-                input_by_query[qid] = input_by_query.get(qid, 0) + input_rows
 
-                rate = float(progress.get("processedRowsPerSecond", 0.0) or 0.0)
-                if rate > 0.0:
-                    proc_rates.append(rate)
+                if input_rows > 0:
+                    seen_input = True
+                    last_activity_at = now
+                    final_drain_started_at = None
+                    if first_activity_at is None:
+                        first_activity_at = now
 
-                duration = progress.get("durationMs") or {}
-                trigger_ms = float(duration.get("triggerExecution", 0.0) or 0.0)
-                if trigger_ms > 0.0:
-                    batch_latencies_ms.append(trigger_ms)
+                    input_seen_by_query.add(qid)
+                    drained_after_input_by_query.discard(qid)
+                    last_input_batch_by_query[qid] = batch_id
+                    input_by_query[qid] = input_by_query.get(qid, 0) + input_rows
 
-                logger.info(
-                    "%s | batch=%s input_rows=%s",
-                    query.name,
-                    batch_id,
-                    input_rows,
-                )
+                    rate = float(progress.get("processedRowsPerSecond", 0.0) or 0.0)
+                    if rate > 0.0:
+                        proc_rates.append(rate)
+
+                    duration = progress.get("durationMs") or {}
+                    trigger_ms = float(duration.get("triggerExecution", 0.0) or 0.0)
+                    if trigger_ms > 0.0:
+                        batch_latencies_ms.append(trigger_ms)
+
+                    logger.info(
+                        "%s | batch=%s input_rows=%s watermark=%s max_event_time=%s",
+                        query.name,
+                        batch_id,
+                        input_rows,
+                        watermark,
+                        max_event_time,
+                    )
+                    continue
+
+                if (
+                    qid in input_seen_by_query
+                    and batch_id > last_input_batch_by_query.get(qid, -1)
+                ):
+                    drained_after_input_by_query.add(qid)
+                    logger.info(
+                        "%s | final-drain batch=%s input_rows=0 watermark=%s",
+                        query.name,
+                        batch_id,
+                        watermark,
+                    )
 
         if seen_input and now - last_activity_at >= runtime_cfg.idle_timeout_seconds:
-            logger.info(
-                "No new Kafka input for %d s; stopping Spark query/queries.",
-                runtime_cfg.idle_timeout_seconds,
+            pending_drain = sorted(
+                query_names.get(qid, qid)
+                for qid in (input_seen_by_query - drained_after_input_by_query)
             )
-            for query in queries:
-                if query.isActive:
-                    query.stop()
-            break
+
+            if not pending_drain:
+                logger.info(
+                    "No new Kafka input for %d s and final drain batch observed; "
+                    "stopping Spark query/queries.",
+                    runtime_cfg.idle_timeout_seconds,
+                )
+                for query in queries:
+                    if query.isActive:
+                        query.stop()
+                break
+
+            if final_drain_started_at is None:
+                final_drain_started_at = now
+                logger.info(
+                    "No new Kafka input for %d s; waiting for Spark final "
+                    "no-input micro-batch to close event-time windows: %s",
+                    runtime_cfg.idle_timeout_seconds,
+                    ", ".join(pending_drain),
+                )
+            elif now - final_drain_started_at >= runtime_cfg.idle_timeout_seconds:
+                logger.warning(
+                    "Final no-input micro-batch was not observed after another "
+                    "%d s for %s; stopping Spark query/queries.",
+                    runtime_cfg.idle_timeout_seconds,
+                    ", ".join(pending_drain),
+                )
+                for query in queries:
+                    if query.isActive:
+                        query.stop()
+                break
 
         if (
             not seen_input
