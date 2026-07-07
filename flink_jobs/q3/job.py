@@ -51,7 +51,7 @@ class Q3Config(FlinkRuntimeConfig):
     results_path_cumulative: str
     window: str
     watermark_delay_seconds: int
-    cumulative_emit_interval_ms: int
+    cumulative_snapshot_event_step_ms: int
     sketch_alpha: float
 
     influx_enabled: bool
@@ -104,7 +104,9 @@ def load_q3_config() -> Q3Config:
         results_path_cumulative=cfg["paths"]["q3_results_path_cumulative"],
         window=selected_q3_window(q3_cfg.get("window", "all")),
         watermark_delay_seconds=int(q3_cfg["watermark_delay_seconds"]),
-        cumulative_emit_interval_ms=int(q3_cfg.get("cumulative_emit_interval_ms", 5000)),
+        cumulative_snapshot_event_step_ms=int(
+            q3_cfg.get("cumulative_snapshot_event_step_ms", 2_700_000)
+        ),
         sketch_alpha=float(q3_cfg.get("sketch_alpha", 0.01)),
         influx_enabled=bool(influx.get("enabled", False)),
         influx_topic_1d=str(q3_influx.get("topic_1d", "q3_results_1d")),
@@ -186,6 +188,17 @@ def cumulative_q3_enabled(cfg: Q3Config) -> bool:
 
 def _project_q3_event(value):
     return (value[0], value[1], hour_band(value[2]), float(value[3]))
+
+
+def _project_q3_cumulative_event(value):
+    return (
+        value[0],
+        value[1],
+        hour_band(value[2] or 0),
+        value[3],
+        value[4],
+        value[5],
+    )
 
 
 
@@ -293,7 +306,7 @@ def build_window_pipeline(
 
 
 def build_cumulative_pipeline(
-    keyed_stream,
+    decoded_ds,
     t_env: StreamTableEnvironment,
     stmt_set,
     cfg: Q3Config,
@@ -301,11 +314,13 @@ def build_cumulative_pipeline(
     label = "cumulative"
 
     result_ds = (
-        keyed_stream
+        decoded_ds
+        .map(_project_q3_cumulative_event, output_type=Types.PICKLED_BYTE_ARRAY())
+        .key_by(lambda _: "q3-cumulative", key_type=Types.STRING())
         .process(
             Q3CumulativeFunction(
                 alpha=cfg.sketch_alpha,
-                emit_interval_ms=cfg.cumulative_emit_interval_ms,
+                snapshot_event_step_ms=cfg.cumulative_snapshot_event_step_ms,
             ),
             output_type=Q3_OUTPUT_TYPE,
         )
@@ -427,7 +442,7 @@ def main() -> None:
 
     if cumulative_q3_enabled(cfg):
         build_cumulative_pipeline(
-            keyed_stream=keyed_stream,
+            decoded_ds=decoded_ds,
             t_env=t_env,
             stmt_set=stmt_set,
             cfg=cfg,

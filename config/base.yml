@@ -114,9 +114,9 @@ q2:
   window: "all"
   # Ritardo massimo ammesso per eventi in ritardo (event time).
   watermark_delay_seconds: 180
-  # Ogni quanto emettere snapshot della cumulativa live, in event-time.
+  # Passo nominale in event-time tra snapshot della cumulativa live.
   # 2700000 ms = 45 minuti del dataset. Lo stato interno resta aggiornato per record.
-  cumulative_emit_event_interval_ms: 2700000
+  cumulative_snapshot_event_step_ms: 2700000
 
 q3:
   # Finestra Q3 da eseguire.
@@ -126,8 +126,9 @@ q3:
   window: "all"
   # Stessa strategia di watermarking di Q1/Q2.
   watermark_delay_seconds: 180
-  # Ogni quanto emettere snapshot della cumulativa live, in processing-time.
-  cumulative_emit_interval_ms: 5000
+  # Passo nominale in event-time tra snapshot della cumulativa live.
+  # 2700000 ms = 45 minuti del dataset. Lo stato interno resta aggiornato per record.
+  cumulative_snapshot_event_step_ms: 2700000
   # DDSketch: errore relativo massimo garantito sui percentili.
   sketch_alpha: 0.01
   # Spark Structured Streaming extra: percentile_approx accuracy.

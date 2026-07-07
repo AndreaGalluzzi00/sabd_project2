@@ -107,8 +107,8 @@ def _next_emit_after(event_time_ms: int, emit_interval_ms: int) -> int:
 
 class Q2CumulativeTopN(KeyedProcessFunction):
 
-    def __init__(self, emit_event_interval_ms: int):
-        self._emit_event_interval_ms = max(1, int(emit_event_interval_ms))
+    def __init__(self, snapshot_event_step_ms: int):
+        self._snapshot_event_step_ms = max(1, int(snapshot_event_step_ms))
         self._airports_state = None
         self._max_event_time_state = None
         self._next_emit_event_time_state = None
@@ -194,14 +194,14 @@ class Q2CumulativeTopN(KeyedProcessFunction):
 
         next_emit = self._next_emit_event_time_state.value()
         if next_emit is None:
-            next_emit = DATASET_START_MS + self._emit_event_interval_ms
+            next_emit = DATASET_START_MS + self._snapshot_event_step_ms
 
         if max_event_time_ms < next_emit:
             return
 
         rows = list(_snapshot_rows(airports, max_event_time_ms))
         self._next_emit_event_time_state.update(
-            _next_emit_after(max_event_time_ms, self._emit_event_interval_ms)
+            _next_emit_after(max_event_time_ms, self._snapshot_event_step_ms)
         )
 
         if not rows:

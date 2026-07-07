@@ -154,6 +154,8 @@ JDBC_SINK_DDL = """
         'url'        = '{url}',
         'table-name' = '{table}',
         'username'   = '{username}',
-        'password'   = '{password}'
+        'password'   = '{password}',
+        'sink.buffer-flush.max-rows' = '5000',
+        'sink.buffer-flush.interval' = '2s'
     )
 """

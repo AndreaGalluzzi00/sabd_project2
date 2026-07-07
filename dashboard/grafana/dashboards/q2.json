@@ -8,7 +8,7 @@
   "schemaVersion": 39,
   "tags": ["sabd", "q2"],
   "templating": { "list": [] },
-  "time": { "from": "2025-01-01T00:00:00.000Z", "to": "2025-05-01T00:00:00.000Z" },
+  "time": { "from": "2024-12-01T00:00:00.000Z", "to": "2026-01-01T00:00:00.000Z" },
   "timepicker": {},
   "timezone": "utc",
   "title": "SABD - Q2 Aeroporti con ritardi in partenza significativi (real-time)",
@@ -85,6 +85,7 @@
       "id": 4,
       "type": "table",
       "title": "Top-10 aeroporti per ritardi gravi - finestra 1h (ultima finestra)",
+      "title": "Top-10 aeroporti dall'inizio del dataset - global finale",
       "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 18 },
       "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
@@ -145,6 +146,34 @@
       "title": "Top-10 aeroporti dall'inizio del dataset - cumulative live",
       "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 38 },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
+      "options": { "showHeader": true },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "airport_rank": 0, "origin_airport_id": 1, "num_flights": 2,
+              "severe_delays": 3, "dep_delay_mean": 4, "dep_delay_max": 5,
+              "delayed_flights": 6
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
+          "query": "from(bucket: \"flights\") |> range(start: 2024-01-01T00:00:00Z, stop: 2201-01-01T00:00:00Z) |> filter(fn: (r) => r[\"_measurement\"] == \"q2_global\") |> filter(fn: (r) => r[\"_field\"] == \"num_flights\" or r[\"_field\"] == \"severe_delays\" or r[\"_field\"] == \"dep_delay_mean\" or r[\"_field\"] == \"dep_delay_max\" or r[\"_field\"] == \"delayed_flights\") |> group(columns: [\"airport_rank\", \"origin_airport_id\", \"_field\"]) |> last() |> keep(columns: [\"airport_rank\", \"origin_airport_id\", \"_field\", \"_value\"]) |> group() |> pivot(rowKey: [\"airport_rank\", \"origin_airport_id\"], columnKey: [\"_field\"], valueColumn: \"_value\") |> map(fn: (r) => ({ r with airport_rank: int(v: r.airport_rank), origin_airport_id: int(v: r.origin_airport_id) })) |> sort(columns: [\"airport_rank\"])"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Top-10 aeroporti dall'inizio del dataset - cumulative live",
+      "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 28 },
       "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
       "options": { "showHeader": true },
       "transformations": [
