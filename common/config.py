@@ -153,12 +153,6 @@ def _materialize_derived_paths(cfg: dict[str, Any]) -> dict[str, Any]:
     def flink_table_host_root(query: str) -> str:
         return _join_path(host_root, "flink", "table", query)
 
-    def flink_datastream_root(query: str) -> str:
-        return _join_path(flink_root, "flink", "datastream", query)
-
-    def flink_datastream_host_root(query: str) -> str:
-        return _join_path(host_root, "flink", "datastream", query)
-
     def spark_structured_root(query: str) -> str:
         return _join_path(spark_root, "spark", "structured", query)
 
@@ -181,22 +175,6 @@ def _materialize_derived_paths(cfg: dict[str, Any]) -> dict[str, Any]:
         merged_output_host_path("q1", "flink", "table"),
     )
 
-    _setdefault_path(
-        paths,
-        "q1_ds_results_path",
-        _join_path(flink_datastream_root("q1"), "part_files"),
-    )
-    _setdefault_path(
-        paths,
-        "q1_ds_results_host_path",
-        _join_path(flink_datastream_host_root("q1"), "part_files"),
-    )
-    _setdefault_path(
-        paths,
-        "q1_ds_merged_output_host_path",
-        merged_output_host_path("q1", "flink", "datastream"),
-    )
-
     for label in ("1h", "6h", "global"):
         _setdefault_path(
             paths,
@@ -212,22 +190,6 @@ def _materialize_derived_paths(cfg: dict[str, Any]) -> dict[str, Any]:
             paths,
             f"q2_merged_output_host_path_{label}",
             merged_output_host_path("q2", "flink", "table", label),
-        )
-
-        _setdefault_path(
-            paths,
-            f"q2_ds_results_path_{label}",
-            _join_path(flink_datastream_root("q2"), label, "part_files"),
-        )
-        _setdefault_path(
-            paths,
-            f"q2_ds_results_host_path_{label}",
-            _join_path(flink_datastream_host_root("q2"), label, "part_files"),
-        )
-        _setdefault_path(
-            paths,
-            f"q2_ds_merged_output_host_path_{label}",
-            merged_output_host_path("q2", "flink", "datastream", label),
         )
 
     for label in ("1d", "7d", "global"):

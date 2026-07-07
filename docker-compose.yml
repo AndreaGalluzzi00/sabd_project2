@@ -9,7 +9,6 @@
 #   docker compose run --rm kafka-init
 #   docker compose run --rm preprocess
 #   docker compose run --rm flink-job-q1
-#   docker compose run --rm flink-job-q1-ds
 #   docker compose run --rm flink-job-q2
 #   docker compose run --rm flink-job-q3
 #   docker compose --profile manual up -d spark-job-q1 spark-job-q2 spark-job-q3
@@ -352,45 +351,7 @@ services:
     restart: "no"
 
   # ----------------------------------------------------------
-  # [3b] Flink Q1 DataStream: reimplementazione DataStream API
-  # Produce gli stessi risultati di flink-job-q1 in q1_ds/
-  # per confronto architetturale Table API vs DataStream API.
-  # ----------------------------------------------------------
-  flink-job-q1-ds:
-    build:
-      context: .
-      dockerfile: flink_jobs/Dockerfile
-    platform: linux/amd64
-    container_name: flink-job-q1-ds
-    profiles: ["manual"]
-    depends_on:
-      - flink-taskmanager
-    environment:
-      CONFIG_PATH: /config/base.yml
-      PYTHONPATH: /opt/flink/jobs:/opt/flink/jobs/q1:/opt/flink/jobs/q2:/opt/flink/jobs/q3:/opt/flink
-    command: >
-      bash -c "
-        echo 'Waiting for Flink JobManager...' &&
-        until curl -sf http://flink-jobmanager:8081/overview > /dev/null; do sleep 2; done &&
-        echo 'Preparing Q1-DS output directory...' &&
-        rm -rf /opt/flink/results/q1_ds &&
-        python -c \"from pathlib import Path; from common.config import load_config; p = Path(load_config()['paths']['q1_ds_results_path']); p.mkdir(parents=True, exist_ok=True); print(f'Q1-DS output directory ready: {p}')\" &&
-        echo 'Submitting Q1-DS job (DataStream API)...' &&
-        flink run -d -m flink-jobmanager:8081 -py /opt/flink/jobs/q1/job_datastream.py
-      "
-    volumes:
-      - ./config:/config:ro
-      - ./flink_jobs:/opt/flink/jobs:ro
-      - ./common:/opt/flink/common:ro
-      - ./Results:/opt/flink/results
-      - ./flink-savepoints:/opt/flink/savepoints
-      - ./flink-checkpoints:/opt/flink/checkpoints
-    networks:
-      - sabd-net
-    restart: "no"
-
-  # ----------------------------------------------------------
-  # [3c] Flink Q2: sottomette il job PyFlink al cluster
+  # [3b] Flink Q2: sottomette il job PyFlink al cluster
   # ----------------------------------------------------------
   flink-job-q2:
     build:
@@ -424,46 +385,7 @@ services:
       - sabd-net
     restart: "no"
 
-  # ----------------------------------------------------------
-  # [3d] Flink Q2 DataStream: reimplementazione DataStream API
-  # Produce gli stessi risultati di flink-job-q2 in q2_ds/
-  # per confronto architetturale Table API vs DataStream API.
-  # ----------------------------------------------------------
-  flink-job-q2-ds:
-    build:
-      context: .
-      dockerfile: flink_jobs/Dockerfile
-    platform: linux/amd64
-    container_name: flink-job-q2-ds
-    profiles: ["manual"]
-    depends_on:
-      - flink-taskmanager
-    environment:
-      CONFIG_PATH: /config/base.yml
-      PYTHONPATH: /opt/flink/jobs:/opt/flink/jobs/q1:/opt/flink/jobs/q2:/opt/flink
-    command: >
-      bash -c "
-        echo 'Waiting for Flink JobManager...' &&
-        until curl -sf http://flink-jobmanager:8081/overview > /dev/null; do sleep 2; done &&
-        echo 'Preparing Q2-DS output directories...' &&
-        rm -rf /opt/flink/results/q2_ds &&
-        python -c \"from pathlib import Path; from common.config import load_config; cfg=load_config()['paths']; [Path(cfg[k]).mkdir(parents=True,exist_ok=True) or print(f'Ready: {Path(cfg[k])}') for k in ['q2_ds_results_path_1h','q2_ds_results_path_6h','q2_ds_results_path_global']]\" &&
-        echo 'Submitting Q2-DS job (DataStream API)...' &&
-        flink run -d -m flink-jobmanager:8081 -py /opt/flink/jobs/q2/job_datastream.py
-      "
-    volumes:
-      - ./config:/config:ro
-      - ./flink_jobs:/opt/flink/jobs:ro
-      - ./common:/opt/flink/common:ro
-      - ./Results:/opt/flink/results
-      - ./flink-savepoints:/opt/flink/savepoints
-      - ./flink-checkpoints:/opt/flink/checkpoints
-    networks:
-      - sabd-net
-    restart: "no"
-
-
-  # [3d] Flink Q3: sottomette il job PyFlink al cluster
+  # [3c] Flink Q3: sottomette il job PyFlink al cluster
   # ----------------------------------------------------------
   flink-job-q3:
     build:

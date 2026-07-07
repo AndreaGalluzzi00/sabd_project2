@@ -29,7 +29,7 @@ tramite offset del tumbling):
 Nota watermark: timestamp e watermark sono assegnati PRIMA del filtro sulle
 compagnie, quindi il marker EOS (event_time nel 2200) avanza il watermark e
 drena l'ultima finestra anche senza 'flink stop --drain' (fix del gap noto
-di Q1-DS).
+sulle finestre finali).
 
 Output schema (header finale scritto da scripts/merge_q3.py):
     ts, airline, hour, count, min, p25, p50, p75, p90, max

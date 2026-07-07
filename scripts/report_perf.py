@@ -72,7 +72,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--engine", default="flink", choices=["flink"],
                         help="Only 'flink' here; Spark writes its own row.")
     parser.add_argument("--query", default="", help="q1/q2/q3 (labels the row and picks the job).")
-    parser.add_argument("--implementation", default="table", help="table/datastream (labels the row).")
+    parser.add_argument("--implementation", default="table", help="implementation label written in the report row.")
     parser.add_argument("--experiment", "--exp", "-e", dest="experiment", default=None,
                         help="Experiment name for the row (default: base).")
     parser.add_argument("--parallelism", type=int, default=0, help="Parallelism for the row (0 = read from job).")

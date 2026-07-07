@@ -9,22 +9,20 @@ USO RAPIDO
     # Default: q1 + flink + table + config/base.yml
     .\scripts\run_experiment.ps1
 
-    # Stesso scenario sperimentale, implementazioni diverse
+    # Stesso scenario sperimentale, motori diversi
     .\scripts\run_experiment.ps1 -e 01_baseline -Query q1 -Engine flink -Implementation table
-    .\scripts\run_experiment.ps1 -e 01_baseline -Query q1 -Engine flink -Implementation datastream
     .\scripts\run_experiment.ps1 -e 01_baseline -Query q1 -Engine spark
 
     # Q2 / Q3
     .\scripts\run_experiment.ps1 -Query q2 -Engine flink
-    .\scripts\run_experiment.ps1 -Query q2 -Engine flink -Implementation datastream
     .\scripts\run_experiment.ps1 -Query q2 -Engine spark
     .\scripts\run_experiment.ps1 -Query q3 -Engine flink
     .\scripts\run_experiment.ps1 -Query q3 -Engine spark
 
 COMBINAZIONI SUPPORTATE
     Flink:
-        q1 table, q1 datastream
-        q2 table, q2 datastream
+        q1 table
+        q2 table
         q3 table
 
     Spark:
@@ -50,14 +48,12 @@ RISULTATI
 
     Esempi part-file per 01_baseline:
         Results/experiments/01_baseline/flink/table/q1/...
-        Results/experiments/01_baseline/flink/datastream/q1/...
         Results/experiments/01_baseline/spark/structured/q1/...
 
     I CSV finali dei merge vengono invece salvati direttamente in Results.
 
     Esempi CSV finali:
         Results/q1_flink_table_01_baseline.csv
-        Results/q1_flink_datastream_01_baseline.csv
         Results/q1_spark_structured_01_baseline.csv
         Results/q2_1h_flink_table_01_baseline.csv
 
@@ -96,7 +92,7 @@ param(
     [ValidateSet("flink", "spark")]
     [string]$Engine = "flink",
 
-    [ValidateSet("", "table", "datastream", "structured")]
+    [ValidateSet("", "table", "structured")]
     [string]$Implementation = "",
 
     [switch]$NoPreprocess,
@@ -767,35 +763,8 @@ function Get-RunSpec {
         }
     }
 
-    if ($Implementation -notin @("table", "datastream")) {
-        throw "Flink supporta -Implementation table oppure datastream."
-    }
-
-    if ($Implementation -eq "datastream") {
-        if ($Query -eq "q3") {
-            throw "Flink Q3 non ha piu' una variante datastream separata: usa -Implementation table. La computazione DDSketch resta DataStream dentro il job canonico."
-        }
-
-        $MergeScripts = @{
-            q1 = ".\scripts\merge_q1_ds.py"
-            q2 = ".\scripts\merge_q2_ds.py"
-        }
-
-        $PathKeys = @{
-            q1 = @("q1_ds_results_host_path")
-            q2 = @(
-                "q2_ds_results_host_path_1h",
-                "q2_ds_results_host_path_6h",
-                "q2_ds_results_host_path_global"
-            )
-        }
-
-        return @{
-            Service = "flink-job-$Query-ds"
-            Container = $null
-            MergeScript = $MergeScripts[$Query]
-            PathKeys = $PathKeys[$Query]
-        }
+    if ($Implementation -ne "table") {
+        throw "Flink supporta solo -Implementation table."
     }
 
     $MergeScripts = @{
