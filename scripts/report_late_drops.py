@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Collect Flink late-record drop metrics and append them to a CSV report."""
 
 from __future__ import annotations
 
@@ -91,7 +90,6 @@ def normalize_plan_window_size(size: str) -> str:
 
 
 def job_plan_windows(flink_url: str, job_id: str) -> dict[str, str]:
-    """Return {operator_number: logical_window_label} from the Flink plan."""
     data = http_get_json(f"{flink_url}/jobs/{job_id}/plan")
     nodes = data.get("plan", {}).get("nodes", [])
     windows: dict[str, str] = {}
@@ -113,12 +111,6 @@ def vertex_late_drops(
     job_id: str,
     vertex_id: str,
 ) -> dict[str, float]:
-    """Return {metric_id: summed value} for this vertex, {} if not exposed.
-
-    Metric ids are discovered from the vertex itself (operator metrics show
-    up prefixed with the operator name), then fetched one by one: Flink
-    splits the 'get' query parameter on commas, so ids are never joined.
-    """
     metrics_url = f"{flink_url}/jobs/{job_id}/vertices/{vertex_id}/subtasks/metrics"
 
     available = http_get_json(metrics_url)

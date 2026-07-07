@@ -36,3 +36,10 @@ timestamp_utc,engine,implementation,query,experiment,parallelism,total_records,a
 2026-07-07T17:50:19+00:00,flink,table,q2,p4_n4,4,2229457,30.3,73520.1,37157.6,,,70.5,27.9,throughput=kafka source ingestion; latency: enable metrics.latency.interval
 2026-07-07T18:07:14+00:00,flink,table,q3,p2_n1,2,2229454,141.1,15795.4,20483.3,,,91.8,8.4,throughput=kafka source ingestion; latency: enable metrics.latency.interval
 2026-07-07T18:11:52+00:00,flink,table,q3,p2_n2,2,2229455,121.9,18290.6,24000.0,,,90.5,36.2,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T18:16:29+00:00,flink,table,q3,p4_n1,4,2229454,122.1,18263.4,25633.3,,,90.6,0.0,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T18:22:33+00:00,flink,table,q3,p1_n1,1,2229454,191.2,11659.2,13716.7,,,95.8,30.7,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T18:27:18+00:00,flink,table,q3,p2_n1,2,2229454,131.0,17013.3,21200.0,,,92.7,8.9,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T18:31:51+00:00,flink,table,q3,p2_n2,2,2229455,121.0,18431.8,25366.7,,,89.0,33.5,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T18:36:24+00:00,flink,table,q3,p4_n1,4,2229454,115.7,19269.6,25300.0,,,93.3,0.0,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T18:40:28+00:00,flink,table,q3,p4_n2,4,2229455,90.7,24569.0,32690.9,,,91.5,21.4,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T18:44:30+00:00,flink,table,q3,p4_n4,4,2229457,90.8,24540.7,33133.3,,,89.7,45.9,throughput=kafka source ingestion; latency: enable metrics.latency.interval

@@ -181,7 +181,6 @@ _PERF_OUTPUT = "/opt/spark/results/perf.csv"
 
 
 def _append_perf_row(output_path: str, row: list[Any], logger: logging.Logger) -> None:
-    """Best-effort append of one perf row; never breaks the job on failure."""
     try:
         out = Path(output_path)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -222,18 +221,6 @@ def await_queries_until_idle(
     experiment: str = "base",
     perf_output: str = _PERF_OUTPUT,
 ) -> None:
-    """Stop local Spark jobs after the finite Kafka replay has gone idle.
-
-    While waiting, it accumulates per-batch progress (numInputRows,
-    processedRowsPerSecond, batch triggerExecution ms) and, on exit, appends a
-    performance row to Results/perf.csv:
-      * throughput = records / active wall-clock time (avg) and peak
-        processedRowsPerSecond (max);
-      * latency    = batch processing time (durationMs.triggerExecution),
-        which is Spark's micro-batch latency.
-    All queries read the same Kafka source, so the record count is the MAX over
-    queries (not the sum), avoiding an N-fold inflation for multi-window jobs.
-    """
     started_at = time.monotonic()
     last_activity_at = started_at
     seen_input = False

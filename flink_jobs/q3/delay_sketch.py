@@ -10,7 +10,6 @@ _ZERO_EPSILON = 1e-9
 
 
 class DelayDDSketch:
-    """Sketch dei quantili di DEP_DELAY per un gruppo (compagnia, fascia)."""
 
     __slots__ = (
         "alpha",
@@ -83,7 +82,6 @@ class DelayDDSketch:
     # ── Interrogazione ────────────────────────────────────────────────────────
 
     def quantile(self, q: float) -> float | None:
-        """Quantile approssimato q ∈ [0, 1]; None se lo sketch è vuoto."""
         if self.count == 0:
             return None
         if q <= 0.0:
@@ -116,5 +114,4 @@ class DelayDDSketch:
         return min(max(value, self.min_value), self.max_value)
 
     def bucket_count(self) -> int:
-        """Numero di contatori vivi: la 'memoria' dello sketch (per il report)."""
         return len(self._pos) + len(self._neg) + (1 if self._zero_count else 0)

@@ -17,29 +17,10 @@
   "panels": [
     {
       "id": 1,
-      "type": "table",
-      "title": "Top-10 aeroporti per ritardi gravi - finestra 1h (ultima finestra)",
-      "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
-      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 0 },
-      "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
-      "options": { "showHeader": true },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
-          "format": "table",
-          "editorMode": "code",
-          "rawQuery": true,
-          "rawSql": "SELECT airport_rank AS \"rank\", origin_airport_id, num_flights, severe_delays, round(dep_delay_mean::numeric, 1) AS dep_delay_mean, round(dep_delay_max::numeric, 1) AS dep_delay_max, delayed_flights FROM q2_results_1h WHERE ts = (SELECT max(ts) FROM q2_results_1h) ORDER BY airport_rank"
-        }
-      ]
-    },
-    {
-      "id": 2,
       "type": "timeseries",
-      "title": "Ritardi gravi (>30 min) nel tempo - finestra 1h (top-5 aeroporti per finestra)",
+      "title": "Voli con ritardo grave (>30 min) nel tempo - finestra 1h (per aeroporto in top-10)",
       "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
-      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 0 },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
       "fieldConfig": {
         "defaults": {
           "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 8, "showPoints": "auto" },
@@ -55,16 +36,85 @@
           "format": "time_series",
           "editorMode": "code",
           "rawQuery": true,
-          "rawSql": "SELECT ts AS \"time\", origin_airport_id::text AS airport, severe_delays FROM q2_results_1h WHERE airport_rank <= 5 AND $__timeFilter(ts) ORDER BY ts"
+          "rawSql": "SELECT ts AS \"time\", origin_airport_id::text AS airport, severe_delays FROM q2_results_1h WHERE $__timeFilter(ts) ORDER BY ts"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Ritardo medio in partenza - finestra 1h (per aeroporto in top-10)",
+      "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 8, "showPoints": "auto" },
+          "unit": "m"
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
+          "format": "time_series",
+          "editorMode": "code",
+          "rawQuery": true,
+          "rawSql": "SELECT ts AS \"time\", origin_airport_id::text AS airport, round(dep_delay_mean::numeric, 1) AS dep_delay_mean FROM q2_results_1h WHERE $__timeFilter(ts) ORDER BY ts"
         }
       ]
     },
     {
       "id": 3,
+      "type": "timeseries",
+      "title": "Voli con ritardo grave (>30 min) nel tempo - finestra 6h (per aeroporto in top-10)",
+      "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 9 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 8, "showPoints": "auto" },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
+          "format": "time_series",
+          "editorMode": "code",
+          "rawQuery": true,
+          "rawSql": "SELECT ts AS \"time\", origin_airport_id::text AS airport, severe_delays FROM q2_results_6h WHERE $__timeFilter(ts) ORDER BY ts"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Top-10 aeroporti per ritardi gravi - finestra 1h (ultima finestra)",
+      "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 18 },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
+          "format": "table",
+          "editorMode": "code",
+          "rawQuery": true,
+          "rawSql": "SELECT airport_rank AS \"rank\", origin_airport_id, num_flights, severe_delays, round(dep_delay_mean::numeric, 1) AS dep_delay_mean, round(dep_delay_max::numeric, 1) AS dep_delay_max, delayed_flights FROM q2_results_1h WHERE ts = (SELECT max(ts) FROM q2_results_1h) ORDER BY airport_rank"
+        }
+      ]
+    },
+    {
+      "id": 5,
       "type": "table",
       "title": "Top-10 aeroporti per ritardi gravi - finestra 6h (ultima finestra)",
       "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 10 },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 28 },
       "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
       "options": { "showHeader": true },
       "targets": [
@@ -79,11 +129,11 @@
       ]
     },
     {
-      "id": 4,
+      "id": 6,
       "type": "table",
       "title": "Top-10 aeroporti dall'inizio del dataset - cumulative live",
       "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 20 },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 38 },
       "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
       "options": { "showHeader": true },
       "targets": [

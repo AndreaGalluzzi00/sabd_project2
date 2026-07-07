@@ -84,7 +84,6 @@ class Q3WindowFunction(ProcessWindowFunction):
 
 
 class Q3CumulativeFunction(KeyedProcessFunction):
-    """Running DDSketch per (airline, hour), emitted as throttled snapshots."""
 
     def __init__(self, alpha: float, emit_interval_ms: int):
         self._alpha = alpha

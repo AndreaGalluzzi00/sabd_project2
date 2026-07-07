@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Compare Q3 merged output completeness against a baseline experiment."""
 
 from __future__ import annotations
 
@@ -77,11 +76,6 @@ def selected_q3_window(cfg: dict) -> str:
 
 
 def resolve_window_files(experiment: str | None) -> tuple[str, dict[str, Path]]:
-    """Return (experiment_name, {window_label: merged_csv_path}).
-
-    Mirrors merge_q3.load_merge_config so the paths match byte-for-byte what
-    the merge produced: same config keys, same experiment suffix.
-    """
     configure_config_path(experiment)
 
     from common.config import load_config  # noqa: E402  (needs CONFIG_PATH set first)
@@ -109,7 +103,6 @@ def resolve_window_files(experiment: str | None) -> tuple[str, dict[str, Path]]:
 
 
 def sum_count(path: Path) -> tuple[int, int]:
-    """Return (sum of `count`, number of data rows) for a merged Q3 CSV."""
     total = 0
     rows = 0
 
@@ -144,11 +137,6 @@ OUTPUT_HEADER = [
 
 
 def rotate_if_stale_schema(output_file: Path) -> None:
-    """Move aside an output file written with a previous schema.
-
-    Appending under a mismatched header would silently misalign columns
-    (e.g. late_drops_q3.csv left over from the discarded intra-run method).
-    """
     if not output_file.exists():
         return
 

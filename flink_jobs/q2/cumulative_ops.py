@@ -106,7 +106,6 @@ def _next_emit_after(event_time_ms: int, emit_interval_ms: int) -> int:
 
 
 class Q2CumulativeTopN(KeyedProcessFunction):
-    """Running Q2 state from dataset start, emitted on event-time steps."""
 
     def __init__(self, emit_event_interval_ms: int):
         self._emit_event_interval_ms = max(1, int(emit_event_interval_ms))
