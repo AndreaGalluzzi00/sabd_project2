@@ -7,3 +7,4 @@ timestamp_utc,engine,implementation,query,experiment,parallelism,total_records,a
 2026-07-06T23:48:51+00:00,spark,structured,q2,01_baseline,4,2229457,170.9,13046.8,41385.4,2414.6,9878.0,,,"spark local[*], trigger=5 seconds"
 2026-07-06T23:59:53+00:00,spark,structured,q2,01_baseline,4,2229457,160.7,13873.4,40646.7,2877.1,14318.0,,,"spark local[*], trigger=5 seconds"
 2026-07-07T00:11:37+00:00,spark,structured,q3,01_baseline,4,2229457,171.5,13003.5,38747.7,2404.0,10368.0,,,"spark local[*], trigger=5 seconds"
+2026-07-07T13:18:03+00:00,flink,table,q2,baseline,4,4,8.2,0.5,0.1,,,46.7,0.0,latency: enable metrics.latency.interval

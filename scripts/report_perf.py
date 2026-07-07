@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Collect Flink throughput, latency and pressure metrics for an experiment."""
 
 from __future__ import annotations
 

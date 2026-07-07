@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Collect Flink late-record drop metrics and append them to a CSV report."""
 
 from __future__ import annotations
 

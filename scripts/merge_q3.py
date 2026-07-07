@@ -30,7 +30,7 @@ HEADER = "ts,airline,hour,count,min,p25,p50,p75,p90,max"
 COL_TS = 0
 COL_AIRLINE = 1
 COL_HOUR = 2
-Q3_WINDOW_CHOICES = ("1d", "7d", "global", "all")
+Q3_WINDOW_CHOICES = ("1d", "7d", "global", "cumulative", "all")
 
 
 @dataclass(frozen=True)
@@ -38,7 +38,7 @@ class WindowMergeConfig:
     results_dir: Path
     output_file: Path
     stable_for_seconds: float
-    label: str  # "1d" | "7d" | "global"
+    label: str  # "1d" | "7d" | "global" | "cumulative"
 
 
 def selected_q3_window(cfg: dict) -> str:
@@ -72,6 +72,7 @@ def load_merge_config() -> list[WindowMergeConfig]:
         make("q3_results_host_path_1d",     "q3_merged_output_host_path_1d",     "1d"),
         make("q3_results_host_path_7d",     "q3_merged_output_host_path_7d",     "7d"),
         make("q3_results_host_path_global", "q3_merged_output_host_path_global", "global"),
+        make("q3_results_host_path_cumulative", "q3_merged_output_host_path_cumulative", "cumulative"),
     ]
     if selected_window == "all":
         return configs

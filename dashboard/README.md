@@ -35,7 +35,7 @@ differenza è architetturale.
 | Servizio | Profilo | Porta | Note |
 |---|---|---|---|
 | `influxdb` | `dashboard-influx` | 8086 | org `sabd`, bucket `flights`, retention infinita |
-| `telegraf` | `dashboard-influx` | — | consuma `q1_results` (misura `q1`, tag `airline`), `q2_results_{1h,6h,global}` (misure `q2_*`, tag `origin_airport_id`+`airport_rank`) e `q3_results_{1d,7d,global}` (misure `q3_*`, tag `airline`+`hour`) |
+| `telegraf` | `dashboard-influx` | — | consuma `q1_results` (misura `q1`, tag `airline`), `q2_results_{1h,6h,global,cumulative}` (misure `q2_*`; cumulative usa tag `airport_rank` e `origin_airport_id` come field) e `q3_results_{1d,7d,global,cumulative}` (misure `q3_*`, tag `airline`+`hour`) |
 | `dashboard-init` | `dashboard-influx` | — | crea i topic dei risultati Q1/Q2/Q3 (one-shot) |
 | `timescaledb` | `dashboard-timescale` | 5432 | tabelle+hypertable create dagli init SQL (`01_q1`, `02_q2`, `03_q3`) |
 | `grafana` | entrambi | 3000 | provisiona i 2 datasource + le 6 dashboard (Q1, Q2 e Q3, per ciascun backend) |
@@ -87,10 +87,10 @@ differenza è architetturale.
    - *SABD - Q1 ... (real-time)* / *SABD - Q1 ... (TimescaleDB)*
    - *SABD - Q2 ... (real-time)* / *SABD - Q2 ... (TimescaleDB)* — top-10 aeroporti
      per ritardi gravi (>30 min); la variante TimescaleDB mostra le tabelle top-10
-     per finestra (1h/6h/global) con la lista `delayed_flights`
+     per finestra (1h/6h/cumulative) con la lista `delayed_flights`
    - *SABD - Q3 ... (real-time)* / *SABD - Q3 ... (TimescaleDB)* — variabili
      in alto per scegliere compagnia e fascia oraria; il pannello "dall'inizio
-     del dataset" si popola alla chiusura della finestra globale (marker EOS).
+     del dataset" mostra gli snapshot cumulativi live.
 
    L'event-time del replay è **gen–apr 2025**: il time range è già impostato lì.
 
@@ -121,12 +121,13 @@ rebuild necessario (i flag sono letti a runtime dalla config montata).
   evitano di rompere la pipeline certificata quando lo stack dashboard non è su.
 - **Q3 su InfluxDB.** `hour` è emesso come **stringa** dal sink Kafka di Q3 perché il
   parser JSON di Telegraf accetta solo stringhe come tag; su TimescaleDB resta `int`.
-  Una misurazione per finestra (`q3_1d`, `q3_7d`, `q3_global`), punto identificato da
+  Una misurazione per finestra (`q3_1d`, `q3_7d`, `q3_global`, `q3_cumulative`), punto identificato da
   (tag `airline`+`hour`, time = inizio finestra) → re-run idempotenti su entrambi i backend.
-- **Q2.** Stesso pattern degli altri: `origin_airport_id` e `airport_rank` sono emessi
-  come **stringa** dal sink Kafka (tag InfluxDB), su TimescaleDB restano numerici. Una
-  misurazione per finestra (`q2_1h`, `q2_6h`, `q2_global`), punto identificato da
-  (tag `origin_airport_id`+`airport_rank`, time = inizio finestra) → re-run idempotenti.
+- **Q2.** Per 1h/6h/global, `origin_airport_id` e `airport_rank` sono emessi come
+  **stringa** dal sink Kafka (tag InfluxDB), su TimescaleDB restano numerici. Per
+  `q2_cumulative`, InfluxDB usa solo `airport_rank` come tag e tiene
+  `origin_airport_id` come field: cosi' lo snapshot live sovrascrive la riga del rank,
+  come l'upsert `(ts, airport_rank)` di TimescaleDB.
   Q2 si rende meglio come **tabella top-10**: la dashboard TimescaleDB mostra le tabelle
-  per 1h/6h/global (con la lista `delayed_flights` come `text`), mentre quella InfluxDB
-  privilegia le serie temporali dei ritardi gravi per aeroporto + tabella `global`.
+  per 1h/6h/global/cumulative (con la lista `delayed_flights` come `text`), mentre quella InfluxDB
+  privilegia le serie temporali dei ritardi gravi per aeroporto + tabella `cumulative`.

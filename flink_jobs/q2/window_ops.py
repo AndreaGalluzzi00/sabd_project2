@@ -119,6 +119,25 @@ KAFKA_SINK_DDL = """
     )
 """
 
+KAFKA_CUMULATIVE_SINK_DDL = """
+    CREATE TABLE {name} (
+        ts                TIMESTAMP(3),
+        airport_rank      STRING,
+        origin_airport_id INT,
+        num_flights       BIGINT,
+        severe_delays     BIGINT,
+        dep_delay_mean    DOUBLE,
+        dep_delay_max     DOUBLE,
+        delayed_flights   STRING
+    ) WITH (
+        'connector'                      = 'kafka',
+        'topic'                          = '{topic}',
+        'properties.bootstrap.servers'   = '{bootstrap}',
+        'format'                         = 'json',
+        'json.timestamp-format.standard' = 'SQL'
+    )
+"""
+
 JDBC_SINK_DDL = """
     CREATE TABLE {name} (
         ts                TIMESTAMP(3),

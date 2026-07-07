@@ -45,6 +45,19 @@ CREATE TABLE IF NOT EXISTS q2_results_global (
     PRIMARY KEY (ts, airport_rank)
 );
 
+CREATE TABLE IF NOT EXISTS q2_results_cumulative (
+    ts                timestamp        NOT NULL,
+    airport_rank      bigint           NOT NULL,
+    origin_airport_id int,
+    num_flights       bigint,
+    severe_delays     bigint,
+    dep_delay_mean    double precision,
+    dep_delay_max     double precision,
+    delayed_flights   text,
+    PRIMARY KEY (ts, airport_rank)
+);
+
 SELECT create_hypertable('q2_results_1h',     'ts', if_not_exists => TRUE);
 SELECT create_hypertable('q2_results_6h',     'ts', if_not_exists => TRUE);
 SELECT create_hypertable('q2_results_global', 'ts', if_not_exists => TRUE);
+SELECT create_hypertable('q2_results_cumulative', 'ts', if_not_exists => TRUE);

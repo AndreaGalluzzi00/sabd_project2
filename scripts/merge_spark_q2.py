@@ -32,7 +32,7 @@ HEADER = [
     "dep_delay_max",
     "delayed_flights",
 ]
-Q2_WINDOW_CHOICES = ("1h", "6h", "global", "all")
+Q2_WINDOW_CHOICES = ("1h", "6h", "global", "cumulative", "all")
 
 
 @dataclass(frozen=True)
@@ -73,6 +73,7 @@ def load_merge_config() -> list[WindowMergeConfig]:
         make("spark_q2_results_host_path_1h", "spark_q2_merged_output_host_path_1h", "1h"),
         make("spark_q2_results_host_path_6h", "spark_q2_merged_output_host_path_6h", "6h"),
         make("spark_q2_results_host_path_global", "spark_q2_merged_output_host_path_global", "global"),
+        make("spark_q2_results_host_path_cumulative", "spark_q2_merged_output_host_path_cumulative", "cumulative"),
     ]
     if selected_window == "all":
         return configs

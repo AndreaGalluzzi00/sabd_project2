@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Compare Q3 merged output completeness against a baseline experiment."""
 
 from __future__ import annotations
 
@@ -24,8 +25,9 @@ WINDOW_PATH_KEYS = {
     "1d": "q3_merged_output_host_path_1d",
     "7d": "q3_merged_output_host_path_7d",
     "global": "q3_merged_output_host_path_global",
+    "cumulative": "q3_merged_output_host_path_cumulative",
 }
-Q3_WINDOW_CHOICES = ("1d", "7d", "global", "all")
+Q3_WINDOW_CHOICES = ("1d", "7d", "global", "cumulative", "all")
 
 DEFAULT_BASELINE = "01_baseline"
 DEFAULT_OUTPUT = PROJECT_ROOT / "Results" / "late_drops_q3.csv"
@@ -88,7 +90,11 @@ def resolve_window_files(experiment: str | None) -> tuple[str, dict[str, Path]]:
     paths = cfg["paths"]
     experiment_name = get_experiment_name(cfg)
     selected_window = selected_q3_window(cfg)
-    path_keys = WINDOW_PATH_KEYS
+    path_keys = {
+        label: key
+        for label, key in WINDOW_PATH_KEYS.items()
+        if label != "cumulative"
+    }
     if selected_window != "all":
         path_keys = {selected_window: WINDOW_PATH_KEYS[selected_window]}
 

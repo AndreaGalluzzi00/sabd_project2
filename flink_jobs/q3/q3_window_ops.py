@@ -7,14 +7,17 @@ from pyflink.common import Row
 from pyflink.common.typeinfo import Types
 from pyflink.datastream.functions import (
     AggregateFunction,
+    KeyedProcessFunction,
     MapFunction,
     ProcessWindowFunction,
 )
+from pyflink.datastream.state import ValueStateDescriptor
 
 from delay_sketch import DelayDDSketch
 
 
 LATE_DROPS_METRIC = "numLateRecordsDropped"
+DATASET_START_TS = datetime(2025, 1, 1)
 
 
 class Q3LateDropCounter(MapFunction):
@@ -78,6 +81,81 @@ class Q3WindowFunction(ProcessWindowFunction):
             round(sketch.quantile(0.90), 2),
             sketch.max_value,
         )
+
+
+class Q3CumulativeFunction(KeyedProcessFunction):
+    """Running DDSketch per (airline, hour), emitted as throttled snapshots."""
+
+    def __init__(self, alpha: float, emit_interval_ms: int):
+        self._alpha = alpha
+        self._emit_interval_ms = emit_interval_ms
+        self._sketch_state = None
+        self._meta_state = None
+        self._timer_state = None
+        self._dirty_state = None
+
+    def open(self, runtime_context) -> None:
+        self._sketch_state = runtime_context.get_state(
+            ValueStateDescriptor("q3-cumulative-sketch", Types.PICKLED_BYTE_ARRAY())
+        )
+        self._meta_state = runtime_context.get_state(
+            ValueStateDescriptor("q3-cumulative-meta", Types.PICKLED_BYTE_ARRAY())
+        )
+        self._timer_state = runtime_context.get_state(
+            ValueStateDescriptor("q3-cumulative-next-timer", Types.LONG())
+        )
+        self._dirty_state = runtime_context.get_state(
+            ValueStateDescriptor("q3-cumulative-dirty", Types.BOOLEAN())
+        )
+
+    def process_element(self, value, ctx):
+        # value: (event_time_ms, airline, hour, dep_delay)
+        sketch = self._sketch_state.value()
+        if sketch is None:
+            sketch = DelayDDSketch(self._alpha)
+
+        sketch.add(value[3])
+        self._sketch_state.update(sketch)
+        self._meta_state.update((value[1], int(value[2])))
+        self._dirty_state.update(True)
+        self._ensure_timer(ctx)
+        if False:
+            yield None
+
+    def on_timer(self, timestamp: int, ctx):
+        self._timer_state.clear()
+
+        if not self._dirty_state.value():
+            return
+
+        sketch = self._sketch_state.value()
+        meta = self._meta_state.value()
+        if sketch is None or meta is None or sketch.count == 0:
+            return
+
+        airline, hour = meta
+        yield Row(
+            DATASET_START_TS,
+            airline,
+            int(hour),
+            sketch.count,
+            sketch.min_value,
+            round(sketch.quantile(0.25), 2),
+            round(sketch.quantile(0.50), 2),
+            round(sketch.quantile(0.75), 2),
+            round(sketch.quantile(0.90), 2),
+            sketch.max_value,
+        )
+        self._dirty_state.update(False)
+
+    def _ensure_timer(self, ctx) -> None:
+        if self._timer_state.value() is not None:
+            return
+
+        now = ctx.timer_service().current_processing_time()
+        next_timer = now + self._emit_interval_ms
+        self._timer_state.update(next_timer)
+        ctx.timer_service().register_processing_time_timer(next_timer)
 
 
 

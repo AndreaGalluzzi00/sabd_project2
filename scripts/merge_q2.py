@@ -32,14 +32,14 @@ HEADER = (
 
 COL_TS = 0
 COL_RANK = 1
-Q2_WINDOW_CHOICES = ("1h", "6h", "global", "all")
+Q2_WINDOW_CHOICES = ("1h", "6h", "global", "cumulative", "all")
 
 
 @dataclass(frozen=True)
 class WindowMergeConfig:
     results_dir: Path
     output_file: Path
-    label: str  # "1h" | "6h" | "global"
+    label: str  # "1h" | "6h" | "global" | "cumulative"
 
 
 def selected_q2_window(cfg: dict) -> str:
@@ -71,6 +71,7 @@ def load_merge_config() -> list[WindowMergeConfig]:
         make("q2_results_host_path_1h",     "q2_merged_output_host_path_1h",     "1h"),
         make("q2_results_host_path_6h",     "q2_merged_output_host_path_6h",     "6h"),
         make("q2_results_host_path_global", "q2_merged_output_host_path_global", "global"),
+        make("q2_results_host_path_cumulative", "q2_merged_output_host_path_cumulative", "cumulative"),
     ]
     if selected_window == "all":
         return configs
