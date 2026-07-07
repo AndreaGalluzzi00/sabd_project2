@@ -1,0 +1,17 @@
+timestamp_utc,engine,implementation,query,experiment,parallelism,total_records,active_seconds,throughput_rec_s_avg,throughput_rec_s_max,latency_ms_avg,latency_ms_max,busy_pct_avg,backpressure_pct_avg,notes
+2026-07-07T20:09:26+00:00,flink,table,q1,1h_wm_uniform_d0,4,2229457,209.0,10669.7,13074.7,,249.0,1.8,0.0,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T20:18:27+00:00,flink,table,q1,1h_wm_uniform_d1800,4,2229457,215.2,10360.6,13046.7,,265.0,2.3,0.0,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T20:24:05+00:00,flink,table,q1,1h_wm_uniform_d3600,4,2229457,210.9,10571.7,13208.7,,434.4,1.4,0.0,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T20:39:30+00:00,flink,table,q2,1h_wm_uniform_d0,4,2229457,212.1,10511.7,13531.8,,174.0,90.2,76.7,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T20:48:58+00:00,flink,table,q2,1h_wm_uniform_d0,4,2229457,213.1,10462.4,13000.7,,400.1,8.0,0.0,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T21:03:40+00:00,flink,table,q2,1h_wm_uniform_d1800,4,2229457,213.8,10427.1,13282.8,,489.0,11.1,0.0,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T21:10:00+00:00,flink,table,q2,1h_wm_uniform_d3600,4,2229457,215.7,10335.0,13061.4,,318.0,9.7,0.0,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T21:18:13+00:00,flink,table,q2,6h_wm_uniform_d0,4,2229457,210.6,10586.5,14089.7,,628.0,9.4,0.0,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T21:26:01+00:00,flink,table,q2,6h_wm_uniform_d10800,4,2229457,203.8,10942.1,13053.5,,175.0,3.4,0.0,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T21:32:26+00:00,flink,table,q2,6h_wm_uniform_d21600,4,2229457,214.5,10394.5,13072.4,,294.3,4.7,0.0,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T21:39:27+00:00,flink,table,q3,1d_wm_uniform_d0,4,2229457,226.9,9826.8,12036.9,,,56.5,0.0,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T21:46:20+00:00,flink,table,q3,1d_wm_uniform_d43200,4,2229457,224.8,9916.2,12392.8,,,57.2,0.0,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T21:53:19+00:00,flink,table,q3,1d_wm_uniform_d86400,4,2229457,237.4,9390.3,11809.0,,,63.8,0.0,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T22:18:04+00:00,flink,table,q3,7d_wm_uniform_d0,4,2229457,214.7,10385.4,13050.1,,,47.1,0.0,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T22:24:00+00:00,flink,table,q3,7d_wm_uniform_d302400,4,2229457,215.7,10337.3,13093.0,,,55.1,0.0,throughput=kafka source ingestion; latency: enable metrics.latency.interval
+2026-07-07T22:29:49+00:00,flink,table,q3,7d_wm_uniform_d604800,4,2229457,216.2,10310.4,13315.9,,,57.7,0.0,throughput=kafka source ingestion; latency: enable metrics.latency.interval

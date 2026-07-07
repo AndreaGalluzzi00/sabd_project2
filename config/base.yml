@@ -127,8 +127,8 @@ q3:
   # Stessa strategia di watermarking di Q1/Q2.
   watermark_delay_seconds: 180
   # Passo nominale in event-time tra snapshot della cumulativa live.
-  # 2700000 ms = 45 minuti del dataset. Lo stato interno resta aggiornato per record.
-  cumulative_snapshot_event_step_ms: 2700000
+  # 54000000 ms = 15 ore del dataset. Lo stato interno resta aggiornato per record.
+  cumulative_snapshot_event_step_ms: 54000000
   # DDSketch: errore relativo massimo garantito sui percentili.
   sketch_alpha: 0.01
   # Spark Structured Streaming extra: percentile_approx accuracy.

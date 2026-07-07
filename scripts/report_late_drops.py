@@ -23,6 +23,7 @@ DEFAULT_OUTPUT = PROJECT_ROOT / "Results" / "late_drops.csv"
 OUTPUT_HEADER = [
     "timestamp_utc",
     "experiment",
+    "query",
     "job_name",
     "job_id",
     "vertex_name",
@@ -32,6 +33,7 @@ OUTPUT_HEADER = [
     "is_total",
     METRIC,
 ]
+LEGACY_OUTPUT_HEADER = [column for column in OUTPUT_HEADER if column != "query"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,6 +61,14 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_OUTPUT,
         help=f"CSV file the totals are appended to (default: {DEFAULT_OUTPUT}).",
+    )
+
+    parser.add_argument(
+        "--query",
+        "-q",
+        choices=("q1", "q2", "q3"),
+        default=None,
+        help="Query label to write in the CSV output (default: inferred from the Flink job name).",
     )
 
     return parser.parse_args()
@@ -177,6 +187,11 @@ def single_window_from_job_name(job_name: str) -> str:
     return labels[0] if len(labels) == 1 else ""
 
 
+def infer_query_from_job_name(job_name: str) -> str:
+    match = re.search(r"(?:^|[._-])(q[123])(?:[_-]|$)", job_name.lower())
+    return match.group(1) if match else ""
+
+
 def metric_window(
     operator: str,
     *,
@@ -212,7 +227,28 @@ def rotate_if_stale_schema(output_file: Path) -> None:
     with output_file.open("r", encoding="utf-8", newline="") as handle:
         first_line = handle.readline().strip()
 
-    if first_line == ",".join(OUTPUT_HEADER):
+    header = next(csv.reader([first_line]), [])
+
+    if header == OUTPUT_HEADER:
+        return
+
+    if header == LEGACY_OUTPUT_HEADER:
+        tmp_file = output_file.with_suffix(output_file.suffix + ".tmp")
+
+        with output_file.open("r", encoding="utf-8", newline="") as source:
+            with tmp_file.open("w", encoding="utf-8", newline="") as target:
+                reader = csv.DictReader(source)
+                writer = csv.DictWriter(target, fieldnames=OUTPUT_HEADER)
+                writer.writeheader()
+
+                for row in reader:
+                    row["query"] = infer_query_from_job_name(row.get("job_name", ""))
+                    writer.writerow(
+                        {column: row.get(column, "") for column in OUTPUT_HEADER}
+                    )
+
+        tmp_file.replace(output_file)
+        print(f"NOTE: migrated {output_file.name} schema by adding query column")
         return
 
     stale = output_file.with_suffix(output_file.suffix + ".old")
@@ -264,6 +300,7 @@ def main() -> None:
     for job in jobs:
         job_id = job["jid"]
         job_name = job.get("name", "?")
+        query = args.query or infer_query_from_job_name(job_name)
         job_total = 0.0
         job_metric_found = False
         timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -302,6 +339,7 @@ def main() -> None:
                     [
                         timestamp,
                         experiment,
+                        query,
                         job_name,
                         job_id,
                         vertex_name,
@@ -323,6 +361,7 @@ def main() -> None:
                 [
                     timestamp,
                     experiment,
+                    query,
                     job_name,
                     job_id,
                     "",

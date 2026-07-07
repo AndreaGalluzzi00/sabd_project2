@@ -1165,7 +1165,7 @@ if ($CollectLateDropsMetric) {
     Write-Host ""
     Write-Host "Collecting Flink late-drop metrics (numLateRecordsDropped)..."
 
-    python .\scripts\report_late_drops.py @MergeArgs
+    python .\scripts\report_late_drops.py @MergeArgs --query $Query
 
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "Late-drop metrics collection failed (exit code $LASTEXITCODE); continuing."

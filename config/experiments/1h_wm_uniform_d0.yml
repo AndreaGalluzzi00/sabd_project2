@@ -29,5 +29,5 @@ flink:
 q1:
   watermark_delay_seconds: 0
 q2:
-  window: "all"   # 1h | 6h | global | all
+  window: "1h"
   watermark_delay_seconds: 0
