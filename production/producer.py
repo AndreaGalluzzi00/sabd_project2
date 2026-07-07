@@ -350,14 +350,6 @@ def replay_events(
     first_ts = int(df["event_time"].iloc[0])
     wall_start = time.monotonic()
 
-    # Out-of-orderness is simulated by delaying delivery, not by modifying
-    # event_time. A held-back event keeps its true event_time but is sent later,
-    # so it may appear after newer events in the Kafka log.
-    #
-    # holdback_delay is expressed in event-time seconds and represents the
-    # maximum out-of-orderness bound to compare with the Flink watermark:
-    #   watermark >= bound -> delayed events still land in the correct window
-    #   watermark <  bound -> some events may arrive too late and be dropped
     logger.info(
         "Replay started: %d events, factor=%gx, out-of-order prob=%.2f, "
         "distribution=%s, max delivery delay=%ds (event time)",
@@ -464,10 +456,6 @@ def replay_events(
     )
 
 
-# Event time well beyond the dataset (year 2200) carried by the end-of-stream
-# markers. Sending one marker per partition pushes every per-partition watermark
-# past the last real window, so Flink fires and commits the final window without
-# a manual 'flink stop --drain'. Equivalent effect to emitting MAX_WATERMARK.
 END_OF_STREAM_EVENT_TIME_MS = int(
     datetime(2200, 1, 1, tzinfo=timezone.utc).timestamp() * 1000
 )

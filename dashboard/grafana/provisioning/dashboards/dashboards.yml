@@ -1,4 +1,3 @@
-# Provider che carica le dashboard JSON da /var/lib/grafana/dashboards.
 apiVersion: 1
 
 providers:

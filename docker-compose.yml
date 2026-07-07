@@ -370,7 +370,7 @@ services:
         echo 'Waiting for Flink JobManager...' &&
         until curl -sf http://flink-jobmanager:8081/overview > /dev/null; do sleep 2; done &&
         echo 'Preparing Q2 output directories...' &&
-        python -c \"from pathlib import Path; from common.config import load_config; cfg=load_config()['paths']; [Path(cfg[k]).mkdir(parents=True,exist_ok=True) or print(f'Ready: {Path(cfg[k])}') for k in ['q2_results_path_1h','q2_results_path_6h','q2_results_path_global']]\" &&
+        python -c \"from pathlib import Path; from common.config import load_config; cfg=load_config()['paths']; [Path(cfg[k]).mkdir(parents=True,exist_ok=True) or print(f'Ready: {Path(cfg[k])}') for k in ['q2_results_path_1h','q2_results_path_6h','q2_results_path_global','q2_results_path_cumulative']]\" &&
         echo 'Submitting Q2 job...' &&
         flink run -d -m flink-jobmanager:8081 -py /opt/flink/jobs/q2/job.py
       "
@@ -404,7 +404,7 @@ services:
         echo 'Waiting for Flink JobManager...' &&
         until curl -sf http://flink-jobmanager:8081/overview > /dev/null; do sleep 2; done &&
         echo 'Preparing Q3 output directories...' &&
-        python -c \"from pathlib import Path; from common.config import load_config; cfg=load_config()['paths']; [Path(cfg[k]).mkdir(parents=True,exist_ok=True) or print(f'Ready: {Path(cfg[k])}') for k in ['q3_results_path_1d','q3_results_path_7d','q3_results_path_global']]\" &&
+        python -c \"from pathlib import Path; from common.config import load_config; cfg=load_config()['paths']; [Path(cfg[k]).mkdir(parents=True,exist_ok=True) or print(f'Ready: {Path(cfg[k])}') for k in ['q3_results_path_1d','q3_results_path_7d','q3_results_path_global','q3_results_path_cumulative']]\" &&
         echo 'Submitting Q3 job...' &&
         flink run -d -m flink-jobmanager:8081 -py /opt/flink/jobs/q3/job.py
       "
@@ -593,8 +593,8 @@ services:
       bash -c "
         create() { /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic \"$$1\" --partitions \"$$2\" --replication-factor 1; };
         create q1_results 4 &&
-        create q2_results_1h 1 && create q2_results_6h 1 && create q2_results_global 1 &&
-        create q3_results_1d 1 && create q3_results_7d 1 && create q3_results_global 1
+        create q2_results_1h 1 && create q2_results_6h 1 && create q2_results_global 1 && create q2_results_cumulative 1 &&
+        create q3_results_1d 1 && create q3_results_7d 1 && create q3_results_global 1 && create q3_results_cumulative 1
       "
     networks:
       - sabd-net

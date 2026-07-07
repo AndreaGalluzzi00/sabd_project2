@@ -1,35 +1,6 @@
 #!/usr/bin/env python3
-"""
-Collect processing-performance metrics for a RUNNING Flink job and append one
-row to Results/perf.csv.
+"""Collect Flink throughput, latency and pressure metrics for an experiment."""
 
-What it measures (via the JobManager REST API, sampled while the job runs):
-
-  * throughput  — records/second emitted by the Kafka *source* vertex, both the
-                  average over the active window (total records / active time)
-                  and the peak instantaneous rate (sum of numRecordsOutPerSecond
-                  across the source subtasks);
-  * latency     — end-to-end source->sink latency in ms, read from Flink's
-                  latency-marker gauges (*.latency_p50/p95/p99). Requires
-                  'metrics.latency.interval' set on the cluster (done in
-                  docker-compose.yml). Left blank if the gauges are absent;
-  * busy %      — busyTimeMsPerSecond of the busiest vertex (pipeline
-                  utilisation, i.e. how close to saturation the job runs);
-  * backpressure% — backPressuredTimeMsPerSecond of the busiest vertex
-                  (identifies the bottleneck operator).
-
-Usage (run it *while* the job is processing, e.g. alongside the producer):
-
-    python scripts/report_perf.py --engine flink --query q1 \
-        --implementation table --parallelism 4 --exp 08_par2
-
-The tool waits for the source to start emitting, samples until the record
-count stops growing (idle), then writes the aggregate row and exits.
-
-Companion of report_late_drops.py (completeness). Spark writes its own perf
-row from spark_runtime.py using the same schema, so Results/perf.csv holds
-both engines side by side for the report.
-"""
 from __future__ import annotations
 
 import argparse

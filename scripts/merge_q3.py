@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
-"""
-Merge Q3 part-files into sorted CSV files (one per enabled window size).
 
-The statistics are already computed by Flink (DDSketch percentiles), so this
-script only needs to:
-  1. Find finalised part-files.
-  2. Deduplicate rows (keep first occurrence, same policy as merge_q1.py).
-  3. Sort by ts ASC, then airline ASC, then hour ASC.
-  4. Write with the spec-compliant header (renames num_flights/delay_min/
-     delay_max -> count/min/max, reserved words in the Flink sink DDL).
-
-Usage:
-    python scripts/merge_q3.py [--experiment <name>] [--wait [--timeout N]]
-"""
 from __future__ import annotations
 
 import sys
@@ -38,16 +25,12 @@ CONFIG_PATH = configure_config_path(ARGS.experiment)
 from common.config import load_config  # noqa: E402
 
 
-# Spec output header (num_flights/delay_min/delay_max -> count/min/max)
 HEADER = "ts,airline,hour,count,min,p25,p50,p75,p90,max"
 
-# Column indices in the Flink-produced CSV rows (no header):
-#   0: ts  1: airline  2: hour  3: num_flights  4: delay_min
-#   5: p25  6: p50  7: p75  8: p90  9: delay_max
 COL_TS = 0
 COL_AIRLINE = 1
 COL_HOUR = 2
-Q3_WINDOW_CHOICES = ("1d", "7d", "global", "all")
+Q3_WINDOW_CHOICES = ("1d", "7d", "global", "cumulative", "all")
 
 
 @dataclass(frozen=True)
@@ -55,7 +38,7 @@ class WindowMergeConfig:
     results_dir: Path
     output_file: Path
     stable_for_seconds: float
-    label: str  # "1d" | "7d" | "global"
+    label: str  # "1d" | "7d" | "global" | "cumulative"
 
 
 def selected_q3_window(cfg: dict) -> str:
@@ -89,6 +72,7 @@ def load_merge_config() -> list[WindowMergeConfig]:
         make("q3_results_host_path_1d",     "q3_merged_output_host_path_1d",     "1d"),
         make("q3_results_host_path_7d",     "q3_merged_output_host_path_7d",     "7d"),
         make("q3_results_host_path_global", "q3_merged_output_host_path_global", "global"),
+        make("q3_results_host_path_cumulative", "q3_merged_output_host_path_cumulative", "cumulative"),
     ]
     if selected_window == "all":
         return configs

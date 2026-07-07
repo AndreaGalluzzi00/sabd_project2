@@ -7,6 +7,7 @@ import sys
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
+from common.delay_sketch import DelayDDSketch
 from common.config import load_config
 from common.logging_utils import configure_logging
 from spark_runtime import (
@@ -19,11 +20,13 @@ from spark_runtime import (
     not_diverted,
     read_flights_stream,
     write_csv_stream,
+    write_foreach_batch_stream,
 )
 
 
 AIRLINES = ["AA", "DL", "UA", "WN"]
-Q3_WINDOW_CHOICES = ("1d", "7d", "global", "all")
+Q3_WINDOW_CHOICES = ("1d", "7d", "global", "cumulative", "all")
+DATASET_START_TS = "2025-01-01 00:00:00"
 
 
 def selected_q3_window(value: object) -> str:
@@ -50,7 +53,13 @@ def enabled_q3_windows(
     ]
     if selected_window == "all":
         return windows
+    if selected_window == "cumulative":
+        return []
     return [window for window in windows if window[0] == selected_window]
+
+
+def cumulative_q3_enabled(selected_window: str) -> bool:
+    return selected_window in {"all", "cumulative"}
 
 
 def build_distribution(
@@ -107,6 +116,91 @@ def build_distribution(
     )
 
 
+def cumulative_batch_writer(output_path: str, alpha: float):
+    sketches: dict[tuple[str, int], DelayDDSketch] = {}
+
+    def snapshot_rows() -> list[tuple]:
+        rows = []
+        for (airline, hour), sketch in sorted(sketches.items()):
+            if sketch.count == 0:
+                continue
+            rows.append(
+                (
+                    DATASET_START_TS,
+                    airline,
+                    int(hour),
+                    int(sketch.count),
+                    float(sketch.min_value),
+                    round(sketch.quantile(0.25), 2),
+                    round(sketch.quantile(0.50), 2),
+                    round(sketch.quantile(0.75), 2),
+                    round(sketch.quantile(0.90), 2),
+                    float(sketch.max_value),
+                )
+            )
+        return rows
+
+    def write(batch_df: DataFrame, batch_id: int) -> None:
+        dirty = False
+        saw_eos = False
+
+        rows = batch_df.select(
+            "airline",
+            "crs_dep_time",
+            "dep_delay",
+            "cancelled",
+            "diverted",
+        ).toLocalIterator()
+
+        for row in rows:
+            if row.airline == "__EOS__":
+                saw_eos = True
+                continue
+
+            cancelled = row.cancelled or 0.0
+            diverted = row.diverted or 0.0
+            if (
+                row.airline not in AIRLINES
+                or cancelled >= 0.5
+                or diverted >= 0.5
+                or row.dep_delay is None
+                or row.crs_dep_time is None
+            ):
+                continue
+
+            hour = (int(row.crs_dep_time) // 100) % 24
+            key = (row.airline, hour)
+            sketch = sketches.setdefault(key, DelayDDSketch(alpha))
+            sketch.add(float(row.dep_delay))
+            dirty = True
+
+        if not dirty and not saw_eos:
+            return
+
+        output_rows = snapshot_rows()
+        if not output_rows:
+            return
+
+        out = batch_df.sparkSession.createDataFrame(
+            output_rows,
+            schema=[
+                "ts",
+                "airline",
+                "hour",
+                "num_flights",
+                "delay_min",
+                "p25",
+                "p50",
+                "p75",
+                "p90",
+                "delay_max",
+            ],
+        )
+        out.coalesce(1).write.mode("append").option("header", "false").csv(output_path)
+
+    return write
+
+
 def main() -> None:
     configure_logging()
     logger = logging.getLogger(__name__)
@@ -150,6 +244,22 @@ def main() -> None:
             )
         )
         logger.info("Spark Q3 [%s] | Results path: %s", label, output_path)
+
+    if cumulative_q3_enabled(selected_window):
+        output_path = paths["spark_q3_results_path_cumulative"]
+        queries.append(
+            write_foreach_batch_stream(
+                flights,
+                writer=cumulative_batch_writer(
+                    output_path,
+                    alpha=float(q3_cfg.get("sketch_alpha", 0.01)),
+                ),
+                checkpoint=checkpoint_path(runtime_cfg, "q3", "cumulative"),
+                query_name="spark-q3-cumulative",
+                runtime_cfg=runtime_cfg,
+            )
+        )
+        logger.info("Spark Q3 [cumulative] | Results path: %s", output_path)
 
     await_queries_until_idle(
         queries, runtime_cfg, logger,

@@ -1,34 +1,6 @@
 #!/usr/bin/env python3
-"""
-Legacy/sanity Q3 completeness check by comparing an experiment's merged
-output against the baseline run (01_baseline: no injected out-of-orderness).
+"""Compare Q3 merged output completeness against a baseline experiment."""
 
-The primary Q3 late-drop measure is now the live side-output counter collected
-by scripts/report_late_drops.py. This script remains useful as a secondary
-completeness check: it estimates how many records disappeared from the final
-aggregate output, assuming the baseline and experiment replay the same input.
-
-Method: the wm experiments (0*_wm_uniform_d*, 0*_wm_expo_d*) replay the SAME
-events with the SAME producer seed as the baseline — the holdback only delays
-delivery, it never changes the event set. Therefore, per window size,
-sum(count) of the baseline is exactly the number of records each window
-SHOULD contain, and
-
-    late_dropped(w) = sum(count baseline w) - sum(count experiment w)
-
-This is not a replacement for numLateRecordsDropped: it is an output-level
-sanity check. The 'global' window closes only at EOS, so it should drop ~0
-even under heavy out-of-orderness.
-
-Reads the merged CSVs that scripts/merge_q3.py writes
-(Results/q3_<window>_flink_table_<exp>.csv) and appends one row per window
-to Results/late_drops_q3.csv.
-
-Run it AFTER the merge, and only once the baseline has been merged too.
-
-Exit codes: 0 = computed for all windows; 1 = a merged CSV is missing or a
-negative drop shows up (never writes a fabricated number for missing input).
-"""
 from __future__ import annotations
 
 import argparse
@@ -53,8 +25,9 @@ WINDOW_PATH_KEYS = {
     "1d": "q3_merged_output_host_path_1d",
     "7d": "q3_merged_output_host_path_7d",
     "global": "q3_merged_output_host_path_global",
+    "cumulative": "q3_merged_output_host_path_cumulative",
 }
-Q3_WINDOW_CHOICES = ("1d", "7d", "global", "all")
+Q3_WINDOW_CHOICES = ("1d", "7d", "global", "cumulative", "all")
 
 DEFAULT_BASELINE = "01_baseline"
 DEFAULT_OUTPUT = PROJECT_ROOT / "Results" / "late_drops_q3.csv"
@@ -117,7 +90,11 @@ def resolve_window_files(experiment: str | None) -> tuple[str, dict[str, Path]]:
     paths = cfg["paths"]
     experiment_name = get_experiment_name(cfg)
     selected_window = selected_q3_window(cfg)
-    path_keys = WINDOW_PATH_KEYS
+    path_keys = {
+        label: key
+        for label, key in WINDOW_PATH_KEYS.items()
+        if label != "cumulative"
+    }
     if selected_window != "all":
         path_keys = {selected_window: WINDOW_PATH_KEYS[selected_window]}
 

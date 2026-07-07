@@ -108,17 +108,26 @@ q1:
 
 q2:
   # Finestra Q2 da eseguire.
-  # Specifica: 1h, 6h, global. Usa "all" per eseguirle tutte nello stesso job.
+  # Specifica: 1h, 6h, dall'inizio dataset. "cumulative" implementa lo
+  # stato live dall'inizio; "global" resta la finestra unica legacy a EOS.
+  # Usa "all" per eseguirle tutte nello stesso job.
   window: "all"
   # Ritardo massimo ammesso per eventi in ritardo (event time).
   watermark_delay_seconds: 180
+  # Ogni quanto emettere snapshot della cumulativa live, in event-time.
+  # 2700000 ms = 45 minuti del dataset. Lo stato interno resta aggiornato per record.
+  cumulative_emit_event_interval_ms: 2700000
 
 q3:
   # Finestra Q3 da eseguire.
-  # Specifica: 1d, 7d, global. Usa "all" per eseguirle tutte nello stesso job.
+  # Specifica: 1d, 7d, dall'inizio dataset. "cumulative" implementa lo
+  # stato live dall'inizio; "global" resta la finestra unica legacy a EOS.
+  # Usa "all" per eseguirle tutte nello stesso job.
   window: "all"
   # Stessa strategia di watermarking di Q1/Q2.
   watermark_delay_seconds: 180
+  # Ogni quanto emettere snapshot della cumulativa live, in processing-time.
+  cumulative_emit_interval_ms: 5000
   # DDSketch: errore relativo massimo garantito sui percentili.
   sketch_alpha: 0.01
   # Spark Structured Streaming extra: percentile_approx accuracy.
@@ -135,10 +144,12 @@ dashboard:
       topic_1h: "q2_results_1h"
       topic_6h: "q2_results_6h"
       topic_global: "q2_results_global"
+      topic_cumulative: "q2_results_cumulative"
     q3:
       topic_1d: "q3_results_1d"
       topic_7d: "q3_results_7d"
       topic_global: "q3_results_global"
+      topic_cumulative: "q3_results_cumulative"
   timescale:
     enabled: true
     # NB: con enabled=true le tabelle DEVONO esistere (init in dashboard/timescaledb/).
@@ -150,7 +161,9 @@ dashboard:
       table_1h: "q2_results_1h"
       table_6h: "q2_results_6h"
       table_global: "q2_results_global"
+      table_cumulative: "q2_results_cumulative"
     q3:
       table_1d: "q3_results_1d"
       table_7d: "q3_results_7d"
       table_global: "q3_results_global"
+      table_cumulative: "q3_results_cumulative"

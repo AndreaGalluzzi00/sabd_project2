@@ -1,5 +1,3 @@
-# Datasource InfluxDB (Flux) provisionato automaticamente.
-# Il token DEVE coincidere con DOCKER_INFLUXDB_INIT_ADMIN_TOKEN del servizio influxdb.
 apiVersion: 1
 
 datasources:

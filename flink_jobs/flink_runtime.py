@@ -22,7 +22,7 @@ class FlinkRuntimeConfig:
     auto_watermark_interval_ms: int
     python_bundle_time_ms: int
 
-    # ── Fault tolerance (checkpointing degli operatori con stato) ─────────────
+
     checkpointing_mode: str
     checkpoint_min_pause_ms: int
     checkpoint_timeout_ms: int
@@ -37,8 +37,7 @@ class FlinkRuntimeConfig:
 def build_flink_runtime_config(cfg: dict[str, Any]) -> FlinkRuntimeConfig:
     schema_registry_cfg = cfg.get("schema_registry", {})
     flink_cfg = cfg["flink"]
-    # I parametri di fault tolerance hanno default sicuri: gli esperimenti che
-    # non li ridefiniscono (config/experiments/*.yml) restano validi.
+
     ckp = flink_cfg.get("checkpointing", {})
     restart = flink_cfg.get("restart", {})
 
@@ -75,20 +74,7 @@ def _configure_fault_tolerance(
     env: StreamExecutionEnvironment,
     runtime_cfg: FlinkRuntimeConfig,
 ) -> None:
-    """
-    Applica il meccanismo di tolleranza ai guasti di Flink a TUTTI gli operatori
-    con stato del job:
 
-      * checkpoint periodici in modalita' EXACTLY_ONCE (barrier allineate), con
-        snapshot coerente dello stato + offset Kafka su file:///opt/flink/checkpoints
-        (state.checkpoints.dir, definito nelle FLINK_PROPERTIES del cluster);
-      * checkpoint "externalized" (RETAIN_ON_CANCELLATION): l'ultimo checkpoint
-        sopravvive a cancellazione/guasto ed e' riutilizzabile per il recovery;
-      * restart strategy fixed-delay: a fronte del crash di un operatore o
-        dell'intero TaskManager, il JobManager riavvia il job e ne ripristina lo
-        stato dall'ultimo checkpoint completato. Senza restart strategy il job
-        fallirebbe definitivamente invece di recuperare.
-    """
     mode = (
         CheckpointingMode.EXACTLY_ONCE
         if runtime_cfg.checkpointing_mode == "EXACTLY_ONCE"
@@ -119,13 +105,7 @@ def _configure_fault_tolerance(
 def create_stream_execution_environment(
     runtime_cfg: FlinkRuntimeConfig,
 ) -> StreamExecutionEnvironment:
-    # Gli operatori Python (finestre DataStream di Q3, UDAF di Q2) processano i
-    # record a bundle e applicano i watermark SOLO al confine del bundle: il
-    # default di 1000 ms, a 57600x, quantizza il watermark visto dall'operatore
-    # a ~16 ore di event time -> nessun record risulterebbe mai late, qualunque
-    # sia auto_watermark_interval_ms (che agisce solo sul generatore). Gli
-    # esperimenti wm lo abbassano (10 ms ~ 576 s event) per rendere osservabili
-    # i late drop anche nel path Python.
+
     config = Configuration()
     config.set_integer(
         "python.fn-execution.bundle.time", runtime_cfg.python_bundle_time_ms
@@ -135,9 +115,6 @@ def create_stream_execution_environment(
 
     _configure_fault_tolerance(env, runtime_cfg)
 
-    # Periodic watermark emission interval. Smaller -> the watermark tracks the
-    # data front more tightly (less "blind" event-time gap from batching), at the
-    # cost of more watermark records flowing through the pipeline.
     env.get_config().set_auto_watermark_interval(
         runtime_cfg.auto_watermark_interval_ms
     )

@@ -1,25 +1,5 @@
 #!/usr/bin/env python3
-"""
-Report Flink 'numLateRecordsDropped' for the RUNNING job(s).
-
-Walks every vertex of every RUNNING job via the JobManager REST API, sums
-the per-subtask 'numLateRecordsDropped' counters and appends detailed rows
-plus an operator-total row per job to Results/late_drops.csv.
-
-The counter measures events discarded by the window operators because they
-arrived after the watermark had passed their window end — the number that
-links the injected out-of-orderness to the completeness loss. In the Q1
-SQL job the airline filter runs before the windowing, so only events of
-the four target carriers can be counted. Q3 computes the DDSketch windows
-with the DataStream API, so this script reads the built-in record counter on
-each late-data side output branch (Map__Q3LateDrops[1d], [7d], [global]).
-
-Run it after the merge (results stable => counters are final) and BEFORE
-cancelling the job: metrics disappear once the job stops.
-
-Exit codes: 0 = metric collected; 1 = no running job, REST unreachable,
-or metric not found (never writes a fake 0 in those cases).
-"""
+"""Collect Flink late-record drop metrics and append them to a CSV report."""
 
 from __future__ import annotations
 

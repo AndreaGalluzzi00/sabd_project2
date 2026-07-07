@@ -292,8 +292,25 @@ function Start-DashboardStack {
     Write-Host "Starting infrastructure/dashboard profiles..."
     Write-Host ("Profiles: " + ($ProfileArgs -join " "))
 
+    Start-ExperimentInfrastructure -Engine "flink"
+
+    $DashboardServices = @()
+
+    if ($EnableInflux) {
+        $DashboardServices += @("dashboard-init", "influxdb", "telegraf")
+    }
+
+    if ($EnableTimescale) {
+        $DashboardServices += @("timescaledb")
+    }
+
+    $DashboardServices += @("grafana")
+    $DashboardServices = @($DashboardServices | Select-Object -Unique)
+
+    Write-Host ("Starting dashboard services: " + ($DashboardServices -join " "))
+
     Invoke-Checked {
-        docker compose @ProfileArgs up -d
+        docker compose @ProfileArgs up -d --force-recreate --no-deps @DashboardServices
     }
 }
 
@@ -467,14 +484,16 @@ function Get-DashboardKafkaTopics {
             return @(
                 [pscustomobject]@{ Name = "q2_results_1h"; Partitions = 1 },
                 [pscustomobject]@{ Name = "q2_results_6h"; Partitions = 1 },
-                [pscustomobject]@{ Name = "q2_results_global"; Partitions = 1 }
+                [pscustomobject]@{ Name = "q2_results_global"; Partitions = 1 },
+                [pscustomobject]@{ Name = "q2_results_cumulative"; Partitions = 1 }
             )
         }
         "q3" {
             return @(
                 [pscustomobject]@{ Name = "q3_results_1d"; Partitions = 1 },
                 [pscustomobject]@{ Name = "q3_results_7d"; Partitions = 1 },
-                [pscustomobject]@{ Name = "q3_results_global"; Partitions = 1 }
+                [pscustomobject]@{ Name = "q3_results_global"; Partitions = 1 },
+                [pscustomobject]@{ Name = "q3_results_cumulative"; Partitions = 1 }
             )
         }
     }
@@ -489,8 +508,8 @@ function Get-DashboardTelegrafConsumerGroups {
 
     switch ($Query) {
         "q1" { return @("telegraf-q1") }
-        "q2" { return @("telegraf-q2-1h", "telegraf-q2-6h", "telegraf-q2-global") }
-        "q3" { return @("telegraf-q3-1d", "telegraf-q3-7d", "telegraf-q3-global") }
+        "q2" { return @("telegraf-q2-1h", "telegraf-q2-6h", "telegraf-q2-global", "telegraf-q2-cumulative") }
+        "q3" { return @("telegraf-q3-1d", "telegraf-q3-7d", "telegraf-q3-global", "telegraf-q3-cumulative") }
     }
 }
 
@@ -503,8 +522,8 @@ function Get-DashboardInfluxMeasurements {
 
     switch ($Query) {
         "q1" { return @("q1") }
-        "q2" { return @("q2_1h", "q2_6h", "q2_global") }
-        "q3" { return @("q3_1d", "q3_7d", "q3_global") }
+        "q2" { return @("q2_1h", "q2_6h", "q2_global", "q2_cumulative") }
+        "q3" { return @("q3_1d", "q3_7d", "q3_global", "q3_cumulative") }
     }
 }
 
@@ -517,8 +536,8 @@ function Get-DashboardTimescaleTables {
 
     switch ($Query) {
         "q1" { return @("q1_results") }
-        "q2" { return @("q2_results_1h", "q2_results_6h", "q2_results_global") }
-        "q3" { return @("q3_results_1d", "q3_results_7d", "q3_results_global") }
+        "q2" { return @("q2_results_1h", "q2_results_6h", "q2_results_global", "q2_results_cumulative") }
+        "q3" { return @("q3_results_1d", "q3_results_7d", "q3_results_global", "q3_results_cumulative") }
     }
 }
 
@@ -746,12 +765,14 @@ function Get-RunSpec {
             q2 = @(
                 "spark_q2_results_host_path_1h",
                 "spark_q2_results_host_path_6h",
-                "spark_q2_results_host_path_global"
+                "spark_q2_results_host_path_global",
+                "spark_q2_results_host_path_cumulative"
             )
             q3 = @(
                 "spark_q3_results_host_path_1d",
                 "spark_q3_results_host_path_7d",
-                "spark_q3_results_host_path_global"
+                "spark_q3_results_host_path_global",
+                "spark_q3_results_host_path_cumulative"
             )
         }
 
@@ -778,12 +799,14 @@ function Get-RunSpec {
         q2 = @(
             "q2_results_host_path_1h",
             "q2_results_host_path_6h",
-            "q2_results_host_path_global"
+            "q2_results_host_path_global",
+            "q2_results_host_path_cumulative"
         )
         q3 = @(
             "q3_results_host_path_1d"
             "q3_results_host_path_7d"
             "q3_results_host_path_global"
+            "q3_results_host_path_cumulative"
         )
     }
 

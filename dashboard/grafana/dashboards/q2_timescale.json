@@ -81,7 +81,7 @@
     {
       "id": 4,
       "type": "table",
-      "title": "Top-10 aeroporti dall'inizio del dataset - global (si popola al termine del replay)",
+      "title": "Top-10 aeroporti dall'inizio del dataset - cumulative live",
       "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 20 },
       "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
@@ -93,7 +93,7 @@
           "format": "table",
           "editorMode": "code",
           "rawQuery": true,
-          "rawSql": "SELECT airport_rank AS \"rank\", origin_airport_id, num_flights, severe_delays, round(dep_delay_mean::numeric, 1) AS dep_delay_mean, round(dep_delay_max::numeric, 1) AS dep_delay_max, delayed_flights FROM q2_results_global ORDER BY airport_rank"
+          "rawSql": "SELECT airport_rank AS \"rank\", origin_airport_id, num_flights, severe_delays, round(dep_delay_mean::numeric, 1) AS dep_delay_mean, round(dep_delay_max::numeric, 1) AS dep_delay_max, delayed_flights FROM q2_results_cumulative WHERE ts = (SELECT max(ts) FROM q2_results_cumulative) ORDER BY airport_rank"
         }
       ]
     }

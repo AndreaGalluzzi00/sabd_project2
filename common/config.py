@@ -175,7 +175,7 @@ def _materialize_derived_paths(cfg: dict[str, Any]) -> dict[str, Any]:
         merged_output_host_path("q1", "flink", "table"),
     )
 
-    for label in ("1h", "6h", "global"):
+    for label in ("1h", "6h", "global", "cumulative"):
         _setdefault_path(
             paths,
             f"q2_results_path_{label}",
@@ -192,7 +192,7 @@ def _materialize_derived_paths(cfg: dict[str, Any]) -> dict[str, Any]:
             merged_output_host_path("q2", "flink", "table", label),
         )
 
-    for label in ("1d", "7d", "global"):
+    for label in ("1d", "7d", "global", "cumulative"):
         _setdefault_path(
             paths,
             f"q3_results_path_{label}",
@@ -226,8 +226,8 @@ def _materialize_derived_paths(cfg: dict[str, Any]) -> dict[str, Any]:
     )
 
     for query, labels in {
-        "q2": ("1h", "6h", "global"),
-        "q3": ("1d", "7d", "global"),
+        "q2": ("1h", "6h", "global", "cumulative"),
+        "q3": ("1d", "7d", "global", "cumulative"),
     }.items():
         for label in labels:
             _setdefault_path(

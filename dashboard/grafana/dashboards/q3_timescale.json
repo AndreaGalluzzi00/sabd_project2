@@ -171,7 +171,7 @@
     {
       "id": 5,
       "type": "table",
-      "title": "Distribuzione dall'inizio del dataset - $airline per fascia oraria (si popola al termine del replay)",
+      "title": "Distribuzione dall'inizio del dataset - $airline per fascia oraria (cumulative live)",
       "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 18 },
       "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
@@ -183,7 +183,7 @@
           "format": "table",
           "editorMode": "code",
           "rawQuery": true,
-          "rawSql": "SELECT hour, num_flights, delay_min, p25, p50, p75, p90, delay_max FROM q3_results_global WHERE airline = '${airline}' ORDER BY hour"
+          "rawSql": "SELECT hour, num_flights, delay_min, p25, p50, p75, p90, delay_max FROM q3_results_cumulative WHERE airline = '${airline}' ORDER BY hour"
         }
       ]
     }

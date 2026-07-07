@@ -1,13 +1,4 @@
-"""
-Q3 shared components: sketch aggregator, window function, tipi e DDL dei sink.
 
-L'aggregazione è incrementale (AggregateFunction): l'accumulatore per ogni
-chiave (compagnia, fascia oraria) e finestra è UN DelayDDSketch, non la lista
-dei valori — requisito esplicito della specifica ("senza ordinare tutti i
-valori e possibilmente senza accumularli interamente"). Flink invoca add()
-per ogni evento e la finestra mantiene solo lo sketch; alla chiusura la
-ProcessWindowFunction estrae i percentili approssimati e min/max/count esatti.
-"""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -16,30 +7,20 @@ from pyflink.common import Row
 from pyflink.common.typeinfo import Types
 from pyflink.datastream.functions import (
     AggregateFunction,
+    KeyedProcessFunction,
     MapFunction,
     ProcessWindowFunction,
 )
+from pyflink.datastream.state import ValueStateDescriptor
 
 from delay_sketch import DelayDDSketch
 
 
-# ── Contatore late-drop per il side output delle finestre ─────────────────────
-# Le finestre Q3 sono operatori DataStream (aggregazione DDSketch in Python):
-# NON registrano il contatore 'numLateRecordsDropped' del WindowOperator SQL.
-# Lo ricreiamo a mano sul side output dei late data, con lo STESSO nome, così
-# scripts/report_late_drops.py lo trova via REST come per Q1/Q2-Table.
-
 LATE_DROPS_METRIC = "numLateRecordsDropped"
+DATASET_START_TS = datetime(2025, 1, 1)
 
 
 class Q3LateDropCounter(MapFunction):
-    """Passthrough che conta i record scartati perché in ritardo.
-
-    Incrementa un Counter Flink chiamato 'numLateRecordsDropped' sul proprio
-    operatore (nominato per finestra in job.py → metrica per-finestra via REST).
-    L'output (un LONG fittizio) alimenta un sink blackhole aggiunto allo
-    StatementSet, al solo scopo di far girare il branch del side output.
-    """
 
     def __init__(self) -> None:
         self._counter = None
@@ -52,18 +33,12 @@ class Q3LateDropCounter(MapFunction):
         return 1
 
 
-# ── Chiave di raggruppamento (compagnia, fascia oraria) ───────────────────────
-# Chiave stringa "AA|08": evita il bridge dei tuple-key Python↔Java; la window
-# function la riscompone nei due campi di output.
-
 def group_key(airline: str, hour: int) -> str:
     return f"{airline}|{hour:02d}"
 
 
-# ── Aggregazione incrementale: accumulatore = DDSketch ────────────────────────
 
 class Q3AggregateFunction(AggregateFunction):
-    """Sketch per (compagnia, fascia) su una finestra event-time."""
 
     def __init__(self, alpha: float):
         self._alpha = alpha
@@ -84,14 +59,7 @@ class Q3AggregateFunction(AggregateFunction):
         return acc
 
 
-# ── ProcessWindowFunction: sketch → riga di output ────────────────────────────
-
 class Q3WindowFunction(ProcessWindowFunction):
-    """
-    Riceve lo sketch finale per (finestra, chiave) ed emette la riga Q3:
-    ts = inizio finestra, percentili approssimati arrotondati a 2 decimali
-    (formato dell'esempio di output della specifica), min/max/count esatti.
-    """
 
     def process(self, key: str, context: ProcessWindowFunction.Context, elements):
         sketch = next(iter(elements))
@@ -115,13 +83,82 @@ class Q3WindowFunction(ProcessWindowFunction):
         )
 
 
-# TypeInformation dell'output. PyFlink 1.20 non ha Types.LOCAL_DATE_TIME:
-# il campo ts viaggia come Types.SQL_TIMESTAMP() (java.sql.Timestamp) e in
-# job.py la colonna ts della schema from_data_stream è bridged_to
-# java.sql.Timestamp (stessa soluzione dello Stage 2 di Q2).
-# 'num_flights'/'delay_min'/'delay_max' invece di count/min/max: evita le
-# keyword SQL riservate nei DDL dei sink; merge_q3.py scrive l'header
-# richiesto dalla specifica (ts, airline, hour, count, min, ..., max).
+class Q3CumulativeFunction(KeyedProcessFunction):
+    """Running DDSketch per (airline, hour), emitted as throttled snapshots."""
+
+    def __init__(self, alpha: float, emit_interval_ms: int):
+        self._alpha = alpha
+        self._emit_interval_ms = emit_interval_ms
+        self._sketch_state = None
+        self._meta_state = None
+        self._timer_state = None
+        self._dirty_state = None
+
+    def open(self, runtime_context) -> None:
+        self._sketch_state = runtime_context.get_state(
+            ValueStateDescriptor("q3-cumulative-sketch", Types.PICKLED_BYTE_ARRAY())
+        )
+        self._meta_state = runtime_context.get_state(
+            ValueStateDescriptor("q3-cumulative-meta", Types.PICKLED_BYTE_ARRAY())
+        )
+        self._timer_state = runtime_context.get_state(
+            ValueStateDescriptor("q3-cumulative-next-timer", Types.LONG())
+        )
+        self._dirty_state = runtime_context.get_state(
+            ValueStateDescriptor("q3-cumulative-dirty", Types.BOOLEAN())
+        )
+
+    def process_element(self, value, ctx):
+        # value: (event_time_ms, airline, hour, dep_delay)
+        sketch = self._sketch_state.value()
+        if sketch is None:
+            sketch = DelayDDSketch(self._alpha)
+
+        sketch.add(value[3])
+        self._sketch_state.update(sketch)
+        self._meta_state.update((value[1], int(value[2])))
+        self._dirty_state.update(True)
+        self._ensure_timer(ctx)
+        if False:
+            yield None
+
+    def on_timer(self, timestamp: int, ctx):
+        self._timer_state.clear()
+
+        if not self._dirty_state.value():
+            return
+
+        sketch = self._sketch_state.value()
+        meta = self._meta_state.value()
+        if sketch is None or meta is None or sketch.count == 0:
+            return
+
+        airline, hour = meta
+        yield Row(
+            DATASET_START_TS,
+            airline,
+            int(hour),
+            sketch.count,
+            sketch.min_value,
+            round(sketch.quantile(0.25), 2),
+            round(sketch.quantile(0.50), 2),
+            round(sketch.quantile(0.75), 2),
+            round(sketch.quantile(0.90), 2),
+            sketch.max_value,
+        )
+        self._dirty_state.update(False)
+
+    def _ensure_timer(self, ctx) -> None:
+        if self._timer_state.value() is not None:
+            return
+
+        now = ctx.timer_service().current_processing_time()
+        next_timer = now + self._emit_interval_ms
+        self._timer_state.update(next_timer)
+        ctx.timer_service().register_processing_time_timer(next_timer)
+
+
+
 Q3_OUTPUT_TYPE = Types.ROW_NAMED(
     ['ts', 'airline', 'hour', 'num_flights',
      'delay_min', 'p25', 'p50', 'p75', 'p90', 'delay_max'],
@@ -130,8 +167,6 @@ Q3_OUTPUT_TYPE = Types.ROW_NAMED(
      Types.DOUBLE(), Types.DOUBLE(), Types.DOUBLE()],
 )
 
-
-# ── DDL dei sink (stesso pattern di Q1/Q2: CSV sempre, Kafka/JDBC opzionali) ──
 
 CSV_SINK_DDL = """
     CREATE TABLE {name} (
@@ -154,8 +189,7 @@ CSV_SINK_DDL = """
     )
 """
 
-# hour come STRING: Telegraf (parser JSON) accetta solo stringhe come tag e
-# 'hour' deve essere un tag InfluxDB insieme ad 'airline'.
+
 KAFKA_SINK_DDL = """
     CREATE TABLE {name} (
         ts          TIMESTAMP(3),
@@ -177,8 +211,6 @@ KAFKA_SINK_DDL = """
     )
 """
 
-# PRIMARY KEY NOT ENFORCED → il connettore JDBC lavora in upsert
-# (INSERT ... ON CONFLICT DO UPDATE): ri-esecuzioni idempotenti.
 JDBC_SINK_DDL = """
     CREATE TABLE {name} (
         ts          TIMESTAMP(3),

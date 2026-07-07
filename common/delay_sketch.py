@@ -1,16 +1,11 @@
-
 from __future__ import annotations
 
 import math
 
-# Sotto questa soglia il valore è indistinguibile da zero per lo sketch
-# (i ritardi del dataset sono minuti interi, la soglia non è mai rilevante
-# in pratica ma evita log(0) su input degeneri).
 _ZERO_EPSILON = 1e-9
 
 
 class DelayDDSketch:
-    """Sketch dei quantili di DEP_DELAY per un gruppo (compagnia, fascia)."""
 
     __slots__ = (
         "alpha",
@@ -32,24 +27,19 @@ class DelayDDSketch:
         self._gamma = (1.0 + alpha) / (1.0 - alpha)
         self._log_gamma = math.log(self._gamma)
 
-        self._pos: dict[int, int] = {}   # bucket index -> count (valori > 0)
-        self._neg: dict[int, int] = {}   # bucket index su |v| -> count (valori < 0)
+        self._pos: dict[int, int] = {}
+        self._neg: dict[int, int] = {}
         self._zero_count = 0
 
         self.count = 0
         self.min_value = math.inf
         self.max_value = -math.inf
 
-    # ── Mapping bucket ↔ valore ───────────────────────────────────────────────
-
     def _bucket_index(self, magnitude: float) -> int:
         return math.ceil(math.log(magnitude) / self._log_gamma)
 
     def _bucket_value(self, index: int) -> float:
-        # Rappresentante del bucket i = (γ^(i-1), γ^i]: errore relativo ≤ α.
         return 2.0 * self._gamma ** index / (self._gamma + 1.0)
-
-    # ── Inserimento e merge ───────────────────────────────────────────────────
 
     def add(self, value: float) -> None:
         value = float(value)
@@ -64,10 +54,8 @@ class DelayDDSketch:
             self._zero_count += 1
 
         self.count += 1
-        if value < self.min_value:
-            self.min_value = value
-        if value > self.max_value:
-            self.max_value = value
+        self.min_value = min(self.min_value, value)
+        self.max_value = max(self.max_value, value)
 
     def merge(self, other: "DelayDDSketch") -> None:
         for index, cnt in other._pos.items():
@@ -80,10 +68,7 @@ class DelayDDSketch:
         self.min_value = min(self.min_value, other.min_value)
         self.max_value = max(self.max_value, other.max_value)
 
-    # ── Interrogazione ────────────────────────────────────────────────────────
-
     def quantile(self, q: float) -> float | None:
-        """Quantile approssimato q ∈ [0, 1]; None se lo sketch è vuoto."""
         if self.count == 0:
             return None
         if q <= 0.0:
@@ -94,8 +79,6 @@ class DelayDDSketch:
         rank = q * (self.count - 1)
         cumulative = 0
 
-        # Ordine crescente di valore: negativi dal più piccolo (|v| massimo,
-        # indice massimo) al più grande, poi gli zeri, poi i positivi.
         for index in sorted(self._neg, reverse=True):
             cumulative += self._neg[index]
             if cumulative > rank:
@@ -116,5 +99,4 @@ class DelayDDSketch:
         return min(max(value, self.min_value), self.max_value)
 
     def bucket_count(self) -> int:
-        """Numero di contatori vivi: la 'memoria' dello sketch (per il report)."""
         return len(self._pos) + len(self._neg) + (1 if self._zero_count else 0)

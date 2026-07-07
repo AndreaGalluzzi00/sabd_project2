@@ -46,11 +46,6 @@ def main() -> None:
     is_eos = F.col("airline") == "__EOS__"
     is_target_airline = F.col("airline").isin(AIRLINES)
 
-    # Keep EOS rows inside the stateful aggregation. A post-aggregate filter on
-    # the grouping key can be pushed below the aggregate by Spark's optimizer,
-    # which would drop "__EOS__" before it advances the watermark. Instead, map
-    # every EOS marker to the real Q1 airline keys and mark it as non-real: it
-    # advances event time but contributes zero to all metrics.
     q1_input = (
         flights.filter(is_target_airline | is_eos)
         .withColumn("_source_airline", F.col("airline"))

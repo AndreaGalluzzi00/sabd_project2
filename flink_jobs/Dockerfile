@@ -1,5 +1,4 @@
-# PyFlink (apache-flink) non pubblica wheel Linux aarch64: forziamo amd64.
-# Su Apple Silicon gira via Rosetta (abilitare in Docker Desktop).
+
 FROM --platform=linux/amd64 flink:1.20-java17
 
 RUN apt-get update -y && \
@@ -17,9 +16,7 @@ RUN wget -q -P /opt/flink/lib/ \
     wget -q -P /opt/flink/lib/ \
     https://repo1.maven.org/maven2/org/apache/flink/flink-sql-avro-confluent-registry/1.20.0/flink-sql-avro-confluent-registry-1.20.0.jar
 
-# JDBC connector + PostgreSQL driver: usati dal sink opzionale verso TimescaleDB
-# (dashboard SQL alternativa a InfluxDB). Il jar 3.3.0-1.20 include il dialetto
-# Postgres; il driver è necessario a runtime per aprire la connessione.
+
 RUN wget -q -P /opt/flink/lib/ \
     https://repo1.maven.org/maven2/org/apache/flink/flink-connector-jdbc/3.3.0-1.20/flink-connector-jdbc-3.3.0-1.20.jar && \
     wget -q -P /opt/flink/lib/ \

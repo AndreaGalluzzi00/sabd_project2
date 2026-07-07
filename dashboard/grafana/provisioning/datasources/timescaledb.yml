@@ -1,5 +1,3 @@
-# Datasource TimescaleDB (Postgres + estensione time-series) provisionato.
-# Va in errore solo se il container timescaledb non è attivo (profilo non avviato).
 apiVersion: 1
 
 datasources:
