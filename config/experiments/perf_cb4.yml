@@ -1,0 +1,18 @@
+extends: "perf_par4.yml"
+
+# Compute-bound (vedi perf_cb1.yml per il razionale). Parallelism = 4 (= numero
+# di partizioni del topic), producer floodato al massimo fisico.
+
+experiment:
+  name: "perf_cb4"
+
+producer:
+  acceleration_factor: 10000000
+  skip_if_topic_has_messages: true
+
+# CSV-only (vedi perf_cb1.yml): dashboard off per evitare il crash-loop dei sink.
+dashboard:
+  influx:
+    enabled: false
+  timescale:
+    enabled: false

@@ -1,0 +1,6 @@
+extends: "perf_cb2.yml"
+
+# Parallelismo 2 (da perf_cb2), partizioni = 1 (impostare a topic-creation time).
+# Vedi p1_n1.yml per il razionale.
+experiment:
+  name: "p2_n1"
