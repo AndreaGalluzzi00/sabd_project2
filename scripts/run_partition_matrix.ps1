@@ -30,16 +30,10 @@ param(
     # Combo come "parallelismo:partizioni".
     [string[]]$Combos = @("1:1", "2:1", "2:2", "4:1", "4:2", "4:4"),
 
-    [int]$ReplicationFactor = 1,
-
-    [string]$PythonHome = "C:\Users\uazap\AppData\Local\Programs\Python\Python314",
-
-    # Salta il chmod dei checkpoint (utile se non hai ricreato i container).
-    [switch]$NoChmod
+    [int]$ReplicationFactor = 1
 )
 
 $ErrorActionPreference = "Stop"
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
 # Vai alla root del progetto (questo script sta in scripts/).
 $ProjectRoot = Split-Path $PSScriptRoot -Parent
@@ -49,13 +43,6 @@ if (-not (Test-Path ".\docker-compose.yml")) {
     throw "docker-compose.yml non trovato in $ProjectRoot"
 }
 
-# 'python' di sistema e' lo stub del Microsoft Store: metti quello vero davanti.
-if (Test-Path $PythonHome) {
-    $env:PATH = "$PythonHome;$PythonHome\Scripts;$env:PATH"
-}
-else {
-    Write-Warning "PythonHome non trovato: $PythonHome (report_perf potrebbe fallire)."
-}
 
 function Reset-FlightsTopic {
     param([int]$Partitions)
@@ -67,11 +54,6 @@ function Reset-FlightsTopic {
         --create --topic flights --partitions $Partitions --replication-factor $ReplicationFactor
 }
 
-if (-not $NoChmod) {
-    Write-Host "Fix permessi checkpoint..."
-    docker exec -u root flink-taskmanager sh -c "chmod -R 777 /opt/flink/checkpoints /opt/flink/savepoints"
-    docker exec -u root flink-jobmanager  sh -c "chmod -R 777 /opt/flink/checkpoints /opt/flink/savepoints"
-}
 
 foreach ($combo in $Combos) {
     $parts = $combo.Split(":")

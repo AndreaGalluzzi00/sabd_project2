@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Collect Flink throughput, latency and pressure metrics for an experiment."""
 
 from __future__ import annotations
 
@@ -108,7 +107,6 @@ def vertex_metric_ids(flink_url: str, jid: str, vid: str) -> list[str]:
 
 
 def fetch_metrics(flink_url: str, jid: str, vid: str, ids: list[str]) -> dict[str, dict]:
-    """Return {id: {min,max,avg,sum}} for the given (comma-free) metric ids."""
     if not ids:
         return {}
     query = urllib.parse.urlencode({"get": ",".join(ids)})

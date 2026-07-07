@@ -114,6 +114,25 @@
           "rawSql": "SELECT window_start AS \"time\", airline, late_departure_rate FROM q1_results WHERE $__timeFilter(window_start) ORDER BY window_start"
         }
       ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Voli completati / cancellati / deviati per compagnia (ultima finestra 1h)",
+      "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 18 },
+      "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
+          "format": "table",
+          "editorMode": "code",
+          "rawQuery": true,
+          "rawSql": "SELECT airline, num_flights, completed, cancelled, diverted FROM q1_results WHERE window_start = (SELECT max(window_start) FROM q1_results) ORDER BY airline"
+        }
+      ]
     }
   ]
 }

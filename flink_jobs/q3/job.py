@@ -39,7 +39,6 @@ Q3_WINDOW_CHOICES = ("1d", "7d", "global", "cumulative", "all")
 
 
 def hour_band(crs_dep_time: int) -> int:
-    """Scheduled departure hour bucket (0-23) from CRS_DEP_TIME in hhmm."""
     return (crs_dep_time // 100) % 24
 
 
