@@ -45,12 +45,7 @@ def parse_experiment_args(description: str) -> argparse.Namespace:
 
 
 def stability_window_seconds(cfg: dict) -> float:
-    """Stability window sized to cover at least two Flink checkpoints.
 
-    Part files are finalized only when a checkpoint completes, so if nothing
-    new shows up for ~2.5 checkpoint intervals there is no committed data
-    left in flight.
-    """
     checkpoint_ms = float(cfg.get("flink", {}).get("checkpoint_interval_ms", 10_000))
 
     return max(2.5 * checkpoint_ms / 1000.0, 15.0)
@@ -76,13 +71,7 @@ def wait_for_stable_results(
     poll_seconds: float = 2.0,
     timeout_seconds: float = 180.0,
 ) -> None:
-    """Block until the set of finalized part files stops changing.
 
-    The snapshot (file names + total row count) must stay identical, with at
-    least one row, for stable_for_seconds. Raises TimeoutError otherwise: an
-    empty results directory never counts as stable, so a merge launched too
-    early fails loudly instead of producing a truncated CSV.
-    """
     deadline = time.monotonic() + timeout_seconds
     previous: tuple[tuple[str, ...], int] | None = None
     stable_since = time.monotonic()

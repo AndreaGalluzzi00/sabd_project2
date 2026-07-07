@@ -1,14 +1,4 @@
 #!/usr/bin/env python3
-"""
-Q1 – Real-time airline operational status monitoring.
-
-Tumbling 1-hour event-time windows over the 'flights' Kafka topic.
-Filters AA, DL, UA, WN and computes per-window, per-airline statistics.
-
-Output schema:
-    window_start, window_end, airline, num_flights, completed, cancelled,
-    diverted, dep_delay_mean, cancellation_rate, late_departure_rate
-"""
 from __future__ import annotations
 
 import sys
@@ -34,10 +24,6 @@ class Q1Config(FlinkRuntimeConfig):
     results_path: str
     watermark_delay_seconds: int
 
-    # Optional live dashboard sinks (Grafana). Two independent backends:
-    #   - InfluxDB via Kafka -> Telegraf
-    #   - TimescaleDB via native Flink JDBC sink
-    # Both disabled by default so the certified CSV pipeline runs unchanged.
     influx_enabled: bool
     influx_results_topic: str
 
@@ -104,8 +90,6 @@ def main() -> None:
         q1_cfg.watermark_delay_seconds,
     )
 
-    # ── Source: Kafka 'flights' topic ────────────────────────────────────────
-    # Only the fields needed for Q1 are declared; unknown JSON keys are ignored.
     t_env.execute_sql(f"""
         CREATE TABLE flights (
             event_time  BIGINT,
@@ -127,7 +111,6 @@ def main() -> None:
         )
     """)
 
-    # ── Sink: CSV files under configured result path ─────────────────────────
     t_env.execute_sql(f"""
         CREATE TABLE q1_results (
             window_start        TIMESTAMP(3),
@@ -149,22 +132,12 @@ def main() -> None:
         )
     """)
 
-    # ── Q1 aggregation (single source of truth for every sink) ───────────────
-    # Filter the target airlines before windowing so Flink does not assign
-    # events from irrelevant carriers to tumbling windows only to discard them.
     t_env.execute_sql("""
         CREATE TEMPORARY VIEW flights_q1 AS
         SELECT * FROM flights
         WHERE airline IN ('AA', 'DL', 'UA', 'WN')
     """)
 
-    # Computed once as a view. The CSV sink (certified output) and the optional
-    # Kafka sink (dashboard) both read identical rows from it, so the live
-    # dashboard can never diverge from the delivered CSV.
-    # Watermark semantics:
-    #   - COALESCE(cancelled, 0.0) treats missing values as "not cancelled"
-    #   - AVG ignores NULL dep_delay rows automatically (standard SQL)
-    #   - dep_delay > 15 is FALSE for NULL dep_delay (treated as not late)
     t_env.execute_sql("""
         CREATE TEMPORARY VIEW q1_agg AS
         SELECT
@@ -201,10 +174,6 @@ def main() -> None:
         GROUP BY window_start, window_end, airline
     """)
 
-    # ── Optional dashboard sink #1: InfluxDB via Kafka topic ─────────────────
-    # Append-only (windowing TVF output), so the plain 'kafka' connector applies.
-    # Telegraf consumes this topic and ships it to InfluxDB. Timestamps use the
-    # SQL standard ('2025-01-01 08:00:00'); window bounds fall on whole seconds.
     if q1_cfg.influx_enabled:
         logger.info(
             "Q1 | InfluxDB sink ENABLED → Kafka topic '%s'",
@@ -231,10 +200,6 @@ def main() -> None:
             )
         """)
 
-    # ── Optional dashboard sink #2: TimescaleDB via native JDBC ──────────────
-    # PRIMARY KEY (window_start, airline) NOT ENFORCED → the JDBC connector runs
-    # in upsert mode (INSERT ... ON CONFLICT DO UPDATE), so re-running the job is
-    # idempotent. The target table must already exist (see dashboard/timescaledb).
     if q1_cfg.timescale_enabled:
         logger.info(
             "Q1 | TimescaleDB sink ENABLED → %s (table '%s')",

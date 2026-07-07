@@ -1,34 +1,5 @@
 #!/usr/bin/env python3
-"""
-Legacy/sanity Q3 completeness check by comparing an experiment's merged
-output against the baseline run (01_baseline: no injected out-of-orderness).
 
-The primary Q3 late-drop measure is now the live side-output counter collected
-by scripts/report_late_drops.py. This script remains useful as a secondary
-completeness check: it estimates how many records disappeared from the final
-aggregate output, assuming the baseline and experiment replay the same input.
-
-Method: the wm experiments (0*_wm_uniform_d*, 0*_wm_expo_d*) replay the SAME
-events with the SAME producer seed as the baseline — the holdback only delays
-delivery, it never changes the event set. Therefore, per window size,
-sum(count) of the baseline is exactly the number of records each window
-SHOULD contain, and
-
-    late_dropped(w) = sum(count baseline w) - sum(count experiment w)
-
-This is not a replacement for numLateRecordsDropped: it is an output-level
-sanity check. The 'global' window closes only at EOS, so it should drop ~0
-even under heavy out-of-orderness.
-
-Reads the merged CSVs that scripts/merge_q3.py writes
-(Results/q3_<window>_flink_table_<exp>.csv) and appends one row per window
-to Results/late_drops_q3.csv.
-
-Run it AFTER the merge, and only once the baseline has been merged too.
-
-Exit codes: 0 = computed for all windows; 1 = a merged CSV is missing or a
-negative drop shows up (never writes a fabricated number for missing input).
-"""
 from __future__ import annotations
 
 import argparse

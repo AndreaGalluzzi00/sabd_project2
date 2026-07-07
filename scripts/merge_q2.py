@@ -1,17 +1,5 @@
 #!/usr/bin/env python3
-"""
-Merge Q2 part-files into three sorted CSV files (one per window size).
 
-The ranking is already computed by Flink's SQL Window Top-N, so this
-script only needs to:
-  1. Find finalised part-files.
-  2. Deduplicate rows (keep first occurrence, same policy as merge_q1.py).
-  3. Sort by ts ASC, then airport_rank ASC.
-  4. Write with the spec-compliant header (renames airport_rank -> rank).
-
-Usage:
-    python scripts/merge_q2.py [--experiment <name>]
-"""
 from __future__ import annotations
 
 import sys
@@ -41,9 +29,7 @@ HEADER = (
     "dep_delay_mean,dep_delay_max,delayed_flights"
 )
 
-# Column indices in the Flink-produced CSV rows (no header):
-#   0: ts  1: airport_rank  2: origin_airport_id  3: num_flights
-#   4: severe_delays  5: dep_delay_mean  6: dep_delay_max  7: delayed_flights
+
 COL_TS = 0
 COL_RANK = 1
 Q2_WINDOW_CHOICES = ("1h", "6h", "global", "all")

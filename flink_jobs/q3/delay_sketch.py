@@ -1,31 +1,4 @@
-"""
-DDSketch – quantile sketch approssimato con garanzia di errore relativo.
 
-Implementazione pura-Python di DDSketch (Masson, Rim, Lee – "DDSketch: A Fast
-and Fully-Mergeable Quantile Sketch with Relative-Error Guarantees", VLDB '19,
-riferimento [6] della specifica), usata da Q3 come accumulatore incrementale:
-i percentili sono calcolati senza ordinare né accumulare i singoli valori.
-
-Principio: l'asse dei valori è partizionato in bucket geometrici con ratio
-γ = (1+α)/(1-α); il valore v > 0 finisce nel bucket ⌈log_γ(v)⌉ e ogni bucket
-mantiene solo un contatore. Il rappresentante del bucket i, 2·γ^i/(γ+1),
-approssima ogni valore del bucket con errore relativo ≤ α. Il quantile q si
-ottiene scorrendo i contatori in ordine di valore fino alla posizione
-q·(n-1). Due sketch si fondono sommando i contatori (fully mergeable), quindi
-l'accumulatore è compatibile con la merge() delle window di Flink.
-
-DEP_DELAY può essere negativo (voli in anticipo): si usano due store
-speculari (negativo su |v| e positivo) più un contatore per gli zeri, come
-nell'implementazione di riferimento Datadog.
-
-Memoria: O(log(max|v|/min|v|)/α) bucket. Con α = 0.01 e ritardi in minuti
-nell'ordine di [-100, +3000] servono al più qualche centinaio di contatori
-interi per gruppo (compagnia × fascia), contro le decine di migliaia di
-valori grezzi di una finestra globale.
-
-min/max/count sono mantenuti esatti: la specifica li richiede esatti e
-servono anche a limitare (clamp) i quantili restituiti.
-"""
 from __future__ import annotations
 
 import math

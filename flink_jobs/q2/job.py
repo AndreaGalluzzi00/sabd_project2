@@ -1,30 +1,4 @@
 #!/usr/bin/env python3
-"""
-Q2 – Real-time ranking of departure airports with significant delays.
-
-Option B — pure Flink SQL, fully append-only. The enabled window pipeline is
-selected by q2.window in the config: 1h, 6h, global, or all.
-
-  Stage 1 — Windowing TVF aggregation (append-only, fires once per window):
-    per (window, airport) num_flights, severe_delays, dep_delay_mean,
-    dep_delay_max and ARRAY_AGG of the severe flights. Airports with < 30
-    non-cancelled/non-diverted flights are excluded (HAVING).
-
-  Stage 2 — Window Top-N (native WindowRank operator): top-10 airports per
-    window ranked by severe_delays.
-
-  Stage 3 — a Python *scalar* UDF formats the severe-flight list (top-20 by
-    dep_delay). No Python UDAF is used, so the whole plan stays append-only
-    and maps directly onto the filesystem CSV sink (and the optional Kafka /
-    JDBC dashboard sinks).
-
-Output schema (per window type, one file each):
-    ts, airport_rank, origin_airport_id, num_flights, severe_delays,
-    dep_delay_mean, dep_delay_max, delayed_flights
-
-The merge script (merge_q2.py) deduplicates part-files and writes the
-final CSVs with the correct spec header (rank instead of airport_rank).
-"""
 from __future__ import annotations
 
 import sys
@@ -50,7 +24,6 @@ logger = logging.getLogger(__name__)
 Q2_WINDOW_CHOICES = ("1h", "6h", "global", "all")
 
 
-# ── Config ────────────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
 class Q2Config(FlinkRuntimeConfig):
@@ -89,7 +62,6 @@ def load_q2_config() -> Q2Config:
     flink_cfg = build_flink_runtime_config(cfg)
     q2_cfg = cfg["q2"]
 
-    # Q2 uses its own consumer group so it can run concurrently with Q1.
     flink_dict = asdict(flink_cfg)
     flink_dict["kafka_consumer_group"] = cfg["flink"].get(
         "consumer_group_q2", cfg["flink"]["consumer_group"] + "-q2"
@@ -134,7 +106,6 @@ def sql_watermark_interval(seconds: int) -> str:
 
 def enabled_q2_windows(cfg: Q2Config) -> list[tuple[str, str, str, str, str]]:
     windows = [
-        # (label, SQL interval, results path, influx topic, timescale table)
         (
             "1h",
             "INTERVAL '1' HOUR",
@@ -149,8 +120,6 @@ def enabled_q2_windows(cfg: Q2Config) -> list[tuple[str, str, str, str, str]]:
             cfg.influx_topic_6h,
             cfg.timescale_table_6h,
         ),
-        # Spec "global": one bucket covering the whole Jan-Apr 2025 dataset.
-        # DAY(3) precision is required because default DAY(2) only allows 99 days.
         (
             "global",
             "INTERVAL '365' DAY(3)",
@@ -164,7 +133,6 @@ def enabled_q2_windows(cfg: Q2Config) -> list[tuple[str, str, str, str, str]]:
     return [window for window in windows if window[0] == cfg.window]
 
 
-# ── Per-window pipeline ───────────────────────────────────────────────────────
 
 def build_window_pipeline(
     label: str,
@@ -176,20 +144,14 @@ def build_window_pipeline(
     stmt_set,
     cfg: Q2Config,
 ) -> None:
-    """
-    Wires Stage 1 (Windowing TVF aggregation) → Stage 2 (Window Top-N) →
-    Stage 3 (format UDF) → sinks for one window size. All three window sizes
-    share the same completed_flights view. Everything is append-only pure SQL.
-    """
 
-    # ── Stage 1: append-only windowing aggregation ────────────────────────────
+
     stats_view = f"q2_stats_{label}"
     t_env.execute_sql(f"""
         CREATE TEMPORARY VIEW {stats_view} AS
         {make_stats_view_sql(window_sql)}
     """)
 
-    # ── Stage 2+3: Window Top-N + list formatting (single append-only query) ──
     ranked_sql = make_topn_sql(stats_view)
 
     # ── CSV sink (always active) ───────────────────────────────────────────────
@@ -198,7 +160,6 @@ def build_window_pipeline(
     stmt_set.add_insert_sql(f"INSERT INTO {csv_sink} {ranked_sql}")
     logger.info("Q2 [%s] | CSV sink → %s", label, results_path)
 
-    # ── InfluxDB sink (optional) ───────────────────────────────────────────────
     if cfg.influx_enabled:
         kafka_sink = f"q2_kafka_{label}"
         t_env.execute_sql(KAFKA_SINK_DDL.format(
@@ -206,8 +167,7 @@ def build_window_pipeline(
             topic=influx_topic,
             bootstrap=cfg.kafka_bootstrap,
         ))
-        # airport_rank/origin_airport_id → STRING: diventano tag InfluxDB via
-        # Telegraf (che accetta solo stringhe come tag), come 'hour' in Q3.
+
         stmt_set.add_insert_sql(f"""
             INSERT INTO {kafka_sink}
             SELECT ts,
@@ -219,7 +179,6 @@ def build_window_pipeline(
         """)
         logger.info("Q2 [%s] | InfluxDB sink → Kafka topic '%s'", label, influx_topic)
 
-    # ── TimescaleDB sink (optional) ────────────────────────────────────────────
     if cfg.timescale_enabled:
         jdbc_sink = f"q2_jdbc_{label}"
         t_env.execute_sql(JDBC_SINK_DDL.format(
@@ -233,7 +192,7 @@ def build_window_pipeline(
         logger.info("Q2 [%s] | TimescaleDB sink → table '%s'", label, timescale_table)
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     cfg = load_q2_config()
@@ -245,12 +204,10 @@ def main() -> None:
     logger.info("Q2 | Enabled window(s): %s", cfg.window)
     logger.info("Q2 | Watermark delay: %d s (event time)", cfg.watermark_delay_seconds)
 
-    # ── Register the scalar UDF used to format the delayed_flights list ───────
+
     t_env.create_temporary_function("format_top_delayed", format_top_delayed)
 
-    # ── Kafka source ──────────────────────────────────────────────────────────
-    # Q2 needs more fields than Q1: airline and dest_airport_id for the
-    # delayed_flights list; origin_airport_id as the grouping key.
+
     t_env.execute_sql(f"""
         CREATE TABLE flights (
             event_time        BIGINT,
