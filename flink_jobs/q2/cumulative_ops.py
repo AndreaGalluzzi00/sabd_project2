@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import heapq
-from datetime import datetime
+from datetime import datetime, timezone
 
 from pyflink.common import Row
 from pyflink.common.typeinfo import Types
@@ -10,6 +10,7 @@ from pyflink.datastream.functions import KeyedProcessFunction
 
 
 DATASET_START_TS = datetime(2025, 1, 1)
+DATASET_START_MS = int(DATASET_START_TS.replace(tzinfo=timezone.utc).timestamp() * 1000)
 TOP_N_AIRPORTS = 10
 TOP_N_FLIGHTS = 20
 
@@ -59,7 +60,17 @@ def _update_top20(
         heapq.heapreplace(heap, item)
 
 
-def _snapshot_rows(airports: dict[int, dict]):
+def _snapshot_ts(max_event_time_ms: int | None) -> datetime:
+    if max_event_time_ms is None:
+        return DATASET_START_TS
+    return datetime.fromtimestamp(
+        max_event_time_ms / 1000.0,
+        tz=timezone.utc,
+    ).replace(tzinfo=None)
+
+
+def _snapshot_rows(airports: dict[int, dict], max_event_time_ms: int | None):
+    ts = _snapshot_ts(max_event_time_ms)
     ranked = []
     for airport_id, state in airports.items():
         if state["num_flights"] < 30:
@@ -76,7 +87,7 @@ def _snapshot_rows(airports: dict[int, dict]):
 
     for rank, (airport_id, state) in enumerate(ranked[:TOP_N_AIRPORTS], start=1):
         yield Row(
-            DATASET_START_TS,
+            ts,
             rank,
             int(airport_id),
             int(state["num_flights"]),
@@ -87,21 +98,36 @@ def _snapshot_rows(airports: dict[int, dict]):
         )
 
 
-class Q2CumulativeTopN(KeyedProcessFunction):
-    """Running Q2 state from dataset start, emitted as throttled snapshots."""
+def _next_emit_after(event_time_ms: int, emit_interval_ms: int) -> int:
+    if event_time_ms < DATASET_START_MS:
+        return DATASET_START_MS
+    elapsed = event_time_ms - DATASET_START_MS
+    return DATASET_START_MS + ((elapsed // emit_interval_ms) + 1) * emit_interval_ms
 
-    def __init__(self, emit_interval_ms: int):
-        self._emit_interval_ms = emit_interval_ms
+
+class Q2CumulativeTopN(KeyedProcessFunction):
+    """Running Q2 state from dataset start, emitted on event-time steps."""
+
+    def __init__(self, emit_event_interval_ms: int):
+        self._emit_event_interval_ms = max(1, int(emit_event_interval_ms))
         self._airports_state = None
-        self._timer_state = None
+        self._max_event_time_state = None
+        self._next_emit_event_time_state = None
+        self._last_snapshot_event_time_state = None
         self._dirty_state = None
 
     def open(self, runtime_context) -> None:
         self._airports_state = runtime_context.get_state(
             ValueStateDescriptor("q2-cumulative-airports", Types.PICKLED_BYTE_ARRAY())
         )
-        self._timer_state = runtime_context.get_state(
-            ValueStateDescriptor("q2-cumulative-next-timer", Types.LONG())
+        self._max_event_time_state = runtime_context.get_state(
+            ValueStateDescriptor("q2-cumulative-max-event-time", Types.LONG())
+        )
+        self._next_emit_event_time_state = runtime_context.get_state(
+            ValueStateDescriptor("q2-cumulative-next-emit-event-time", Types.LONG())
+        )
+        self._last_snapshot_event_time_state = runtime_context.get_state(
+            ValueStateDescriptor("q2-cumulative-last-snapshot-event-time", Types.LONG())
         )
         self._dirty_state = runtime_context.get_state(
             ValueStateDescriptor("q2-cumulative-dirty", Types.BOOLEAN())
@@ -111,11 +137,29 @@ class Q2CumulativeTopN(KeyedProcessFunction):
         airports = self._airports_state.value() or {}
 
         if _is_eos(value):
-            yield from _snapshot_rows(airports)
+            max_event_time_ms = self._max_event_time_state.value()
+            if (
+                self._dirty_state.value()
+                or max_event_time_ms != self._last_snapshot_event_time_state.value()
+            ):
+                rows = list(_snapshot_rows(airports, max_event_time_ms))
+                for row in rows:
+                    yield row
+                if rows and max_event_time_ms is not None:
+                    self._last_snapshot_event_time_state.update(max_event_time_ms)
             self._dirty_state.update(False)
             return
 
+        max_event_time_ms = self._max_event_time_state.value()
+        event_time = value[0]
+        if event_time is not None:
+            event_time = int(event_time)
+            if max_event_time_ms is None or event_time > max_event_time_ms:
+                max_event_time_ms = event_time
+                self._max_event_time_state.update(event_time)
+
         if not _is_completed(value) or value[4] is None or value[2] is None:
+            yield from self._maybe_emit_snapshot(airports, max_event_time_ms)
             return
 
         airline = value[1]
@@ -143,26 +187,32 @@ class Q2CumulativeTopN(KeyedProcessFunction):
 
         self._airports_state.update(airports)
         self._dirty_state.update(True)
-        self._ensure_timer(ctx)
+        yield from self._maybe_emit_snapshot(airports, max_event_time_ms)
 
-    def on_timer(self, timestamp: int, ctx):
-        self._timer_state.clear()
-
-        if not self._dirty_state.value():
+    def _maybe_emit_snapshot(self, airports: dict[int, dict], max_event_time_ms: int | None):
+        if max_event_time_ms is None or not self._dirty_state.value():
             return
 
-        airports = self._airports_state.value() or {}
-        yield from _snapshot_rows(airports)
+        next_emit = self._next_emit_event_time_state.value()
+        if next_emit is None:
+            next_emit = DATASET_START_MS + self._emit_event_interval_ms
+
+        if max_event_time_ms < next_emit:
+            return
+
+        rows = list(_snapshot_rows(airports, max_event_time_ms))
+        self._next_emit_event_time_state.update(
+            _next_emit_after(max_event_time_ms, self._emit_event_interval_ms)
+        )
+
+        if not rows:
+            return
+
+        for row in rows:
+            yield row
+
+        self._last_snapshot_event_time_state.update(max_event_time_ms)
         self._dirty_state.update(False)
-
-    def _ensure_timer(self, ctx) -> None:
-        if self._timer_state.value() is not None:
-            return
-
-        now = ctx.timer_service().current_processing_time()
-        next_timer = now + self._emit_interval_ms
-        self._timer_state.update(next_timer)
-        ctx.timer_service().register_processing_time_timer(next_timer)
 
 
 Q2_CUMULATIVE_OUTPUT_TYPE = Types.ROW_NAMED(

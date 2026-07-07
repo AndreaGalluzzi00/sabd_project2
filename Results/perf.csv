@@ -8,3 +8,12 @@ timestamp_utc,engine,implementation,query,experiment,parallelism,total_records,a
 2026-07-06T23:59:53+00:00,spark,structured,q2,01_baseline,4,2229457,160.7,13873.4,40646.7,2877.1,14318.0,,,"spark local[*], trigger=5 seconds"
 2026-07-07T00:11:37+00:00,spark,structured,q3,01_baseline,4,2229457,171.5,13003.5,38747.7,2404.0,10368.0,,,"spark local[*], trigger=5 seconds"
 2026-07-07T13:18:03+00:00,flink,table,q2,baseline,4,4,8.2,0.5,0.1,,,46.7,0.0,latency: enable metrics.latency.interval
+2026-07-07T13:24:17+00:00,flink,table,q2,baseline,4,106822,9.4,11356.8,730.4,,101.0,45.9,1.0,latency: enable metrics.latency.interval
+2026-07-07T13:56:39+00:00,flink,table,q2,baseline,4,455595,70.3,6481.0,7593.2,,261.0,66.1,39.2,latency: enable metrics.latency.interval
+2026-07-07T14:16:36+00:00,flink,table,q2,baseline,4,42946,20.0,2144.0,509.6,,,54.2,8.8,latency: enable metrics.latency.interval
+2026-07-07T14:42:18+00:00,flink,table,q2,baseline,4,161542,52.0,3106.6,2625.7,,959.0,65.1,26.8,latency: enable metrics.latency.interval
+2026-07-07T14:55:41+00:00,flink,table,q2,baseline,4,4,9.4,0.4,0.1,,,49.1,0.0,latency: enable metrics.latency.interval
+2026-07-07T15:56:21+00:00,flink,table,q2,baseline,4,53000,8.6,6144.9,466.7,,,49.7,0.0,latency: enable metrics.latency.interval
+2026-07-07T16:19:51+00:00,flink,table,q2,baseline,4,40000,9.0,4467.8,0.0,,97.0,0.7,0.0,latency: enable metrics.latency.interval
+2026-07-07T16:28:13+00:00,flink,table,q2,baseline,4,49390,8.8,5614.4,173.2,,99.0,44.3,0.0,latency: enable metrics.latency.interval
+2026-07-07T16:53:11+00:00,flink,table,q2,baseline,4,27004,9.0,3005.8,428.3,,99.0,24.5,0.0,latency: enable metrics.latency.interval

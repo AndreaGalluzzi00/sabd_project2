@@ -13,7 +13,7 @@ producer:
 q1:
   watermark_delay_seconds: 30
 q2:
-  window: "cumulative"   # 1h | 6h | global | all | cumulative
+  window: "all"   # 1h | 6h | global | all | cumulative
   watermark_delay_seconds: 30
 q3:
   window: "1d"  # 1d | 7d | global | all  cumulative

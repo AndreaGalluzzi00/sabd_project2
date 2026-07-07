@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import heapq
 import sys
+from datetime import datetime, timezone
 
 from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
@@ -24,7 +25,29 @@ from spark_runtime import (
 
 Q2_WINDOW_CHOICES = ("1h", "6h", "global", "cumulative", "all")
 DATASET_START_TS = "2025-01-01 00:00:00"
+DATASET_START_MS = int(
+    datetime.strptime(DATASET_START_TS, "%Y-%m-%d %H:%M:%S")
+    .replace(tzinfo=timezone.utc)
+    .timestamp()
+    * 1000
+)
 TOP_N_FLIGHTS = 20
+
+
+def _format_event_time_ms(event_time_ms: int | None) -> str:
+    if event_time_ms is None:
+        return DATASET_START_TS
+    return datetime.fromtimestamp(
+        event_time_ms / 1000.0,
+        tz=timezone.utc,
+    ).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _next_emit_after(event_time_ms: int, emit_interval_ms: int) -> int:
+    if event_time_ms < DATASET_START_MS:
+        return DATASET_START_MS
+    elapsed = event_time_ms - DATASET_START_MS
+    return DATASET_START_MS + ((elapsed // emit_interval_ms) + 1) * emit_interval_ms
 
 
 def selected_q2_window(value: object) -> str:
@@ -91,10 +114,15 @@ def _format_top_delayed(flights: list[tuple[float, str, int]]) -> str:
     ) + "]"
 
 
-def cumulative_batch_writer(output_path: str):
+def cumulative_batch_writer(output_path: str, emit_event_interval_ms: int):
     airport_states: dict[int, dict] = {}
+    max_event_time_ms: int | None = None
+    next_emit_event_time_ms = DATASET_START_MS + max(1, int(emit_event_interval_ms))
+    last_snapshot_event_time_ms: int | None = None
+    dirty_since_snapshot = False
 
     def snapshot_rows() -> list[tuple]:
+        snapshot_ts = _format_event_time_ms(max_event_time_ms)
         ranked = [
             (airport_id, state)
             for airport_id, state in airport_states.items()
@@ -109,7 +137,7 @@ def cumulative_batch_writer(output_path: str):
         )
         return [
             (
-                DATASET_START_TS,
+                snapshot_ts,
                 rank,
                 int(airport_id),
                 int(state["num_flights"]),
@@ -122,22 +150,35 @@ def cumulative_batch_writer(output_path: str):
         ]
 
     def write(batch_df: DataFrame, batch_id: int) -> None:
-        dirty = False
+        nonlocal dirty_since_snapshot
+        nonlocal last_snapshot_event_time_ms
+        nonlocal max_event_time_ms
+        nonlocal next_emit_event_time_ms
+
         saw_eos = False
+        output_rows = []
 
         rows = batch_df.select(
+            "event_time",
             "airline",
             "origin_airport_id",
             "dest_airport_id",
             "dep_delay",
             "cancelled",
             "diverted",
+        ).orderBy(
+            F.col("event_time").asc_nulls_last()
         ).toLocalIterator()
 
         for row in rows:
             if row.airline == "__EOS__":
                 saw_eos = True
                 continue
+
+            if row.event_time is not None:
+                event_time = int(row.event_time)
+                if max_event_time_ms is None or event_time > max_event_time_ms:
+                    max_event_time_ms = event_time
 
             cancelled = row.cancelled or 0.0
             diverted = row.diverted or 0.0
@@ -147,6 +188,20 @@ def cumulative_batch_writer(output_path: str):
                 or row.dep_delay is None
                 or row.origin_airport_id is None
             ):
+                if (
+                    dirty_since_snapshot
+                    and max_event_time_ms is not None
+                    and max_event_time_ms >= next_emit_event_time_ms
+                ):
+                    rows_to_emit = snapshot_rows()
+                    if rows_to_emit:
+                        output_rows.extend(rows_to_emit)
+                        last_snapshot_event_time_ms = max_event_time_ms
+                        dirty_since_snapshot = False
+                    next_emit_event_time_ms = _next_emit_after(
+                        max_event_time_ms,
+                        emit_event_interval_ms,
+                    )
                 continue
 
             airport_id = int(row.origin_airport_id)
@@ -169,12 +224,29 @@ def cumulative_batch_writer(output_path: str):
                     row.airline,
                     row.dest_airport_id,
                 )
-            dirty = True
+            dirty_since_snapshot = True
 
-        if not dirty and not saw_eos:
-            return
+            if max_event_time_ms is not None and max_event_time_ms >= next_emit_event_time_ms:
+                rows_to_emit = snapshot_rows()
+                if rows_to_emit:
+                    output_rows.extend(rows_to_emit)
+                    last_snapshot_event_time_ms = max_event_time_ms
+                    dirty_since_snapshot = False
+                next_emit_event_time_ms = _next_emit_after(
+                    max_event_time_ms,
+                    emit_event_interval_ms,
+                )
 
-        output_rows = snapshot_rows()
+        if saw_eos and (
+            dirty_since_snapshot
+            or max_event_time_ms != last_snapshot_event_time_ms
+        ):
+            rows_to_emit = snapshot_rows()
+            if rows_to_emit:
+                output_rows.extend(rows_to_emit)
+                last_snapshot_event_time_ms = max_event_time_ms
+            dirty_since_snapshot = False
+
         if not output_rows:
             return
 
@@ -345,10 +417,11 @@ def main() -> None:
 
     if cumulative_q2_enabled(selected_window):
         output_path = paths["spark_q2_results_path_cumulative"]
+        emit_event_interval_ms = int(q2_cfg.get("cumulative_emit_event_interval_ms", 2_700_000))
         queries.append(
             write_foreach_batch_stream(
                 flights,
-                writer=cumulative_batch_writer(output_path),
+                writer=cumulative_batch_writer(output_path, emit_event_interval_ms),
                 checkpoint=checkpoint_path(runtime_cfg, "q2", "cumulative"),
                 query_name="spark-q2-cumulative",
                 runtime_cfg=runtime_cfg,
