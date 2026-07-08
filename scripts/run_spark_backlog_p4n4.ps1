@@ -1,4 +1,4 @@
-<<#
+<#
 run_spark_backlog_p4n4.ps1
 
 Runs Spark Structured Streaming on the same p4_n4 backlog precondition used by
