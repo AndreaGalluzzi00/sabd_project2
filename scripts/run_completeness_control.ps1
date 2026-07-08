@@ -213,13 +213,17 @@ foreach ($CurrentQuery in $Queries) {
             -Partitions $KafkaPartitions `
             -ReplicationFactor $KafkaReplicationFactor
 
+        # Perf monitor stays ENABLED here (no NoPerf) so every completeness /
+        # late-drop run also appends a perf.csv row carrying elapsed_ms, giving a
+        # processing-time reading alongside the late-drop count for each
+        # watermark-delay configuration. The monitor runs to job drain BEFORE the
+        # late-drop metric is read via REST, so the two collections don't clash.
         $RunArgs = @{
             Exp                       = $ControlExperiment
             Query                     = $CurrentQuery
             Engine                    = "flink"
             Implementation            = "table"
             NoResetTopic              = $true
-            NoPerf                    = $true
             FlinkParallelismOverride  = 1
             FlinkAggPhaseStrategy     = "ONE_PHASE"
             MergeTimeoutSeconds       = $MergeTimeoutSeconds

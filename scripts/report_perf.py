@@ -21,9 +21,11 @@ DEFAULT_FLINK_URL = "http://localhost:8081"
 DEFAULT_OUTPUT = PROJECT_ROOT / "Results" / "perf.csv"
 
 # Unified schema shared with the Spark writer in spark_runtime.py.
+# elapsed_ms = time spent on the SOLE query processing (see its computation in
+# main()); it deliberately excludes warmup and the post-drain sink-flush tail.
 PERF_HEADER = [
     "timestamp_utc", "engine", "implementation", "query", "experiment",
-    "parallelism", "total_records", "active_seconds",
+    "parallelism", "total_records", "active_seconds", "elapsed_ms",
     "throughput_rec_s_avg", "throughput_rec_s_max",
     "busy_pct_avg", "backpressure_pct_avg", "notes",
 ]
@@ -81,6 +83,29 @@ def parse_args() -> argparse.Namespace:
 def http_get_json(url: str, timeout: float = 10.0):
     with urllib.request.urlopen(url, timeout=timeout) as resp:
         return json.load(resp)
+
+
+def prepare_perf_output(path: Path, header: list[str]) -> bool:
+    """Return True if the CSV header must be written for `path`.
+
+    A perf.csv produced before the elapsed_ms column existed has a narrower
+    header; appending the new, wider rows under it would silently misalign every
+    column. When the on-disk header no longer matches, archive the old file and
+    start a fresh one so no data is lost and the new schema stays consistent.
+    """
+    if not path.exists():
+        return True
+    try:
+        with path.open("r", encoding="utf-8", newline="") as fh:
+            first_line = fh.readline().rstrip("\r\n")
+    except OSError:
+        return False
+    if first_line == ",".join(header):
+        return False
+    backup = path.with_name(f"{path.stem}_legacy_{int(time.time())}{path.suffix}")
+    path.rename(backup)
+    print(f"perf.csv schema changed; archived old file to {backup.name}", file=sys.stderr)
+    return True
 
 
 def pick_job(flink_url: str, query: str, job_id: str | None) -> dict | None:
@@ -287,6 +312,16 @@ def main() -> None:
     busy_avg = sum(s[3] for s in samples) / len(samples) / 10.0     # ms/s -> %
     bp_avg = sum(s[4] for s in samples) / len(samples) / 10.0       # ms/s -> %
 
+    # elapsed_ms: time spent on the SOLE query processing. It spans from when the
+    # Kafka source first emitted a record (first_active_t) to when its counter
+    # last advanced (last_growth_t) — i.e. the window during which the job was
+    # actively ingesting and processing events. It intentionally EXCLUDES the
+    # PyFlink warmup before the first record and the post-drain tail (watermark-
+    # driven window finalization + CSV rollover flush to the sink + idle wait),
+    # so it is NOT the same as active_seconds, which still includes that trailing
+    # idle window. Reported in ms so it sits in the same units as latency.
+    elapsed_ms = round(max(last_growth_t - first_active_t, 0.0) * 1000.0, 1)
+
     lat_avg = (sum(lat_p50) / len(lat_p50)) if lat_p50 else ""
     lat_max = (max(lat_p99) if lat_p99 else "")
     thr_note = "throughput=kafka source ingestion" if use_source_operator else "throughput=vertex numRecordsOut (fallback)"
@@ -295,13 +330,13 @@ def main() -> None:
     row = [
         datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "flink", args.implementation, args.query or "?", experiment, parallelism,
-        int(total_records), round(active_seconds, 1),
+        int(total_records), round(active_seconds, 1), elapsed_ms,
         round(thr_avg, 1), round(thr_max, 1),
         round(busy_avg, 1), round(bp_avg, 1), notes,
     ]
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    write_header = not args.output.exists()
+    write_header = prepare_perf_output(args.output, PERF_HEADER)
     with args.output.open("a", encoding="utf-8", newline="") as out:
         writer = csv.writer(out)
         if write_header:
@@ -310,7 +345,8 @@ def main() -> None:
 
     print(f"throughput avg={thr_avg:.0f} rec/s  max={thr_max:.0f} rec/s  "
           f"busy={busy_avg:.0f}%  backpressure={bp_avg:.0f}%  "
-          f"records={int(total_records)}  active={active_seconds:.0f}s")
+          f"records={int(total_records)}  active={active_seconds:.0f}s  "
+          f"elapsed={elapsed_ms:.0f}ms (processing only)")
     print(f"Appended to {args.output}")
 
 

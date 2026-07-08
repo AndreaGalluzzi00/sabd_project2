@@ -168,9 +168,12 @@ def write_foreach_batch_stream(
 
 # Unified perf schema, shared with scripts/report_perf.py (Flink writer), so
 # Results/perf.csv holds both engines side by side for the report.
+# elapsed_ms = time spent on the SOLE query processing (see await_queries_until_idle);
+# it excludes source offset I/O, WAL commits and the no-input drain that flushes
+# closed windows to the sink.
 _PERF_HEADER = [
     "timestamp_utc", "engine", "implementation", "query", "experiment",
-    "parallelism", "total_records", "active_seconds",
+    "parallelism", "total_records", "active_seconds", "elapsed_ms",
     "throughput_rec_s_avg", "throughput_rec_s_max",
     "busy_pct_avg", "backpressure_pct_avg", "notes",
 ]
@@ -179,11 +182,35 @@ _PERF_HEADER = [
 _PERF_OUTPUT = "/opt/spark/results/perf.csv"
 
 
+def _prepare_perf_file(path: Path, header: list[str], logger: logging.Logger) -> bool:
+    """Return True if the CSV header must be (re)written for `path`.
+
+    A perf.csv produced before the elapsed_ms column existed has a narrower
+    header; appending the new, wider rows under it would silently misalign every
+    column. When the on-disk header no longer matches, archive the old file and
+    start a fresh one so no data is lost and the schema stays consistent with the
+    Flink writer.
+    """
+    if not path.exists():
+        return True
+    try:
+        with path.open("r", encoding="utf-8", newline="") as fh:
+            first_line = fh.readline().rstrip("\r\n")
+    except OSError:
+        return False
+    if first_line == ",".join(header):
+        return False
+    backup = path.with_name(f"{path.stem}_legacy_{int(time.time())}{path.suffix}")
+    path.rename(backup)
+    logger.warning("perf.csv schema changed; archived old file to %s", backup.name)
+    return True
+
+
 def _append_perf_row(output_path: str, row: list[Any], logger: logging.Logger) -> None:
     try:
         out = Path(output_path)
         out.parent.mkdir(parents=True, exist_ok=True)
-        write_header = not out.exists()
+        write_header = _prepare_perf_file(out, _PERF_HEADER, logger)
         with out.open("a", encoding="utf-8", newline="") as fh:
             writer = csv.writer(fh)
             if write_header:
@@ -233,6 +260,7 @@ def await_queries_until_idle(
     input_by_query: dict[str, int] = {}
     proc_rates: list[float] = []
     batch_latencies_ms: list[float] = []
+    batch_processing_ms: list[float] = []
     first_activity_at: float | None = None
 
     while any(query.isActive for query in queries):
@@ -270,6 +298,20 @@ def await_queries_until_idle(
                     trigger_ms = float(duration.get("triggerExecution", 0.0) or 0.0)
                     if trigger_ms > 0.0:
                         batch_latencies_ms.append(trigger_ms)
+
+                    # elapsed_ms accumulates the SOLE query-processing time: the
+                    # "addBatch" phase is where Spark executes the query for the
+                    # micro-batch, so summing it over input-bearing batches leaves
+                    # out source offset fetching, WAL commits, planning and the
+                    # inter-batch idle wait. Only batches that ingested real input
+                    # are counted, so the final no-input drain batches that merely
+                    # flush closed windows to the sink are excluded too. Fall back
+                    # to triggerExecution if a runtime omits the addBatch phase.
+                    add_batch_ms = float(duration.get("addBatch", 0.0) or 0.0)
+                    if add_batch_ms > 0.0:
+                        batch_processing_ms.append(add_batch_ms)
+                    elif trigger_ms > 0.0:
+                        batch_processing_ms.append(trigger_ms)
 
                     logger.info(
                         "%s | batch=%s input_rows=%s watermark=%s max_event_time=%s",
@@ -354,11 +396,13 @@ def await_queries_until_idle(
     thr_max = max(proc_rates, default=0.0)
     lat_avg = (sum(batch_latencies_ms) / len(batch_latencies_ms)) if batch_latencies_ms else ""
     lat_max = max(batch_latencies_ms, default="") if batch_latencies_ms else ""
+    elapsed_ms = round(sum(batch_processing_ms), 1) if batch_processing_ms else 0.0
 
     row = [
         datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "spark", "structured", query_label or "?", experiment,
         runtime_cfg.shuffle_partitions, int(total_records), round(active_seconds, 1),
+        elapsed_ms,
         round(thr_avg, 1), round(thr_max, 1),
         "", "", f"spark local[*], trigger={runtime_cfg.trigger_processing_time}",
     ]
