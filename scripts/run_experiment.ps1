@@ -106,6 +106,12 @@ param(
     [switch]$NoCleanDashboard,
     [switch]$KeepFlinkJob,
     [switch]$NoPerf,
+    [switch]$NoLateDrops,
+
+    [int]$FlinkParallelismOverride = 0,
+
+    [ValidateSet("", "AUTO", "ONE_PHASE", "TWO_PHASE")]
+    [string]$FlinkAggPhaseStrategy = "",
 
     [int]$MergeTimeoutSeconds = 900,
 
@@ -203,7 +209,11 @@ function New-ExperimentRuntimeConfig {
         [bool]$EnableInflux,
 
         [Parameter(Mandatory = $true)]
-        [bool]$EnableTimescale
+        [bool]$EnableTimescale,
+
+        [int]$FlinkParallelismOverride = 0,
+
+        [string]$FlinkAggPhaseStrategy = ""
     )
 
     $RuntimeDir = "config/runtime"
@@ -226,12 +236,22 @@ function New-ExperimentRuntimeConfig {
 
     $InfluxEnabled = if ($EnableInflux) { "true" } else { "false" }
     $TimescaleEnabled = if ($EnableTimescale) { "true" } else { "false" }
+    $FlinkRuntimeOverrides = ""
+
+    if ($FlinkParallelismOverride -gt 0) {
+        $FlinkRuntimeOverrides += "  parallelism: $FlinkParallelismOverride`r`n"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($FlinkAggPhaseStrategy)) {
+        $FlinkRuntimeOverrides += "  table_optimizer_agg_phase_strategy: `"$FlinkAggPhaseStrategy`"`r`n"
+    }
 
     $RuntimeConfig = @"
 extends: "$ExtendsPath"
 
 flink:
   consumer_group: "$FlinkConsumerGroup"
+$FlinkRuntimeOverrides
 
 spark:
   consumer_group: "$SparkConsumerGroup"
@@ -898,6 +918,10 @@ if ($SparkTimeoutSeconds -le 0) {
     throw "SparkTimeoutSeconds deve essere maggiore di zero."
 }
 
+if ($FlinkParallelismOverride -lt 0) {
+    throw "FlinkParallelismOverride deve essere 0 oppure un intero positivo."
+}
+
 $Implementation = Resolve-Implementation `
     -Engine $Engine `
     -Implementation $Implementation
@@ -946,7 +970,9 @@ $RuntimeCfg = New-ExperimentRuntimeConfig `
     -ConfigPathHost $CfgHost `
     -Label $RuntimeLabel `
     -EnableInflux $EnableInflux `
-    -EnableTimescale $EnableTimescale
+    -EnableTimescale $EnableTimescale `
+    -FlinkParallelismOverride $FlinkParallelismOverride `
+    -FlinkAggPhaseStrategy $FlinkAggPhaseStrategy
 
 $SubmitCfgHost = $RuntimeCfg.HostPath
 $SubmitCfgContainer = $RuntimeCfg.ContainerPath
@@ -981,6 +1007,12 @@ if ($DashboardEnabled) {
 }
 else {
     Write-Host "Dashboard sinks     : disabled"
+}
+if ($FlinkParallelismOverride -gt 0) {
+    Write-Host "Flink parallelism   : $FlinkParallelismOverride (runtime override)"
+}
+if (-not [string]::IsNullOrWhiteSpace($FlinkAggPhaseStrategy)) {
+    Write-Host "Flink agg strategy  : $FlinkAggPhaseStrategy (runtime override)"
 }
 Write-Host "========================================"
 Write-Host ""
@@ -1158,7 +1190,9 @@ else {
 #    counter equivalente sul side output dei late data (Q3LateDrops[...]).
 # In entrambi i casi si legge live via REST prima di cancellare il job.
 $CollectLateDropsMetric = (
-    $Engine -eq "flink" -and $Implementation -eq "table"
+    -not $NoLateDrops `
+    -and $Engine -eq "flink" `
+    -and $Implementation -eq "table"
 )
 
 if ($CollectLateDropsMetric) {

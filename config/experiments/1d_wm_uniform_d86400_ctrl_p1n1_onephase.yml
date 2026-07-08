@@ -1,0 +1,9 @@
+﻿extends: "1d_wm_uniform_d86400.yml"
+
+experiment:
+  name: "1d_wm_uniform_d86400_ctrl_p1n1_onephase"
+  output_dir_host: "Results/experiments"
+
+flink:
+  parallelism: 1
+  table_optimizer_agg_phase_strategy: "ONE_PHASE"

@@ -21,6 +21,7 @@ class FlinkRuntimeConfig:
     checkpoint_interval_ms: int
     auto_watermark_interval_ms: int
     python_bundle_time_ms: int
+    table_optimizer_agg_phase_strategy: str | None
 
 
     checkpointing_mode: str
@@ -58,6 +59,11 @@ def build_flink_runtime_config(cfg: dict[str, Any]) -> FlinkRuntimeConfig:
         ),
         python_bundle_time_ms=int(
             flink_cfg.get("python_bundle_time_ms", 1000)
+        ),
+        table_optimizer_agg_phase_strategy=(
+            str(flink_cfg["table_optimizer_agg_phase_strategy"])
+            if flink_cfg.get("table_optimizer_agg_phase_strategy")
+            else None
         ),
         checkpointing_mode=str(ckp.get("mode", "EXACTLY_ONCE")).upper(),
         checkpoint_min_pause_ms=int(ckp.get("min_pause_ms", 5000)),
@@ -125,6 +131,14 @@ def create_stream_execution_environment(
 def create_table_environment(
     runtime_cfg: FlinkRuntimeConfig,
 ) -> StreamTableEnvironment:
-    return StreamTableEnvironment.create(
+    t_env = StreamTableEnvironment.create(
         create_stream_execution_environment(runtime_cfg)
     )
+
+    if runtime_cfg.table_optimizer_agg_phase_strategy:
+        t_env.get_config().set(
+            "table.optimizer.agg-phase-strategy",
+            runtime_cfg.table_optimizer_agg_phase_strategy,
+        )
+
+    return t_env

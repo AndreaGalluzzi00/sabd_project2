@@ -8,6 +8,7 @@ import csv
 import json
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -20,6 +21,8 @@ METRIC = "numLateRecordsDropped"
 Q3_LATE_RECORDS_RE = re.compile(r"^Map__Q3LateDrops\[[^\]]+\]\.numRecordsIn$")
 DEFAULT_FLINK_URL = "http://localhost:8081"
 DEFAULT_OUTPUT = PROJECT_ROOT / "Results" / "late_drops.csv"
+DEFAULT_WAIT_SECONDS = 60.0
+DEFAULT_POLL_SECONDS = 2.0
 OUTPUT_HEADER = [
     "timestamp_utc",
     "experiment",
@@ -72,6 +75,26 @@ def parse_args() -> argparse.Namespace:
         help="Query label to write in the CSV output (default: inferred from the Flink job name).",
     )
 
+    parser.add_argument(
+        "--wait-seconds",
+        type=float,
+        default=DEFAULT_WAIT_SECONDS,
+        help=(
+            "Seconds to wait for late-drop metrics to appear before failing "
+            f"(default: {DEFAULT_WAIT_SECONDS:g})."
+        ),
+    )
+
+    parser.add_argument(
+        "--poll-seconds",
+        type=float,
+        default=DEFAULT_POLL_SECONDS,
+        help=(
+            "Polling interval while waiting for metrics "
+            f"(default: {DEFAULT_POLL_SECONDS:g})."
+        ),
+    )
+
     return parser.parse_args()
 
 
@@ -109,13 +132,70 @@ def job_plan_windows(flink_url: str, job_id: str) -> dict[str, str]:
     for node in nodes:
         description = str(node.get("description", ""))
         for match in re.finditer(
-            r"\[(\d+)\]:(?:GlobalWindowAggregate|LocalWindowAggregate|WindowRank)"
+            r"\[(\d+)\]:(?:WindowAggregate|GlobalWindowAggregate|LocalWindowAggregate|WindowRank)"
             r"[^<]*?size=\[([^\]]+)\]",
             description,
         ):
             windows[match.group(1)] = normalize_plan_window_size(match.group(2))
 
     return windows
+
+
+def is_late_drop_metric_id(metric_id: str) -> bool:
+    if Q3_LATE_RECORDS_RE.match(metric_id):
+        return True
+
+    if "Q3LateDrops[" in metric_id:
+        return False
+
+    return metric_id == METRIC or metric_id.endswith(f".{METRIC}")
+
+
+def list_vertex_metric_ids(
+    flink_url: str,
+    job_id: str,
+    vertex_id: str,
+) -> list[str]:
+    metrics_url = f"{flink_url}/jobs/{job_id}/vertices/{vertex_id}/subtasks/metrics"
+    available = http_get_json(metrics_url)
+    return [str(metric["id"]) for metric in available]
+
+
+def any_late_drop_metric_available(flink_url: str, jobs: list[dict]) -> bool:
+    for job in jobs:
+        job_id = job["jid"]
+        for vertex in list_vertices(flink_url, job_id):
+            metric_ids = list_vertex_metric_ids(flink_url, job_id, vertex["id"])
+            if any(is_late_drop_metric_id(metric_id) for metric_id in metric_ids):
+                return True
+
+    return False
+
+
+def wait_for_late_drop_metrics(flink_url: str, args: argparse.Namespace) -> list[dict]:
+    wait_seconds = max(0.0, float(args.wait_seconds))
+    poll_seconds = max(0.1, float(args.poll_seconds))
+    deadline = time.monotonic() + wait_seconds
+    warned = False
+
+    while True:
+        jobs = list_running_jobs(flink_url)
+
+        if jobs and any_late_drop_metric_available(flink_url, jobs):
+            return jobs
+
+        if time.monotonic() >= deadline:
+            return jobs
+
+        if not warned:
+            print(
+                f"NOTE: no '{METRIC}' metric exposed yet; waiting up to "
+                f"{wait_seconds:g}s...",
+                file=sys.stderr,
+            )
+            warned = True
+
+        time.sleep(poll_seconds)
 
 
 def vertex_late_drops(
@@ -125,18 +205,9 @@ def vertex_late_drops(
 ) -> dict[str, float]:
     metrics_url = f"{flink_url}/jobs/{job_id}/vertices/{vertex_id}/subtasks/metrics"
 
-    available = http_get_json(metrics_url)
     metric_ids = []
-    for metric in available:
-        metric_id = metric["id"]
-        if Q3_LATE_RECORDS_RE.match(metric_id):
-            metric_ids.append(metric_id)
-            continue
-
-        if "Q3LateDrops[" in metric_id:
-            continue
-
-        if metric_id == METRIC or metric_id.endswith(f".{METRIC}"):
+    for metric_id in list_vertex_metric_ids(flink_url, job_id, vertex_id):
+        if is_late_drop_metric_id(metric_id):
             metric_ids.append(metric_id)
 
     totals: dict[str, float] = {}
@@ -273,7 +344,7 @@ def main() -> None:
     experiment = args.experiment or "base"
 
     try:
-        jobs = list_running_jobs(args.flink_url)
+        jobs = wait_for_late_drop_metrics(args.flink_url, args)
     except (urllib.error.URLError, OSError) as exc:
         print(
             f"ERROR: cannot reach Flink REST API at {args.flink_url}: {exc}",
@@ -310,7 +381,8 @@ def main() -> None:
             )
             plan_windows = {}
 
-        for vertex in list_vertices(args.flink_url, job_id):
+        vertices = list_vertices(args.flink_url, job_id)
+        for vertex in vertices:
             vertex_name = vertex.get("name", "?")
             totals = vertex_late_drops(args.flink_url, job_id, vertex["id"])
 

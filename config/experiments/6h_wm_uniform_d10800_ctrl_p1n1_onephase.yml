@@ -1,0 +1,9 @@
+﻿extends: "6h_wm_uniform_d10800.yml"
+
+experiment:
+  name: "6h_wm_uniform_d10800_ctrl_p1n1_onephase"
+  output_dir_host: "Results/experiments"
+
+flink:
+  parallelism: 1
+  table_optimizer_agg_phase_strategy: "ONE_PHASE"
