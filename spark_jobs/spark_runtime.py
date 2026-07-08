@@ -391,12 +391,19 @@ def await_queries_until_idle(
 
     # ── Emit the aggregate perf row ────────────────────────────────────────────
     total_records = max(input_by_query.values(), default=0)
-    active_seconds = max((last_activity_at - first_activity_at), 1e-6) if first_activity_at else 0.0
+    wall_span = (last_activity_at - first_activity_at) if first_activity_at else 0.0
+    trigger_total_s = sum(batch_latencies_ms) / 1000.0
+    active_seconds = max(wall_span, trigger_total_s)
     thr_avg = (total_records / active_seconds) if active_seconds > 0 else 0.0
     thr_max = max(proc_rates, default=0.0)
     lat_avg = (sum(batch_latencies_ms) / len(batch_latencies_ms)) if batch_latencies_ms else ""
     lat_max = max(batch_latencies_ms, default="") if batch_latencies_ms else ""
     elapsed_ms = round(sum(batch_processing_ms), 1) if batch_processing_ms else 0.0
+
+    try:
+        master = SparkSession.getActiveSession().sparkContext.master
+    except Exception:  # noqa: BLE001 - notes are cosmetic, never fail the job
+        master = "local"
 
     row = [
         datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -404,6 +411,6 @@ def await_queries_until_idle(
         runtime_cfg.shuffle_partitions, int(total_records), round(active_seconds, 1),
         elapsed_ms,
         round(thr_avg, 1), round(thr_max, 1),
-        "", "", f"spark local[*], trigger={runtime_cfg.trigger_processing_time}",
+        "", "", f"spark {master}, trigger={runtime_cfg.trigger_processing_time}",
     ]
     _append_perf_row(perf_output, row, logger)

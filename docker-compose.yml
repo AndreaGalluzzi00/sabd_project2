@@ -472,7 +472,7 @@ services:
         rm -rf /opt/spark/results/spark/q1 /opt/spark/checkpoints/q1 &&
         mkdir -p /opt/spark/results/spark/q1 /opt/spark/checkpoints &&
         echo 'Starting Spark Structured Q1...' &&
-        /opt/spark/bin/spark-submit --master local[*] --packages \"$$SPARK_PACKAGES\" /opt/spark/app/spark_jobs/q1/job.py
+        /opt/spark/bin/spark-submit --master local[4] --packages \"$$SPARK_PACKAGES\" /opt/spark/app/spark_jobs/q1/job.py
       "
     volumes:
       - ./config:/config:ro
@@ -508,7 +508,7 @@ services:
         rm -rf /opt/spark/results/spark/q2 /opt/spark/checkpoints/q2 &&
         mkdir -p /opt/spark/results/spark/q2 /opt/spark/checkpoints &&
         echo 'Starting Spark Structured Q2...' &&
-        /opt/spark/bin/spark-submit --master local[*] --packages \"$$SPARK_PACKAGES\" /opt/spark/app/spark_jobs/q2/job.py
+        /opt/spark/bin/spark-submit --master local[4] --packages \"$$SPARK_PACKAGES\" /opt/spark/app/spark_jobs/q2/job.py
       "
     volumes:
       - ./config:/config:ro
@@ -545,7 +545,7 @@ services:
         rm -rf /opt/spark/results/spark/q3 /opt/spark/checkpoints/q3 &&
         mkdir -p /opt/spark/results/spark/q3 /opt/spark/checkpoints &&
         echo 'Starting Spark Structured Q3...' &&
-        /opt/spark/bin/spark-submit --master local[*] --packages \"$$SPARK_PACKAGES\" /opt/spark/app/spark_jobs/q3/job.py
+        /opt/spark/bin/spark-submit --master local[4] --packages \"$$SPARK_PACKAGES\" /opt/spark/app/spark_jobs/q3/job.py
       "
     volumes:
       - ./config:/config:ro
