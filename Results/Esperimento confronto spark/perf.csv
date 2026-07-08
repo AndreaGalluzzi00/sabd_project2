@@ -1,4 +1,0 @@
-timestamp_utc,engine,implementation,query,experiment,parallelism,total_records,active_seconds,throughput_rec_s_avg,throughput_rec_s_max,busy_pct_avg,backpressure_pct_avg,notes
-2026-07-08T01:46:57+00:00,spark,structured,q1,p4_n4,4,2229457,0.0,2229457000000.0,251745.4,,,"spark local[*], trigger=5 seconds"
-2026-07-08T01:48:37+00:00,spark,structured,q2,p4_n4,4,2229457,0.0,2229457000000.0,167565.4,,,"spark local[*], trigger=5 seconds"
-2026-07-08T01:50:20+00:00,spark,structured,q3,p4_n4,4,2229457,0.0,2229457000000.0,198068.3,,,"spark local[*], trigger=5 seconds"
