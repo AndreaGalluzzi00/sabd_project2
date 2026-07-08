@@ -1,12 +1,5 @@
 extends: "../base.yml"
 
-# Famiglia wm_uniform (vedi 02_wm_uniform_d0): D = 3600 = W, cambia solo d.
-#
-# d = 3600 = D: watermark "safe", tutto il disordine rientra nel budget.
-# Perdita attesa: loss = p * (D - d)^2 / (2 * D * W) = 0%
-# a costo della latenza massima (la finestra chiude ~d dopo, in event-time).
-# Confronto chiave con 09_wm_expo_d3600: a parita' di d la coda limitata
-# si azzera, quella esponenziale no (~1.8%).
 
 experiment:
   name: "1h_wm_uniform_d3600"
@@ -19,9 +12,8 @@ producer:
 
 flink:
   auto_watermark_interval_ms: 1
-  python_bundle_time_ms: 50       # bundle Python: watermark quantizzato a ~576 s event (vs 16 h col default 1000 ms)
+  python_bundle_time_ms: 50
 
-# Stesso ritardo ammesso per tutte le query.
 q1:
   watermark_delay_seconds: 3600
 q2:

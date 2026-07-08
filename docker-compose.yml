@@ -523,7 +523,8 @@ services:
 
   # ----------------------------------------------------------
   # [5c] Spark Structured Streaming Q3 (extra)
-  # Uses Spark percentile_approx for approximate quantiles.
+  # Uses DDSketch by default for approximate quantiles (native Spark
+  # percentile_approx remains selectable from config).
   # ----------------------------------------------------------
   spark-job-q3:
     build:

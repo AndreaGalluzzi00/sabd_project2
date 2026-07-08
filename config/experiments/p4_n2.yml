@@ -1,6 +1,5 @@
 extends: "perf_cb4.yml"
 
-# Parallelismo 4 (da perf_cb4), partizioni = 2 (impostare a topic-creation time).
-# Vedi p1_n1.yml per il razionale.
+
 experiment:
   name: "p4_n2"

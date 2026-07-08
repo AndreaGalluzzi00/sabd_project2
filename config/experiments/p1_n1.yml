@@ -1,8 +1,5 @@
 extends: "perf_cb1.yml"
 
-# Matrice parallelismo x partizioni Kafka. Il parallelismo (1) viene da perf_cb1;
-# il NUMERO DI PARTIZIONI non e' nel config: va impostato creando il topic prima
-# della run (kafka-topics --create --partitions N) e lanciando con -NoResetTopic.
-# Il nome pP_nN serve solo a distinguere le righe in Results/perf.csv.
+
 experiment:
   name: "p1_n1"

@@ -1,7 +1,6 @@
 extends: "perf_par2.yml"
 
-# Compute-bound (vedi perf_cb1.yml per il razionale). Parallelism = 2, producer
-# floodato al massimo fisico via acceleration_factor enorme.
+
 
 experiment:
   name: "perf_cb2"
@@ -10,7 +9,6 @@ producer:
   acceleration_factor: 10000000
   skip_if_topic_has_messages: true
 
-# CSV-only (vedi perf_cb1.yml): dashboard off per evitare il crash-loop dei sink.
 dashboard:
   influx:
     enabled: false

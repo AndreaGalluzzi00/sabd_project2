@@ -25,8 +25,7 @@ producer:
   flush_interval: 5000
   skip_if_topic_has_messages: false
 
-  # Iniezione di out-of-orderness: non modifica l'event_time,
-  # ritarda solo la consegna degli eventi.
+  # Iniezione di out-of-orderness: non modifica l'event_time, ritarda solo la consegna degli eventi.
   holdback_probability: 0.3
   holdback_delay: 120.0
   random_seed: 42
@@ -38,8 +37,7 @@ producer:
   # Usato solo con holdback_distribution = "exponential".
   holdback_mean_seconds: 40.0
 
-  # A fine replay invia un marker con event_time nel futuro a ogni partizione:
-  # spinge il watermark oltre l'ultima finestra e drena i risultati finali.
+  # A fine replay invia un marker con event_time nel futuro a ogni partizione: spinge il watermark oltre l'ultima finestra e drena i risultati finali
   emit_end_of_stream: true
   retries: 3
   linger_ms: 20
@@ -53,48 +51,39 @@ flink:
   consumer_group: "flink-flight-analysis"
 
   # Intervallo di emissione periodica del watermark.
-  # A 57600x, 200ms corrispondono a circa 3.2h di event-time.
+  # A 57600x, 200ms corrispondono a circa 3.2h di event-time
   auto_watermark_interval_ms: 200
 
-  # Durata massima del bundle degli operatori Python (python.fn-execution.
-  # bundle.time). I watermark vengono applicati dagli operatori Python solo al
-  # confine del bundle: col default (1000 ms ~ 16h event a 57600x) nessun
-  # record puo' mai risultare late nelle finestre DataStream di Q3. Gli
-  # esperimenti wm lo abbassano a 10 ms (~576 s event).
+  # Durata massima del bundle degli operatori Python (python.fn-execution. bundle.time). I watermark vengono applicati dagli operatori Python solo al
+  # confine del bundle: col default (1000 ms ~ 16h event a 57600x) nessun record puo' mai risultare late nelle finestre DataStream di Q3. Gli
+  # esperimenti wm lo abbassano a 10 ms (~576 s event)
   python_bundle_time_ms: 1000
 
-  # Marca idle i subtasks source che non ricevono record. Serve quando il
-  # parallelismo Flink supera le partizioni Kafka: senza questo timeout i
-  # subtasks senza partizione possono bloccare il watermark globale e impedire
-  # la chiusura delle finestre event-time.
+  # Marca idle i subtasks source che non ricevono record. Serve quando il parallelismo Flink supera le partizioni Kafka: senza questo timeout i
+  # subtasks senza partizione possono bloccare il watermark globale e impedire la chiusura delle finestre event-time
   source_idle_timeout_ms: 5000
 
-  # ── Tolleranza ai guasti degli operatori con stato ────────────────────────
-  # Meccanismo di checkpointing di Flink: ogni checkpoint_interval_ms Flink
-  # esegue uno snapshot coerente (barrier-aligned) dello stato di TUTTI gli
-  # operatori + degli offset Kafka. In caso di guasto (crash di un operatore o
-  # dell'intero TaskManager) la restart strategy riavvia il job e ne ripristina
-  # lo stato dall'ultimo checkpoint completato; la sorgente Kafka riparte dagli
-  # offset salvati -> nessuna perdita ne duplicazione nei risultati.
+
+  # Meccanismo di checkpointing di Flink: ogni checkpoint_interval_ms Flink esegue uno snapshot coerente (barrier-aligned) dello stato di TUTTI gli
+  # operatori + degli offset Kafka. In caso di guasto (crash di un operatore o dell'intero TaskManager) la restart strategy riavvia il job e ne ripristina
+  # lo stato dall'ultimo checkpoint completato; la sorgente Kafka riparte dagli offset salvati -> nessuna perdita ne duplicazione nei risultati.
   checkpointing:
-    # EXACTLY_ONCE (barrier allineate) oppure AT_LEAST_ONCE (piu' veloce ma
-    # possibili riletture). Per il confronto prestazionale con/senza guasto.
+
     mode: "EXACTLY_ONCE"
-    # Pausa minima tra la fine di un checkpoint e l'inizio del successivo:
-    # garantisce progresso all'elaborazione anche se i checkpoint sono lenti.
+    # Pausa minima tra la fine di un checkpoint e l'inizio del successivo
     min_pause_ms: 5000
-    # Un checkpoint che supera questo tempo viene abortito (non fa fallire il job).
+    # Un checkpoint che supera questo tempo viene abortito (non fa fallire il job)
     timeout_ms: 60000
-    # Checkpoint concorrenti: 1 e' obbligatorio con EXACTLY_ONCE allineato.
+    # Checkpoint concorrenti: 1 e' obbligatorio con EXACTLY_ONCE allineato
     max_concurrent: 1
-    # Fallimenti di checkpoint consecutivi tollerati prima di far fallire il job.
+    # Fallimenti di checkpoint consecutivi tollerati prima di far fallire il job
     tolerable_failures: 3
     # RETAIN_ON_CANCELLATION: conserva l'ultimo checkpoint su disco anche dopo
-    # cancellazione/guasto, cosi' e' riutilizzabile per il recovery manuale.
+    # cancellazione/guasto, cosi' e' riutilizzabile per il recovery manuale
     externalized: true
 
-  # Strategia di riavvio applicata a TUTTI gli operatori in caso di guasto.
-  # Senza di essa il job muore invece di ripristinarsi dal checkpoint.
+  # Strategia di riavvio applicata a TUTTI gli operatori in caso di guasto
+  # Senza di essa il job muore invece di ripristinarsi dal checkpoint
   restart:
     attempts: 10          # tentativi di riavvio prima di dichiarare fallito il job
     delay_ms: 10000       # attesa tra un tentativo e il successivo (>= riavvio TaskManager)
@@ -106,7 +95,7 @@ spark:
   trigger_processing_time: "5 seconds"
   idle_timeout_seconds: 60
   startup_timeout_seconds: 900
-  # Optional throttle for experiments, e.g. 200000. null -> Spark default.
+
   max_offsets_per_trigger:
 
 q1:
@@ -114,38 +103,31 @@ q1:
 
 q2:
   # Finestra Q2 da eseguire.
-  # Specifica: 1h, 6h, dall'inizio dataset. "cumulative" implementa lo
-  # stato live dall'inizio; "global" resta la finestra unica legacy a EOS.
-  # Usa "all" per eseguirle tutte nello stesso job.
+  # Specifica: 1h, 6h, global, all
   window: "all"
   # Ritardo massimo ammesso per eventi in ritardo (event time).
   watermark_delay_seconds: 180
   # Passo nominale in event-time tra snapshot della cumulativa live.
-  # 2700000 ms = 45 minuti del dataset. Lo stato interno resta aggiornato per record.
+  # 2700000 ms = 45 minuti del dataset
   cumulative_snapshot_event_step_ms: 2700000
 
 q3:
-  # Finestra Q3 da eseguire.
-  # Specifica: 1d, 7d, dall'inizio dataset. "cumulative" implementa lo
-  # stato live dall'inizio; "global" resta la finestra unica legacy a EOS.
-  # Usa "all" per eseguirle tutte nello stesso job.
+
   window: "all"
-  # Stessa strategia di watermarking di Q1/Q2.
+
   watermark_delay_seconds: 180
-  # Passo nominale in event-time tra snapshot della cumulativa live.
-  # 54000000 ms = 15 ore del dataset. Lo stato interno resta aggiornato per record.
+  # 54000000 ms = 15 ore del dataset
   cumulative_snapshot_event_step_ms: 54000000
   # DDSketch: errore relativo massimo garantito sui percentili.
   sketch_alpha: 0.01
-  # Spark Structured Streaming extra: percentile_approx accuracy.
+
+  spark_quantile_impl: "ddsketch"
   spark_percentile_accuracy: 10000
 
-# Visualizzazione real-time su Grafana (opzionale).
-# Il sink CSV resta sempre attivo; dashboard InfluxDB/TimescaleDB sono sink paralleli.
+
 dashboard:
   influx:
     enabled: true
-    # NB: con enabled=true i topic DEVONO esistere (vedi servizio dashboard-init).
     results_topic: "q1_results"
     q2:
       topic_1h: "q2_results_1h"
@@ -159,7 +141,6 @@ dashboard:
       topic_cumulative: "q3_results_cumulative"
   timescale:
     enabled: true
-    # NB: con enabled=true le tabelle DEVONO esistere (init in dashboard/timescaledb/).
     url: "jdbc:postgresql://timescaledb:5432/sabd"
     table: "q1_results"
     username: "sabd"

@@ -7,9 +7,7 @@ experiment:
 producer:
   holdback_probability: 0.0
 
-# Nessun disordine iniettato -> sanity check: attesi 0 late drop.
-# Il ritardo ammesso vale per tutte le query (q2/q3 non devono ereditare
-# il default di base.yml).
+
 q1:
   watermark_delay_seconds: 30
 q2:

@@ -1,8 +1,5 @@
 extends: "../base.yml"
 
-# Sweep di parallelismo (vedi perf_par1.yml per razionale e caveat).
-# Baseline fisso, cambia solo flink.parallelism. Query a runtime.
-# p = 4 = numero di partizioni del topic flights (mapping source 1:1).
 
 experiment:
   name: "perf_par4"

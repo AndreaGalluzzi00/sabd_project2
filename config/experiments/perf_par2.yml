@@ -1,7 +1,5 @@
 extends: "../base.yml"
 
-# Sweep di parallelismo (vedi perf_par1.yml per razionale e caveat).
-# Baseline fisso, cambia solo flink.parallelism. Query a runtime.
 
 experiment:
   name: "perf_par2"
