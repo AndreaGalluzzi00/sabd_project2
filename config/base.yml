@@ -63,6 +63,12 @@ flink:
   # esperimenti wm lo abbassano a 10 ms (~576 s event).
   python_bundle_time_ms: 1000
 
+  # Marca idle i subtasks source che non ricevono record. Serve quando il
+  # parallelismo Flink supera le partizioni Kafka: senza questo timeout i
+  # subtasks senza partizione possono bloccare il watermark globale e impedire
+  # la chiusura delle finestre event-time.
+  source_idle_timeout_ms: 5000
+
   # ── Tolleranza ai guasti degli operatori con stato ────────────────────────
   # Meccanismo di checkpointing di Flink: ogni checkpoint_interval_ms Flink
   # esegue uno snapshot coerente (barrier-aligned) dello stato di TUTTI gli

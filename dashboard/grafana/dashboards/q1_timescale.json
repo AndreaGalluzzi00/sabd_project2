@@ -117,20 +117,26 @@
     },
     {
       "id": 5,
-      "type": "table",
-      "title": "Voli completati / cancellati / deviati per compagnia (ultima finestra 1h)",
+      "type": "timeseries",
+      "title": "Voli completati / cancellati / deviati per compagnia (finestra 1h)",
       "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
       "gridPos": { "h": 9, "w": 24, "x": 0, "y": 18 },
-      "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
-      "options": { "showHeader": true },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 8, "showPoints": "auto" },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
           "refId": "A",
           "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
-          "format": "table",
+          "format": "time_series",
           "editorMode": "code",
           "rawQuery": true,
-          "rawSql": "SELECT airline, num_flights, completed, cancelled, diverted FROM q1_results WHERE window_start = (SELECT max(window_start) FROM q1_results) ORDER BY airline"
+          "rawSql": "SELECT window_start AS \"time\", airline || ' completati' AS metric, completed::double precision AS value FROM q1_results WHERE $__timeFilter(window_start) UNION ALL SELECT window_start AS \"time\", airline || ' cancellati' AS metric, cancelled::double precision AS value FROM q1_results WHERE $__timeFilter(window_start) UNION ALL SELECT window_start AS \"time\", airline || ' deviati' AS metric, diverted::double precision AS value FROM q1_results WHERE $__timeFilter(window_start) ORDER BY 1, 2"
         }
       ]
     }

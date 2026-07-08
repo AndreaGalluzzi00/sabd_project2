@@ -105,26 +105,23 @@
     },
     {
       "id": 5,
-      "type": "table",
-      "title": "Voli completati / cancellati / deviati per compagnia (ultima finestra 1h)",
+      "type": "timeseries",
+      "title": "Voli completati / cancellati / deviati per compagnia (finestra 1h)",
       "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
       "gridPos": { "h": 9, "w": 24, "x": 0, "y": 18 },
-      "fieldConfig": { "defaults": { "custom": { "align": "auto" } }, "overrides": [] },
-      "options": { "showHeader": true },
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": { "_time": true },
-            "indexByName": { "airline": 0, "num_flights": 1, "completed": 2, "cancelled": 3, "diverted": 4 }
-          }
-        }
-      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 8, "showPoints": "auto" },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
           "refId": "A",
           "datasource": { "type": "influxdb", "uid": "influxdb-flights" },
-          "query": "from(bucket: \"flights\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"q1\") |> filter(fn: (r) => r[\"_field\"] == \"num_flights\" or r[\"_field\"] == \"completed\" or r[\"_field\"] == \"cancelled\" or r[\"_field\"] == \"diverted\") |> pivot(rowKey: [\"_time\", \"airline\"], columnKey: [\"_field\"], valueColumn: \"_value\") |> group() |> sort(columns: [\"_time\"], desc: true) |> limit(n: 4) |> sort(columns: [\"airline\"])"
+          "query": "from(bucket: \"flights\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r[\"_measurement\"] == \"q1\") |> filter(fn: (r) => r[\"_field\"] == \"completed\" or r[\"_field\"] == \"cancelled\" or r[\"_field\"] == \"diverted\") |> map(fn: (r) => ({ r with _field: r.airline + \" \" + (if r._field == \"completed\" then \"completati\" else if r._field == \"cancelled\" then \"cancellati\" else \"deviati\") })) |> keep(columns: [\"_time\", \"_value\", \"_field\"]) |> group(columns: [\"_field\"]) |> sort(columns: [\"_time\"])"
         }
       ]
     }

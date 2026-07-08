@@ -21,6 +21,7 @@ class FlinkRuntimeConfig:
     checkpoint_interval_ms: int
     auto_watermark_interval_ms: int
     python_bundle_time_ms: int
+    source_idle_timeout_ms: int
     table_optimizer_agg_phase_strategy: str | None
 
 
@@ -59,6 +60,9 @@ def build_flink_runtime_config(cfg: dict[str, Any]) -> FlinkRuntimeConfig:
         ),
         python_bundle_time_ms=int(
             flink_cfg.get("python_bundle_time_ms", 1000)
+        ),
+        source_idle_timeout_ms=int(
+            flink_cfg.get("source_idle_timeout_ms", 5000)
         ),
         table_optimizer_agg_phase_strategy=(
             str(flink_cfg["table_optimizer_agg_phase_strategy"])
@@ -139,6 +143,12 @@ def create_table_environment(
         t_env.get_config().set(
             "table.optimizer.agg-phase-strategy",
             runtime_cfg.table_optimizer_agg_phase_strategy,
+        )
+
+    if runtime_cfg.source_idle_timeout_ms > 0:
+        t_env.get_config().set(
+            "table.exec.source.idle-timeout",
+            f"{runtime_cfg.source_idle_timeout_ms} ms",
         )
 
     return t_env

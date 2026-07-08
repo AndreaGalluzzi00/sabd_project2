@@ -8,7 +8,7 @@
   "schemaVersion": 39,
   "tags": ["sabd", "q2", "timescaledb"],
   "templating": { "list": [] },
-  "time": { "from": "2024-12-01T00:00:00.000Z", "to": "2026-01-01T00:00:00.000Z" },
+  "time": { "from": "2025-01-01T00:00:00.000Z", "to": "2025-05-01T00:00:00.000Z" },
   "timepicker": {},
   "timezone": "utc",
   "title": "SABD - Q2 Aeroporti con ritardi in partenza significativi (TimescaleDB)",
@@ -70,7 +70,7 @@
       "type": "timeseries",
       "title": "Voli con ritardo grave (>30 min) nel tempo - finestra 6h (per aeroporto in top-10)",
       "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
-      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 9 },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
       "fieldConfig": {
         "defaults": {
           "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 8, "showPoints": "auto" },
@@ -87,6 +87,31 @@
           "editorMode": "code",
           "rawQuery": true,
           "rawSql": "SELECT ts AS \"time\", origin_airport_id::text AS airport, severe_delays FROM q2_results_6h WHERE $__timeFilter(ts) ORDER BY ts"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Ritardo medio in partenza - finestra 6h (per aeroporto in top-10)",
+      "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "fillOpacity": 8, "showPoints": "auto" },
+          "unit": "m"
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "postgres", "uid": "timescaledb-flights" },
+          "format": "time_series",
+          "editorMode": "code",
+          "rawQuery": true,
+          "rawSql": "SELECT ts AS \"time\", origin_airport_id::text AS airport, round(dep_delay_mean::numeric, 1) AS dep_delay_mean FROM q2_results_6h WHERE $__timeFilter(ts) ORDER BY ts"
         }
       ]
     },

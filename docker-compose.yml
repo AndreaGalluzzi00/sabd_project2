@@ -189,6 +189,7 @@ services:
         jobmanager.memory.process.size: 1600m
         rest.bind-port: 8081
         metrics.reporters: slf4j
+        metrics.fetcher.update-interval: 1000
         metrics.latency.interval: 1000
         metrics.latency.granularity: operator
         state.savepoints.dir: file:///opt/flink/savepoints
@@ -228,6 +229,7 @@ services:
         # experiments 07-10). Ogni job usa 'parallelism' slot via slot-sharing.
         taskmanager.numberOfTaskSlots: 8
         metrics.reporters: slf4j
+        metrics.fetcher.update-interval: 1000
         # Latency tracking: emette latency-marker ogni 1s -> gauge *.latency_p50/p95/p99
         # leggibili via REST (usati da scripts/report_perf.py). Overhead trascurabile.
         metrics.latency.interval: 1000

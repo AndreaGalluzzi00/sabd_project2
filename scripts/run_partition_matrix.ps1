@@ -33,7 +33,7 @@ param(
     [string]$Query = "q1",
 
     # Combo come "parallelismo:partizioni".
-    [string[]]$Combos = @("1:1", "2:1", "2:2", "4:1", "4:2", "4:4"),
+    [string[]]$Combos = @("1:1", "2:2", "4:4"),
 
     [int]$ReplicationFactor = 2
 )

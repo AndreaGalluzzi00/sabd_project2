@@ -290,9 +290,16 @@ def main() -> None:
             print("ERROR: source never emitted within startup timeout.", file=sys.stderr)
             sys.exit(1)
 
-        # Stop if the job left the RUNNING state.
+        # Abort on restart/failure: a flat source counter during recovery is not
+        # an end-of-stream signal and would produce a bogus perf.csv row.
         state = http_get_json(f"{flink_url}/jobs/{jid}").get("state")
-        if state not in ("RUNNING", "RESTARTING"):
+        if state in {"RESTARTING", "FAILING", "FAILED", "CANCELLING", "CANCELED"}:
+            print(
+                f"ERROR: job entered state={state}; metrics for this run are invalid.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if state != "RUNNING":
             print(f"Job no longer RUNNING (state={state}); stopping.")
             break
 
@@ -312,14 +319,7 @@ def main() -> None:
     busy_avg = sum(s[3] for s in samples) / len(samples) / 10.0     # ms/s -> %
     bp_avg = sum(s[4] for s in samples) / len(samples) / 10.0       # ms/s -> %
 
-    # elapsed_ms: time spent on the SOLE query processing. It spans from when the
-    # Kafka source first emitted a record (first_active_t) to when its counter
-    # last advanced (last_growth_t) — i.e. the window during which the job was
-    # actively ingesting and processing events. It intentionally EXCLUDES the
-    # PyFlink warmup before the first record and the post-drain tail (watermark-
-    # driven window finalization + CSV rollover flush to the sink + idle wait),
-    # so it is NOT the same as active_seconds, which still includes that trailing
-    # idle window. Reported in ms so it sits in the same units as latency.
+
     elapsed_ms = round(max(last_growth_t - first_active_t, 0.0) * 1000.0, 1)
 
     lat_avg = (sum(lat_p50) / len(lat_p50)) if lat_p50 else ""
