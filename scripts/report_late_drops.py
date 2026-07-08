@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Collect Flink late-drop metrics and append them to the late-drops CSV."""
 
 from __future__ import annotations
 
@@ -36,7 +37,8 @@ LEGACY_OUTPUT_HEADER = [column for column in OUTPUT_HEADER if column != "query"]
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
+    description = (__doc__ or "Collect Flink late-drop metrics.").strip().splitlines()[0]
+    parser = argparse.ArgumentParser(description=description)
 
     parser.add_argument(
         "--experiment",

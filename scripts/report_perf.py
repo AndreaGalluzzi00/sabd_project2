@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Collect Flink runtime performance metrics and append them to perf.csv."""
 
 from __future__ import annotations
 
@@ -24,7 +25,6 @@ PERF_HEADER = [
     "timestamp_utc", "engine", "implementation", "query", "experiment",
     "parallelism", "total_records", "active_seconds",
     "throughput_rec_s_avg", "throughput_rec_s_max",
-    "latency_ms_avg", "latency_ms_max",
     "busy_pct_avg", "backpressure_pct_avg", "notes",
 ]
 
@@ -49,7 +49,8 @@ SRC_RATE_RE = re.compile(r"(?i)^Source.*\.numRecordsOutPerSecond$")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
+    description = (__doc__ or "Collect Flink runtime performance metrics.").strip().splitlines()[0]
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--engine", default="flink", choices=["flink"],
                         help="Only 'flink' here; Spark writes its own row.")
     parser.add_argument("--query", default="", help="q1/q2/q3 (labels the row and picks the job).")
@@ -289,16 +290,13 @@ def main() -> None:
     lat_avg = (sum(lat_p50) / len(lat_p50)) if lat_p50 else ""
     lat_max = (max(lat_p99) if lat_p99 else "")
     thr_note = "throughput=kafka source ingestion" if use_source_operator else "throughput=vertex numRecordsOut (fallback)"
-    lat_note = "latency markers on" if lat_p50 else "latency: enable metrics.latency.interval"
-    notes = f"{thr_note}; {lat_note}"
+    notes = thr_note
 
     row = [
         datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "flink", args.implementation, args.query or "?", experiment, parallelism,
         int(total_records), round(active_seconds, 1),
         round(thr_avg, 1), round(thr_max, 1),
-        (round(lat_avg, 1) if lat_avg != "" else ""),
-        (round(lat_max, 1) if lat_max != "" else ""),
         round(busy_avg, 1), round(bp_avg, 1), notes,
     ]
 
@@ -312,7 +310,6 @@ def main() -> None:
 
     print(f"throughput avg={thr_avg:.0f} rec/s  max={thr_max:.0f} rec/s  "
           f"busy={busy_avg:.0f}%  backpressure={bp_avg:.0f}%  "
-          f"latency_p50={lat_avg if lat_avg=='' else round(lat_avg,1)}  "
           f"records={int(total_records)}  active={active_seconds:.0f}s")
     print(f"Appended to {args.output}")
 

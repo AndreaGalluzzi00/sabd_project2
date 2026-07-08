@@ -425,7 +425,7 @@ function Ensure-KafkaTopic {
 
         [int]$Partitions = 4,
 
-        [int]$ReplicationFactor = 1
+        [int]$ReplicationFactor = 2
     )
 
     Invoke-Checked {

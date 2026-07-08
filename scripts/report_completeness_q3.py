@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Report Q3 completeness by comparing exact and approximate outputs."""
 
 from __future__ import annotations
 
@@ -33,7 +34,8 @@ DEFAULT_OUTPUT = PROJECT_ROOT / "Results" / "late_drops_q3.csv"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
+    description = (__doc__ or "Report Q3 completeness.").strip().splitlines()[0]
+    parser = argparse.ArgumentParser(description=description)
 
     parser.add_argument(
         "--experiment",

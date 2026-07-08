@@ -172,7 +172,6 @@ _PERF_HEADER = [
     "timestamp_utc", "engine", "implementation", "query", "experiment",
     "parallelism", "total_records", "active_seconds",
     "throughput_rec_s_avg", "throughput_rec_s_max",
-    "latency_ms_avg", "latency_ms_max",
     "busy_pct_avg", "backpressure_pct_avg", "notes",
 ]
 
@@ -361,8 +360,6 @@ def await_queries_until_idle(
         "spark", "structured", query_label or "?", experiment,
         runtime_cfg.shuffle_partitions, int(total_records), round(active_seconds, 1),
         round(thr_avg, 1), round(thr_max, 1),
-        (round(lat_avg, 1) if lat_avg != "" else ""),
-        (round(lat_max, 1) if lat_max != "" else ""),
         "", "", f"spark local[*], trigger={runtime_cfg.trigger_processing_time}",
     ]
     _append_perf_row(perf_output, row, logger)
