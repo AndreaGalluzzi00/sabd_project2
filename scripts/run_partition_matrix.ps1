@@ -7,10 +7,14 @@ in regime COMPUTE-BOUND (backlog pre-caricato).
 Per ogni combo (p, n):
   0. avvia Kafka/Kafka2, Schema Registry e Flink;
   1. ricrea il topic 'flights' con n partizioni (delete + create, RF configurabile);
-  2. pre-carica il topic con i 2.2M eventi (il producer riempie perche' e' vuoto);
-  3. esegue la query a parallelismo p leggendo il backlog (-NoResetTopic: il
-     producer salta perche' il topic e' pieno);
-  4. report_perf aggiunge una riga (experiment = pP_nN) a Results/perf.csv.
+  2. pre-carica il topic con i 2.2M eventi + marker EOS (il producer riempie
+     perche' e' vuoto; acceleration_factor enorme -> flood al massimo fisico);
+  3. esegue la query a parallelismo p che DRENA il backlog SENZA producer
+     concorrente (-NoProducer): il job legge alla velocita' del motore, quindi
+     la run e' COMPUTE-BOUND e non ingestion-bound;
+  4. report_perf aggiunge una riga (experiment = pP_nN) a Results/perf.csv. La
+     metrica chiave e' elapsed_ms (tempo di solo drain, coda idle/warmup esclusi):
+     lo speedup e' S(p) = elapsed(p=1) / elapsed(p), l'efficienza S(p)/p.
 
 Richiede i config config/experiments/pP_nN.yml (estendono perf_cbP e rinominano).
 Le partizioni NON sono nel config: le imposta questo script alla creazione del topic.
@@ -181,12 +185,17 @@ foreach ($combo in $Combos) {
         docker compose run --rm -e CONFIG_PATH=/config/experiments/$exp.yml producer
     }
 
-    # 3) esegui la query a parallelismo p sul backlog
+    # 3) esegui la query a parallelismo p DRENANDO il backlog, senza producer
+    #    concorrente (-NoProducer): il topic e' gia' pieno dallo step 2, quindi
+    #    il job legge alla velocita' del motore -> run compute-bound e elapsed_ms
+    #    = tempo di solo drain (coda idle esclusa).
     Invoke-Checked {
-        .\scripts\run_experiment.ps1 -e $exp -Query $Query -NoResetTopic -NoPreprocess -NoMerge
+        .\scripts\run_experiment.ps1 -e $exp -Query $Query -NoResetTopic -NoProducer -NoPreprocess -NoMerge
     }
 }
 
 Write-Host ""
 Write-Host "########## MATRICE $Query COMPLETATA ##########"
 Write-Host "Risultati: Results\perf.csv (righe pP_nN, colonna query=$Query)."
+Write-Host "Metrica compute-bound: elapsed_ms (drain puro). Speedup = elapsed(p1_n1) / elapsed(pP_nN)."
+Write-Host "Sanity check: total_records ~= 2.229.45x (x = n partizioni, per i marker EOS); se e' piccolo la run e' fallita."

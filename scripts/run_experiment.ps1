@@ -97,6 +97,12 @@ param(
 
     [switch]$NoPreprocess,
     [switch]$NoResetTopic,
+    # Skip the producer entirely: the job runs against a Kafka topic that must
+    # already be pre-loaded (backlog). Turns the run COMPUTE-BOUND — the job
+    # drains an existing backlog at engine speed instead of consuming at the
+    # producer's pace — so elapsed_ms reflects pure processing/drain time. Used
+    # by run_partition_matrix.ps1 (pre-load once, then measure the drain).
+    [switch]$NoProducer,
     [switch]$NoCleanResults,
     [switch]$NoMerge,
 
@@ -1129,13 +1135,20 @@ if ($Engine -eq "flink" -and -not $NoPerf) {
         -RedirectStandardError "$PerfLog.err"
 }
 
-Write-Host ""
-Write-Host "Running producer..."
+if ($NoProducer) {
+    Write-Host ""
+    Write-Host "Producer skipped (-NoProducer): the job drains the pre-loaded Kafka backlog (compute-bound); elapsed_ms = pure drain time."
+    Write-Host "NOTE: the topic must already hold the full dataset (incl. EOS markers) or the job will stall with no input."
+}
+else {
+    Write-Host ""
+    Write-Host "Running producer..."
 
-Invoke-Checked {
-    docker compose run --rm --build `
-        -e CONFIG_PATH=$SubmitCfgContainer `
-        producer
+    Invoke-Checked {
+        docker compose run --rm --build `
+            -e CONFIG_PATH=$SubmitCfgContainer `
+            producer
+    }
 }
 
 if ($null -ne $PerfProcess) {
