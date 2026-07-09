@@ -29,7 +29,7 @@ FLUSSO
     guasto (latest.restored valorizzato) e (b) numRestarts e' aumentato.
 
 USO
-    # Verifica completa (default: q1, producer 2000x, guasto dopo 1 checkpoint)
+    # Verifica completa (default: q1, producer 57600x, guasto dopo 1 checkpoint)
     .\scripts\verify_fault_tolerance.ps1
 
     # Salta il preprocessing se i dati sono gia' pronti
@@ -42,13 +42,18 @@ USO
     .\scripts\verify_fault_tolerance.ps1 -NoPreprocess -NoMerge
     .\scripts\verify_fault_tolerance.ps1 -NoFault -NoPreprocess -NoMerge
 
+    # Ripete lo stesso scenario piu' volte, appendendo una riga timing per run
+    .\scripts\verify_fault_tolerance.ps1 -Runs 5 -NoPreprocess -NoMerge
+    .\scripts\verify_fault_tolerance.ps1 -Runs 5 -NoFault -NoPreprocess -NoMerge
+
 OPZIONI
     -Query                   q1 (default). Riservato per estensioni future.
     -AccelerationFactor      Fattore di accelerazione del producer per la demo.
                              Piu' basso = run piu' lunga = guasto piu' facile da
-                             collocare. Default 2000 (base.yml usa 57600).
+                             collocare. Default 57600.
     -CheckpointsBeforeFault  Checkpoint completati da attendere prima del guasto.
                              Default 1.
+    -Runs                    Numero di ripetizioni dello scenario. Default 1.
     -NoPreprocess            Non rilancia il preprocessing.
     -NoResetTopic            Non resetta il topic Kafka flights.
     -NoFault                 Non inietta il guasto (produce un output baseline).
@@ -64,6 +69,8 @@ param(
 
     [int]$AccelerationFactor = 57600,
     [int]$CheckpointsBeforeFault = 1,
+    [ValidateRange(1, 1000)]
+    [int]$Runs = 1,
 
     [switch]$NoPreprocess,
     [switch]$NoResetTopic,
@@ -185,7 +192,7 @@ function New-FaultRuntimeConfig {
     $runtimeDir = "config/runtime"
     New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
 
-    $runId = "$(Get-Date -Format 'yyyyMMddHHmmss')-$PID"
+    $runId = "$(Get-Date -Format 'yyyyMMddHHmmssfff')-$PID"
     $fileName = "fault.$runId.runtime.yml"
     $hostPath = Join-Path $runtimeDir $fileName
 
@@ -244,9 +251,20 @@ function Get-StopwatchElapsedMs {
 
 Assert-ProjectRoot
 
+if ($Runs -gt 1 -and $KeepJob) {
+    throw "-KeepJob non e' compatibile con -Runs > 1: ogni run deve ripartire da uno stato pulito."
+}
+
+if ($Runs -gt 1 -and $NoResetTopic) {
+    Write-Warning "-NoResetTopic con -Runs > 1 puo' rendere le run non confrontabili perche' il topic Kafka non viene svuotato tra una ripetizione e l'altra."
+}
+
+for ($runIndex = 1; $runIndex -le $Runs; $runIndex++) {
+
 Write-Host ""
 Write-Host "========================================================"
 Write-Host " Verifica tolleranza ai guasti (checkpointing di Flink)"
+Write-Host " Run                 : $runIndex / $Runs"
 Write-Host " Query               : $Query"
 Write-Host " Producer accel.      : ${AccelerationFactor}x"
 Write-Host " Checkpoint pre-guasto: $CheckpointsBeforeFault"
@@ -533,7 +551,7 @@ $timingRow = [pscustomobject][ordered]@{
     producer_timed_out = $producerTimedOut
     producer_exit_code = $producerExitCode
     verification_pass = $faultPass
-    notes = "execution=producer_start_to_final_window_consolidation; excludes docker_setup, topic_reset, preprocessing, job_submit, merge, cleanup"
+    notes = "run=$runIndex/$Runs; execution=producer_start_to_final_window_consolidation; excludes docker_setup, topic_reset, preprocessing, job_submit, merge, cleanup"
 }
 Write-TimingCsvRow -Path $TimingCsv -Row $timingRow
 Write-Host "Tempi appendati in $TimingCsv"
@@ -557,6 +575,10 @@ if (-not $KeepJob) {
 }
 else {
     Write-Host "Job lasciato in esecuzione (-KeepJob)."
+}
+
+Write-Host ""
+Write-Host "Run $runIndex/$Runs completata."
 }
 
 Write-Host ""
