@@ -38,6 +38,10 @@ USO
     # Baseline SENZA guasto (per confrontare l'output con quello del run con guasto)
     .\scripts\verify_fault_tolerance.ps1 -NoFault -NoPreprocess
 
+    # Confronto tempi di sola esecuzione: run con guasto e baseline senza guasto
+    .\scripts\verify_fault_tolerance.ps1 -NoPreprocess -NoMerge
+    .\scripts\verify_fault_tolerance.ps1 -NoFault -NoPreprocess -NoMerge
+
 OPZIONI
     -Query                   q1 (default). Riservato per estensioni future.
     -AccelerationFactor      Fattore di accelerazione del producer per la demo.
@@ -51,6 +55,8 @@ OPZIONI
     -NoMerge                 Non crea il CSV finale.
     -KeepJob                 Non cancella il job Flink a fine verifica.
     -FlinkUrl                REST del JobManager. Default http://localhost:8081.
+    -TimingCsv               CSV dove appendere i tempi di sola esecuzione.
+                             Default Results/fault_tolerance_timing.csv.
 #>
 param(
     [ValidateSet("q1")]
@@ -65,7 +71,9 @@ param(
     [switch]$NoMerge,
     [switch]$KeepJob,
 
-    [string]$FlinkUrl = "http://localhost:8081"
+    [string]$FlinkUrl = "http://localhost:8081",
+
+    [string]$TimingCsv = "Results/fault_tolerance_timing.csv"
 )
 
 $ErrorActionPreference = "Stop"
@@ -151,6 +159,24 @@ function Get-RegisteredTaskManagers {
     }
 }
 
+function Cancel-FlinkJobBestEffort {
+    param([Parameter(Mandatory = $true)][string]$Jid)
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = @(docker exec flink-jobmanager flink cancel $Jid 2>&1)
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    if ($exitCode -ne 0) {
+        Write-Warning "Cancel job $Jid fallito (exit $exitCode): $($output -join ' ')"
+    }
+}
+
 function New-FaultRuntimeConfig {
     # Config runtime che estende base.yml: consumer group unico + producer
     # rallentato per la demo. Stesso schema di run_experiment.ps1.
@@ -188,6 +214,34 @@ dashboard:
 
 # ── Preludio ────────────────────────────────────────────────────────────────
 
+function Write-TimingCsvRow {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][pscustomobject]$Row
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return
+    }
+
+    $parent = Split-Path -Parent $Path
+    if (-not [string]::IsNullOrWhiteSpace($parent)) {
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    }
+
+    $Row | Export-Csv -Path $Path -NoTypeInformation -Append -Encoding UTF8
+}
+
+function Get-StopwatchElapsedMs {
+    param([System.Diagnostics.Stopwatch]$Stopwatch)
+
+    if ($null -eq $Stopwatch) {
+        return $null
+    }
+
+    return [int64][math]::Round($Stopwatch.Elapsed.TotalMilliseconds)
+}
+
 Assert-ProjectRoot
 
 Write-Host ""
@@ -223,7 +277,7 @@ while ((Get-Date) -lt $deadline) {
 $existing = Get-RunningJob
 if ($null -ne $existing) {
     Write-Host "Cancello il job precedente $($existing.jid)..."
-    docker exec flink-jobmanager flink cancel $existing.jid 2>&1 | Out-Null
+    Cancel-FlinkJobBestEffort -Jid $existing.jid
     Start-Sleep -Seconds 5
 }
 
@@ -275,6 +329,18 @@ Write-Host "Job RUNNING: $jid ($($job.name))"
 Write-Host ""
 Write-Host "Avvio il producer in background (${AccelerationFactor}x)..."
 $producerLog = Join-Path $env:TEMP "sabd_fault_producer_$PID.log"
+$executionStartedAtUtc = (Get-Date).ToUniversalTime()
+$executionStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$producerStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$producerElapsedMs = $null
+$producerTimedOut = $false
+$producerExitCode = $null
+$faultInjectedAtMs = $null
+$faultDetectedAtMs = $null
+$restoreDetectedAtMs = $null
+$recoveryElapsedMs = $null
+$restartsAfter = $null
+$faultPass = $null
 $producerProc = Start-Process -FilePath "docker" `
     -ArgumentList @("compose", "run", "--rm", "-e", "CONFIG_PATH=$cfgContainer", "producer") `
     -NoNewWindow -PassThru `
@@ -312,6 +378,7 @@ if ($completedBefore -lt $CheckpointsBeforeFault) {
 }
 
 $restartsBefore = Get-NumRestarts -Jid $jid
+$restartsAfter = $restartsBefore
 Write-Host "Baseline: numRestarts=$restartsBefore, checkpoint completati=$completedBefore."
 
 if ($NoFault) {
@@ -322,6 +389,7 @@ else {
     # ── GUASTO: kill del TaskManager ────────────────────────────────────────
     Write-Host ""
     Write-Host ">>> GUASTO: docker kill flink-taskmanager  ($(Get-Date -Format 'HH:mm:ss'))"
+    $faultInjectedAtMs = Get-StopwatchElapsedMs -Stopwatch $executionStopwatch
     Invoke-Checked { docker kill flink-taskmanager }
 
     # Osserva il job lasciare lo stato RUNNING.
@@ -332,6 +400,7 @@ else {
         $s = Get-JobState -Jid $jid
         if ($s -and $s -ne "RUNNING") {
             $failedState = $s
+            $faultDetectedAtMs = Get-StopwatchElapsedMs -Stopwatch $executionStopwatch
             Write-Host "Job in stato '$s' dopo il guasto."
             break
         }
@@ -368,9 +437,14 @@ else {
         }
         $restartsAfter = Get-NumRestarts -Jid $jid
         if ($s -eq "RUNNING" -and $null -ne $restored -and $restartsAfter -gt $restartsBefore) {
+            $restoreDetectedAtMs = Get-StopwatchElapsedMs -Stopwatch $executionStopwatch
             break
         }
         Start-Sleep -Seconds 3
+    }
+
+    if ($null -ne $faultInjectedAtMs -and $null -ne $restoreDetectedAtMs) {
+        $recoveryElapsedMs = $restoreDetectedAtMs - $faultInjectedAtMs
     }
 
     Write-Host ""
@@ -395,6 +469,7 @@ else {
     Write-Host $(if ($pass) { "VERIFICA SUPERATA: recupero dello stato dopo il guasto OK." } `
                  else { "VERIFICA FALLITA: vedi i marker [FAIL] sopra." })
     Write-Host "--------------------------------------------------------"
+    $faultPass = $pass
 }
 
 # ── Attesa fine producer ────────────────────────────────────────────────────
@@ -403,8 +478,21 @@ Write-Host ""
 Write-Host "Attendo la fine del producer..."
 if (-not $producerProc.WaitForExit(600000)) {
     Write-Warning "Producer ancora in esecuzione dopo 600s; lo termino."
-    try { $producerProc.Kill() } catch { }
+    $producerTimedOut = $true
+    try {
+        $producerProc.Kill()
+        $producerProc.WaitForExit(30000) | Out-Null
+        $producerProc.Refresh()
+        $producerExitCode = $producerProc.ExitCode
+    }
+    catch { }
 }
+else {
+    $producerProc.Refresh()
+    $producerExitCode = $producerProc.ExitCode
+}
+$producerStopwatch.Stop()
+$producerElapsedMs = Get-StopwatchElapsedMs -Stopwatch $producerStopwatch
 foreach ($log in @($producerLog, "$producerLog.err")) {
     if ($log -and (Test-Path $log)) { Remove-Item $log -ErrorAction SilentlyContinue }
 }
@@ -412,6 +500,43 @@ foreach ($log in @($producerLog, "$producerLog.err")) {
 # Concede al job il tempo di consolidare le finestre finali (EOS -> watermark).
 Write-Host "Attendo il consolidamento delle finestre finali (15s)..."
 Start-Sleep -Seconds 15
+$executionStopwatch.Stop()
+$executionEndedAtUtc = (Get-Date).ToUniversalTime()
+$executionElapsedMs = Get-StopwatchElapsedMs -Stopwatch $executionStopwatch
+
+Write-Host ""
+Write-Host ("Tempo sola esecuzione (producer -> consolidamento finale, merge escluso): {0:N3}s" -f ($executionElapsedMs / 1000.0))
+Write-Host ("Tempo producer: {0:N3}s" -f ($producerElapsedMs / 1000.0))
+if ($null -ne $recoveryElapsedMs) {
+    Write-Host ("Tempo recovery dal guasto: {0:N3}s" -f ($recoveryElapsedMs / 1000.0))
+}
+
+$timingMode = if ($NoFault) { "without_fault" } else { "with_fault" }
+$timingRow = [pscustomobject][ordered]@{
+    timestamp_utc = $executionEndedAtUtc.ToString("o")
+    mode = $timingMode
+    query = $Query
+    acceleration_factor = $AccelerationFactor
+    checkpoints_before_fault = $CheckpointsBeforeFault
+    job_id = $jid
+    execution_started_utc = $executionStartedAtUtc.ToString("o")
+    execution_ended_utc = $executionEndedAtUtc.ToString("o")
+    execution_elapsed_ms = $executionElapsedMs
+    producer_elapsed_ms = $producerElapsedMs
+    completed_checkpoints_before_fault = $completedBefore
+    restarts_before = $restartsBefore
+    restarts_after = $restartsAfter
+    fault_injected_at_ms = $faultInjectedAtMs
+    fault_detected_at_ms = $faultDetectedAtMs
+    restore_detected_at_ms = $restoreDetectedAtMs
+    recovery_elapsed_ms = $recoveryElapsedMs
+    producer_timed_out = $producerTimedOut
+    producer_exit_code = $producerExitCode
+    verification_pass = $faultPass
+    notes = "execution=producer_start_to_final_window_consolidation; excludes docker_setup, topic_reset, preprocessing, job_submit, merge, cleanup"
+}
+Write-TimingCsvRow -Path $TimingCsv -Row $timingRow
+Write-Host "Tempi appendati in $TimingCsv"
 
 if (-not $NoMerge) {
     Write-Host ""
@@ -427,7 +552,7 @@ if (-not $KeepJob) {
     Write-Host "Cancello il job Flink..."
     $j = Get-RunningJob
     if ($null -ne $j) {
-        docker exec flink-jobmanager flink cancel $j.jid 2>&1 | Out-Null
+        Cancel-FlinkJobBestEffort -Jid $j.jid
     }
 }
 else {
