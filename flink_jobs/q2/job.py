@@ -4,13 +4,24 @@ from __future__ import annotations
 import sys
 from dataclasses import asdict, dataclass
 
-from pyflink.common import Types
+from pyflink.common import Types, WatermarkStrategy
+from pyflink.common.time import Duration
+from pyflink.datastream.window import GlobalWindows
 from pyflink.table import DataTypes, Schema
 
 from common.config import load_config
 from common.logging_utils import configure_logging
-from cumulative_ops import Q2CumulativeTopN, Q2_CUMULATIVE_OUTPUT_TYPE
 from flink_runtime import FlinkRuntimeConfig, build_flink_runtime_config, create_table_environment
+from global_window_ops import (
+    ContinuousEventTimeTrigger,
+    Q2GlobalAggregate,
+    Q2GlobalTimestampAssigner,
+    Q2GlobalWindowFunction,
+    Q2_GLOBAL_OUTPUT_TYPE,
+    DATASET_START_MS,
+    is_q2_global_event,
+    project_q2_global_event,
+)
 from window_ops import (
     format_top_delayed,
     make_stats_view_sql,
@@ -26,7 +37,7 @@ import logging
 configure_logging()
 logger = logging.getLogger(__name__)
 
-Q2_WINDOW_CHOICES = ("1h", "6h", "global", "cumulative", "all")
+Q2_WINDOW_CHOICES = ("1h", "6h", "global", "all")
 
 
 
@@ -35,7 +46,6 @@ class Q2Config(FlinkRuntimeConfig):
     results_path_1h: str
     results_path_6h: str
     results_path_global: str
-    results_path_cumulative: str
     window: str
     watermark_delay_seconds: int
     cumulative_snapshot_event_step_ms: int
@@ -44,14 +54,12 @@ class Q2Config(FlinkRuntimeConfig):
     influx_topic_1h: str
     influx_topic_6h: str
     influx_topic_global: str
-    influx_topic_cumulative: str
 
     timescale_enabled: bool
     timescale_url: str
     timescale_table_1h: str
     timescale_table_6h: str
     timescale_table_global: str
-    timescale_table_cumulative: str
     timescale_username: str
     timescale_password: str
 
@@ -87,7 +95,6 @@ def load_q2_config() -> Q2Config:
         results_path_1h=cfg["paths"]["q2_results_path_1h"],
         results_path_6h=cfg["paths"]["q2_results_path_6h"],
         results_path_global=cfg["paths"]["q2_results_path_global"],
-        results_path_cumulative=cfg["paths"]["q2_results_path_cumulative"],
         window=selected_q2_window(q2_cfg.get("window", "all")),
         watermark_delay_seconds=int(q2_cfg["watermark_delay_seconds"]),
         cumulative_snapshot_event_step_ms=int(
@@ -97,13 +104,11 @@ def load_q2_config() -> Q2Config:
         influx_topic_1h=str(q2_influx.get("topic_1h", "q2_results_1h")),
         influx_topic_6h=str(q2_influx.get("topic_6h", "q2_results_6h")),
         influx_topic_global=str(q2_influx.get("topic_global", "q2_results_global")),
-        influx_topic_cumulative=str(q2_influx.get("topic_cumulative", "q2_results_cumulative")),
         timescale_enabled=bool(timescale.get("enabled", False)),
         timescale_url=str(timescale.get("url", "")),
         timescale_table_1h=str(q2_timescale.get("table_1h", "q2_results_1h")),
         timescale_table_6h=str(q2_timescale.get("table_6h", "q2_results_6h")),
         timescale_table_global=str(q2_timescale.get("table_global", "q2_results_global")),
-        timescale_table_cumulative=str(q2_timescale.get("table_cumulative", "q2_results_cumulative")),
         timescale_username=str(timescale.get("username", "")),
         timescale_password=str(timescale.get("password", "")),
     )
@@ -119,7 +124,8 @@ def sql_watermark_interval(seconds: int) -> str:
     return f"INTERVAL '{seconds}' SECOND"
 
 
-def enabled_q2_windows(cfg: Q2Config) -> list[tuple[str, str, str, str, str]]:
+def enabled_q2_sql_windows(cfg: Q2Config) -> list[tuple[str, str, str, str, str]]:
+
     windows = [
         (
             "1h",
@@ -135,35 +141,14 @@ def enabled_q2_windows(cfg: Q2Config) -> list[tuple[str, str, str, str, str]]:
             cfg.influx_topic_6h,
             cfg.timescale_table_6h,
         ),
-        (
-            "global",
-            "INTERVAL '365' DAY(3)",
-            cfg.results_path_global,
-            cfg.influx_topic_global,
-            cfg.timescale_table_global,
-        ),
     ]
     if cfg.window == "all":
         return windows
-    if cfg.window == "cumulative":
-        return []
     return [window for window in windows if window[0] == cfg.window]
 
 
-def cumulative_q2_enabled(cfg: Q2Config) -> bool:
-    return cfg.window in {"all", "cumulative"}
-
-
-def _project_q2_event(value):
-    return (
-        value[0],
-        value[1],
-        value[2],
-        value[3],
-        value[4],
-        value[5],
-        value[6],
-    )
+def global_window_enabled(cfg: Q2Config) -> bool:
+    return cfg.window in {"all", "global"}
 
 
 def _register_q2_result_view(t_env, view: str, result_ds) -> None:
@@ -183,37 +168,54 @@ def _register_q2_result_view(t_env, view: str, result_ds) -> None:
     t_env.create_temporary_view(view, table)
 
 
-def build_cumulative_pipeline(
+def build_global_window_pipeline(
     t_env,
     stmt_set,
     cfg: Q2Config,
 ) -> None:
-    label = "cumulative"
+    label = "global"
+
+    watermark_strategy = (
+        WatermarkStrategy
+        .for_bounded_out_of_orderness(Duration.of_seconds(cfg.watermark_delay_seconds))
+        .with_timestamp_assigner(Q2GlobalTimestampAssigner())
+    )
 
     result_ds = (
         t_env.to_data_stream(t_env.from_path("flights"))
-        .map(_project_q2_event, output_type=Types.PICKLED_BYTE_ARRAY())
-        .key_by(lambda _: "q2-cumulative", key_type=Types.STRING())
-        .process(
-            Q2CumulativeTopN(cfg.cumulative_snapshot_event_step_ms),
-            output_type=Q2_CUMULATIVE_OUTPUT_TYPE,
+        .assign_timestamps_and_watermarks(watermark_strategy)
+        .filter(is_q2_global_event)
+        .map(project_q2_global_event, output_type=Types.PICKLED_BYTE_ARRAY())
+        .key_by(lambda _: "q2-global", key_type=Types.STRING())
+        .window(GlobalWindows.create())
+        .trigger(
+            ContinuousEventTimeTrigger(
+                cfg.cumulative_snapshot_event_step_ms,
+                DATASET_START_MS,
+            )
         )
-        .name("Q2CumulativeTopN")
+        .aggregate(
+            Q2GlobalAggregate(),
+            window_function=Q2GlobalWindowFunction(),
+            accumulator_type=Types.PICKLED_BYTE_ARRAY(),
+            output_type=Q2_GLOBAL_OUTPUT_TYPE,
+        )
+        .name("Q2GlobalWindow")
     )
 
-    view = "q2_cumulative"
+    view = "q2_global"
     _register_q2_result_view(t_env, view, result_ds)
 
     csv_sink = f"q2_csv_{label}"
-    t_env.execute_sql(CSV_SINK_DDL.format(name=csv_sink, path=cfg.results_path_cumulative))
+    t_env.execute_sql(CSV_SINK_DDL.format(name=csv_sink, path=cfg.results_path_global))
     stmt_set.add_insert_sql(f"INSERT INTO {csv_sink} SELECT * FROM {view}")
-    logger.info("Q2 [%s] | CSV sink -> %s", label, cfg.results_path_cumulative)
+    logger.info("Q2 [%s] | GlobalWindow CSV sink -> %s", label, cfg.results_path_global)
 
     if cfg.influx_enabled:
         kafka_sink = f"q2_kafka_{label}"
         t_env.execute_sql(KAFKA_CUMULATIVE_SINK_DDL.format(
             name=kafka_sink,
-            topic=cfg.influx_topic_cumulative,
+            topic=cfg.influx_topic_global,
             bootstrap=cfg.kafka_bootstrap,
         ))
 
@@ -226,19 +228,19 @@ def build_cumulative_pipeline(
                    delayed_flights
             FROM {view}
         """)
-        logger.info("Q2 [%s] | InfluxDB sink -> Kafka topic '%s'", label, cfg.influx_topic_cumulative)
+        logger.info("Q2 [%s] | InfluxDB sink -> Kafka topic '%s'", label, cfg.influx_topic_global)
 
     if cfg.timescale_enabled:
         jdbc_sink = f"q2_jdbc_{label}"
         t_env.execute_sql(JDBC_SINK_DDL.format(
             name=jdbc_sink,
             url=cfg.timescale_url,
-            table=cfg.timescale_table_cumulative,
+            table=cfg.timescale_table_global,
             username=cfg.timescale_username,
             password=cfg.timescale_password,
         ))
         stmt_set.add_insert_sql(f"INSERT INTO {jdbc_sink} SELECT * FROM {view}")
-        logger.info("Q2 [%s] | TimescaleDB sink -> table '%s'", label, cfg.timescale_table_cumulative)
+        logger.info("Q2 [%s] | TimescaleDB sink -> table '%s'", label, cfg.timescale_table_global)
 
 
 
@@ -353,7 +355,7 @@ def main() -> None:
     # ── Build one pipeline per window size ────────────────────────────────────
     stmt_set = t_env.create_statement_set()
 
-    windows = enabled_q2_windows(cfg)
+    windows = enabled_q2_sql_windows(cfg)
 
     for label, window_sql, results_path, influx_topic, timescale_table in windows:
         build_window_pipeline(
@@ -367,15 +369,15 @@ def main() -> None:
             cfg=cfg,
         )
 
-    if cumulative_q2_enabled(cfg):
-        build_cumulative_pipeline(
+    if global_window_enabled(cfg):
+        build_global_window_pipeline(
             t_env=t_env,
             stmt_set=stmt_set,
             cfg=cfg,
         )
 
     # ── Submit ────────────────────────────────────────────────────────────────
-    pipeline_count = len(windows) + (1 if cumulative_q2_enabled(cfg) else 0)
+    pipeline_count = len(windows) + (1 if global_window_enabled(cfg) else 0)
     logger.info("Q2 | Submitting job (%d enabled pipeline(s)) ...", pipeline_count)
     stmt_set.execute()
     logger.info("Q2 | Job submitted successfully.")

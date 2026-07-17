@@ -107,8 +107,8 @@ q2:
   window: "all"
   # Ritardo massimo ammesso per eventi in ritardo (event time).
   watermark_delay_seconds: 180
-  # Passo nominale in event-time tra snapshot della cumulativa live.
-  # 2700000 ms = 45 minuti del dataset
+  # Passo (event-time) tra gli snapshot della GlobalWindow "dall'inizio dataset"
+  # (trigger continuo event-time). 2700000 ms = 45 minuti del dataset.
   cumulative_snapshot_event_step_ms: 2700000
 
 q3:

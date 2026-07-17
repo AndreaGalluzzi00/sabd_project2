@@ -42,7 +42,7 @@ HEADER = [
 
 COL_TS = 0
 COL_RANK = 1
-Q2_WINDOW_CHOICES = ("1h", "6h", "global", "cumulative", "all")
+Q2_WINDOW_CHOICES = ("1h", "6h", "global", "all")
 
 
 @dataclass(frozen=True)
@@ -50,7 +50,7 @@ class WindowMergeConfig:
     results_dir: Path
     output_file: Path
     stable_for_seconds: float
-    label: str  # "1h" | "6h" | "global" | "cumulative"
+    label: str  # "1h" | "6h" | "global"
 
 
 def selected_q2_window(cfg: dict) -> str:
@@ -84,7 +84,6 @@ def load_merge_config() -> list[WindowMergeConfig]:
         make("q2_results_host_path_1h",     "q2_merged_output_host_path_1h",     "1h"),
         make("q2_results_host_path_6h",     "q2_merged_output_host_path_6h",     "6h"),
         make("q2_results_host_path_global", "q2_merged_output_host_path_global", "global"),
-        make("q2_results_host_path_cumulative", "q2_merged_output_host_path_cumulative", "cumulative"),
     ]
     if selected_window == "all":
         return configs
@@ -121,7 +120,7 @@ def read_rows(part_files: list[Path]) -> list[tuple[str, ...]]:
 
 
 def dedupe_rows(rows: list[tuple[str, ...]], label: str) -> list[tuple[str, ...]]:
-    if label == "cumulative":
+    if label == "global":
         latest_by_snapshot_rank: dict[tuple[str, str], tuple[str, ...]] = {}
         for row in rows:
             latest_by_snapshot_rank[(row[COL_TS], row[COL_RANK])] = row
@@ -146,7 +145,7 @@ def write_output(rows: list[tuple[str, ...]], output_file: Path) -> None:
 
 
 def wait_for_window(wc: WindowMergeConfig) -> None:
-    include_inprogress = wc.label == "cumulative"
+    include_inprogress = wc.label == "global"
     try:
         wait_for_stable_results(
             find_part_files=lambda: find_part_files(
@@ -163,7 +162,7 @@ def wait_for_window(wc: WindowMergeConfig) -> None:
 
 def merge_window(wc: WindowMergeConfig) -> None:
     print(f"\n[{wc.label}] Results dir: {wc.results_dir}")
-    include_inprogress = wc.label == "cumulative"
+    include_inprogress = wc.label == "global"
     part_files = find_part_files(wc.results_dir, include_inprogress=include_inprogress)
 
     if not part_files:
