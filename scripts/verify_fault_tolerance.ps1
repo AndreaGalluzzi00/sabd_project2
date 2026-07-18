@@ -23,10 +23,15 @@ FLUSSO
     8. attende che il job torni RUNNING e che 'latest.restored' del checkpoint
        sia valorizzato (prova del ripristino dello stato dall'ultimo checkpoint)
        e che numRestarts sia >= 1;
-    9. attende la fine del producer, poi (opz.) fa il merge dell'output.
+    9. attende la fine del producer e almeno un checkpoint successivo, cosi'
+       anche i risultati finali del sink filesystem sono consolidati;
+   10. salva l'output in una directory isolata e, quando esiste la run gemella
+       con lo stesso VerificationId, confronta part-file grezzi, duplicati,
+       chiavi, valori e hash canonico.
 
-    Esito PASS se: (a) il job ha ripristinato uno stato da checkpoint dopo il
-    guasto (latest.restored valorizzato) e (b) numRestarts e' aumentato.
+    La prova end-to-end e' PASS se: (a) il job ha ripristinato lo stato da
+    checkpoint; (b) numRestarts e' aumentato; (c) gli output con e senza guasto
+    sono identici; (d) nessuno dei due output contiene chiavi duplicate.
 
 USO
     # Verifica completa (default: q1, producer 57600x, guasto dopo 1 checkpoint)
@@ -46,6 +51,12 @@ USO
     .\scripts\verify_fault_tolerance.ps1 -Runs 5 -NoPreprocess -NoMerge
     .\scripts\verify_fault_tolerance.ps1 -Runs 5 -NoFault -NoPreprocess -NoMerge
 
+    # Verifica end-to-end di exactly-once (eseguire entrambe con lo stesso id).
+    # Ogni run usa part-file isolati; quando esistono entrambi gli scenari lo
+    # script confronta anche duplicati, chiavi, valori e hash canonico.
+    .\scripts\verify_fault_tolerance.ps1 -NoFault -NoPreprocess -VerificationId q1_exactly_once
+    .\scripts\verify_fault_tolerance.ps1 -NoPreprocess -VerificationId q1_exactly_once
+
 OPZIONI
     -Query                   q1 (default). Riservato per estensioni future.
     -AccelerationFactor      Fattore di accelerazione del producer per la demo.
@@ -62,6 +73,8 @@ OPZIONI
     -FlinkUrl                REST del JobManager. Default http://localhost:8081.
     -TimingCsv               CSV dove appendere i tempi di sola esecuzione.
                              Default Results/fault_tolerance_timing.csv.
+    -VerificationId          Identificatore condiviso dalla baseline e dalla run
+                             con guasto. Default q1_checkpoint.
 #>
 param(
     [ValidateSet("q1")]
@@ -80,13 +93,14 @@ param(
 
     [string]$FlinkUrl = "http://localhost:8081",
 
-    [string]$TimingCsv = "Results/fault_tolerance_timing.csv"
+    [string]$TimingCsv = "Results/fault_tolerance_timing.csv",
+
+    [string]$VerificationId = "q1_checkpoint"
 )
 
 $ErrorActionPreference = "Stop"
 $FlinkUrl = $FlinkUrl.TrimEnd("/")
 
-# ── Helper ──────────────────────────────────────────────────────────────────
 
 function Invoke-Checked {
     param([Parameter(Mandatory = $true)][scriptblock]$Command)
@@ -166,6 +180,19 @@ function Get-RegisteredTaskManagers {
     }
 }
 
+function Test-FinalizedPartFiles {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $false
+    }
+
+    $files = @(Get-ChildItem -LiteralPath $Path -File | Where-Object {
+        $_.Name -like "part-*" -and $_.Name -notlike "*.inprogress*"
+    })
+    return $files.Count -gt 0
+}
+
 function Cancel-FlinkJobBestEffort {
     param([Parameter(Mandatory = $true)][string]$Jid)
 
@@ -186,8 +213,14 @@ function Cancel-FlinkJobBestEffort {
 
 function New-FaultRuntimeConfig {
     # Config runtime che estende base.yml: consumer group unico + producer
-    # rallentato per la demo. Stesso schema di run_experiment.ps1.
-    param([Parameter(Mandatory = $true)][int]$Acceleration)
+    # rallentato per la demo. I path Q1 sono isolati per modalita'/run, cosi'
+    # una verifica exactly-once non puo' mescolare output di esecuzioni diverse.
+    param(
+        [Parameter(Mandatory = $true)][int]$Acceleration,
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [Parameter(Mandatory = $true)][int]$RunNumber,
+        [Parameter(Mandatory = $true)][string]$Verification
+    )
 
     $runtimeDir = "config/runtime"
     New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
@@ -195,6 +228,33 @@ function New-FaultRuntimeConfig {
     $runId = "$(Get-Date -Format 'yyyyMMddHHmmssfff')-$PID"
     $fileName = "fault.$runId.runtime.yml"
     $hostPath = Join-Path $runtimeDir $fileName
+
+    $runLabel = "run-{0:D2}" -f $RunNumber
+    $verificationRoot = Join-Path "Results\fault_tolerance_verification" $Verification
+    $hostRunRoot = Join-Path (Join-Path $verificationRoot $Mode) $runLabel
+    $hostPartPath = Join-Path $hostRunRoot "part_files"
+    $hostMergedPath = Join-Path $hostRunRoot "q1_base.csv"
+    $comparisonRoot = Join-Path $verificationRoot "comparisons"
+    $comparisonJson = Join-Path $comparisonRoot "$runLabel.json"
+    $comparisonCsv = Join-Path $comparisonRoot "$runLabel.csv"
+
+    # Rimuove soltanto l'output della stessa modalita'/run. L'altra meta' della
+    # coppia resta disponibile per il confronto automatico.
+    if (Test-Path -LiteralPath $hostRunRoot) {
+        Remove-Item -LiteralPath $hostRunRoot -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $hostPartPath | Out-Null
+    New-Item -ItemType Directory -Force -Path $comparisonRoot | Out-Null
+    foreach ($reportPath in @($comparisonJson, $comparisonCsv)) {
+        if (Test-Path -LiteralPath $reportPath) {
+            Remove-Item -LiteralPath $reportPath -Force
+        }
+    }
+
+    $containerRunRoot = "/opt/flink/results/fault_tolerance_verification/$Verification/$Mode/$runLabel"
+    $containerPartPath = "$containerRunRoot/part_files"
+    $yamlHostPartPath = $hostPartPath.Replace("\", "/")
+    $yamlHostMergedPath = $hostMergedPath.Replace("\", "/")
 
     $content = @"
 extends: "../base.yml"
@@ -205,6 +265,11 @@ flink:
 producer:
   acceleration_factor: $Acceleration
 
+paths:
+  q1_results_path: "$containerPartPath"
+  q1_results_host_path: "$yamlHostPartPath"
+  q1_merged_output_host_path: "$yamlHostMergedPath"
+
 dashboard:
   influx:
     enabled: false
@@ -214,8 +279,15 @@ dashboard:
     Set-Content -Path $hostPath -Value $content -Encoding UTF8
 
     return @{
-        HostPath      = $hostPath
-        ContainerPath = "/config/runtime/$fileName"
+        HostPath             = $hostPath
+        ContainerPath        = "/config/runtime/$fileName"
+        RunId                = $runId
+        RunLabel             = $runLabel
+        RunOutputHostPath    = $hostRunRoot
+        PartHostPath         = $hostPartPath
+        MergedHostPath       = $hostMergedPath
+        ComparisonReportJson = $comparisonJson
+        ComparisonReportCsv  = $comparisonCsv
     }
 }
 
@@ -251,6 +323,10 @@ function Get-StopwatchElapsedMs {
 
 Assert-ProjectRoot
 
+if ($VerificationId -notmatch '^[A-Za-z0-9._-]+$') {
+    throw "-VerificationId puo' contenere soltanto lettere, numeri, punto, trattino e underscore."
+}
+
 if ($Runs -gt 1 -and $KeepJob) {
     throw "-KeepJob non e' compatibile con -Runs > 1: ogni run deve ripartire da uno stato pulito."
 }
@@ -260,6 +336,8 @@ if ($Runs -gt 1 -and $NoResetTopic) {
 }
 
 for ($runIndex = 1; $runIndex -le $Runs; $runIndex++) {
+
+$timingMode = if ($NoFault) { "without_fault" } else { "with_fault" }
 
 Write-Host ""
 Write-Host "========================================================"
@@ -299,8 +377,13 @@ if ($null -ne $existing) {
     Start-Sleep -Seconds 5
 }
 
-$runtimeCfg = New-FaultRuntimeConfig -Acceleration $AccelerationFactor
+$runtimeCfg = New-FaultRuntimeConfig `
+    -Acceleration $AccelerationFactor `
+    -Mode $timingMode `
+    -RunNumber $runIndex `
+    -Verification $VerificationId
 $cfgContainer = $runtimeCfg.ContainerPath
+Write-Host "Output isolato       : $($runtimeCfg.RunOutputHostPath)"
 
 if (-not $NoResetTopic) {
     Write-Host "Reset del topic Kafka flights..."
@@ -359,8 +442,10 @@ $restoreDetectedAtMs = $null
 $recoveryElapsedMs = $null
 $restartsAfter = $null
 $faultPass = $null
+$runFailureMessages = @()
+$producerContainer = "producer-fault-$($runtimeCfg.RunId)"
 $producerProc = Start-Process -FilePath "docker" `
-    -ArgumentList @("compose", "run", "--rm", "-e", "CONFIG_PATH=$cfgContainer", "producer") `
+    -ArgumentList @("compose", "run", "--name", $producerContainer, "-e", "CONFIG_PATH=$cfgContainer", "producer") `
     -NoNewWindow -PassThru `
     -RedirectStandardOutput $producerLog `
     -RedirectStandardError "$producerLog.err"
@@ -488,6 +573,9 @@ else {
                  else { "VERIFICA FALLITA: vedi i marker [FAIL] sopra." })
     Write-Host "--------------------------------------------------------"
     $faultPass = $pass
+    if (-not $faultPass) {
+        $runFailureMessages += "Ripristino da checkpoint non verificato."
+    }
 }
 
 # ── Attesa fine producer ────────────────────────────────────────────────────
@@ -500,24 +588,78 @@ if (-not $producerProc.WaitForExit(600000)) {
     try {
         $producerProc.Kill()
         $producerProc.WaitForExit(30000) | Out-Null
-        $producerProc.Refresh()
-        $producerExitCode = $producerProc.ExitCode
     }
     catch { }
 }
-else {
-    $producerProc.Refresh()
-    $producerExitCode = $producerProc.ExitCode
+
+# Start-Process/Process.ExitCode puo' restituire $null in Windows PowerShell
+# dopo una WaitForExit temporizzata. Il container viene quindi mantenuto fino
+# all'inspect: la sua State.ExitCode e' l'autorita' sul risultato del producer.
+$producerStateText = @(docker inspect --format "{{.State.Status}} {{.State.ExitCode}}" $producerContainer 2>$null)
+$producerInspectExitCode = $LASTEXITCODE
+if ($producerInspectExitCode -eq 0 -and $producerStateText.Count -gt 0) {
+    $producerStateParts = $producerStateText[-1].Trim() -split '\s+'
+    if ($producerStateParts.Count -ge 2 -and $producerStateParts[0] -eq "exited") {
+        $producerExitCode = [int]$producerStateParts[1]
+    }
+}
+$producerSucceeded = (-not $producerTimedOut) -and ($producerExitCode -eq 0)
+if (-not $producerSucceeded) {
+    $runFailureMessages += "Producer non completato correttamente (timeout=$producerTimedOut, exit_code=$producerExitCode)."
 }
 $producerStopwatch.Stop()
 $producerElapsedMs = Get-StopwatchElapsedMs -Stopwatch $producerStopwatch
 foreach ($log in @($producerLog, "$producerLog.err")) {
-    if ($log -and (Test-Path $log)) { Remove-Item $log -ErrorAction SilentlyContinue }
+    if ($log -and (Test-Path $log)) {
+        if (-not $producerSucceeded) {
+            Get-Content -LiteralPath $log -Tail 40 | Where-Object { $_ } | ForEach-Object { Write-Host $_ }
+        }
+        Remove-Item $log -ErrorAction SilentlyContinue
+    }
 }
 
-# Concede al job il tempo di consolidare le finestre finali (EOS -> watermark).
-Write-Host "Attendo il consolidamento delle finestre finali (15s)..."
-Start-Sleep -Seconds 15
+# Il nome contiene il run id univoco; viene rimosso solo il container producer
+# appena ispezionato, non altri servizi del progetto.
+docker rm -f $producerContainer 2>&1 | Out-Null
+
+if ($producerSucceeded) {
+    # Dopo l'EOS lascia terminare le finestre finali e il rollover temporale del
+    # sink. Solo dopo attende un checkpoint ulteriore: il sink filesystem di Flink
+    # rende definitivi i file in corrispondenza dei checkpoint, quindi l'ordine
+    # rollover -> checkpoint evita di confrontare soltanto un prefisso dell'output.
+    Write-Host "Attendo finestre finali e rollover del sink (15s)..."
+    Start-Sleep -Seconds 15
+    $checkpointStatsAfterRollover = Get-CheckpointStats -Jid $jid
+    $completedAfterRollover = if ($null -ne $checkpointStatsAfterRollover) {
+        [int]$checkpointStatsAfterRollover.counts.completed
+    }
+    else {
+        0
+    }
+    $targetCompletedAfterProducer = $completedAfterRollover + 1
+    Write-Host "Attendo un checkpoint successivo all'EOS (target completati: $targetCompletedAfterProducer)..."
+    $deadline = (Get-Date).AddSeconds(180)
+    $completedAfterProducer = $completedAfterRollover
+    while ((Get-Date) -lt $deadline) {
+        $checkpointStats = Get-CheckpointStats -Jid $jid
+        if ($null -ne $checkpointStats) {
+            $completedAfterProducer = [int]$checkpointStats.counts.completed
+            if ($completedAfterProducer -ge $targetCompletedAfterProducer) {
+                break
+            }
+        }
+        Start-Sleep -Seconds 2
+    }
+    if ($completedAfterProducer -lt $targetCompletedAfterProducer) {
+        $runFailureMessages += "Nessun checkpoint completato dopo l'EOS entro 180s: output finale non verificabile."
+    }
+    else {
+        Write-Host "Checkpoint post-EOS completato (totale: $completedAfterProducer)."
+    }
+}
+else {
+    Write-Host "Consolidamento output saltato perche' il producer non e' terminato correttamente."
+}
 $executionStopwatch.Stop()
 $executionEndedAtUtc = (Get-Date).ToUniversalTime()
 $executionElapsedMs = Get-StopwatchElapsedMs -Stopwatch $executionStopwatch
@@ -529,7 +671,6 @@ if ($null -ne $recoveryElapsedMs) {
     Write-Host ("Tempo recovery dal guasto: {0:N3}s" -f ($recoveryElapsedMs / 1000.0))
 }
 
-$timingMode = if ($NoFault) { "without_fault" } else { "with_fault" }
 $timingRow = [pscustomobject][ordered]@{
     timestamp_utc = $executionEndedAtUtc.ToString("o")
     mode = $timingMode
@@ -551,18 +692,66 @@ $timingRow = [pscustomobject][ordered]@{
     producer_timed_out = $producerTimedOut
     producer_exit_code = $producerExitCode
     verification_pass = $faultPass
-    notes = "run=$runIndex/$Runs; execution=producer_start_to_final_window_consolidation; excludes docker_setup, topic_reset, preprocessing, job_submit, merge, cleanup"
+    notes = "run=$runIndex/$Runs; verification_id=$VerificationId; output=$($runtimeCfg.RunOutputHostPath); execution=producer_start_to_post_eos_checkpoint_and_final_window_consolidation; excludes docker_setup, topic_reset, preprocessing, job_submit, merge, comparison, cleanup"
 }
 Write-TimingCsvRow -Path $TimingCsv -Row $timingRow
 Write-Host "Tempi appendati in $TimingCsv"
 
-if (-not $NoMerge) {
+if ((-not $NoMerge) -and $producerSucceeded -and ($runFailureMessages.Count -eq 0)) {
     Write-Host ""
     Write-Host "Merge dell'output Q1..."
-    python .\scripts\merge_q1.py --wait --timeout 180
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warning "Merge fallito (exit $LASTEXITCODE)."
+    $previousConfigPath = $env:CONFIG_PATH
+    try {
+        $env:CONFIG_PATH = (Resolve-Path -LiteralPath $runtimeCfg.HostPath).Path
+        Invoke-Checked { python .\scripts\merge_q1.py --wait --timeout 180 }
     }
+    finally {
+        if ($null -eq $previousConfigPath) {
+            Remove-Item Env:CONFIG_PATH -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:CONFIG_PATH = $previousConfigPath
+        }
+    }
+
+    $verificationRoot = Join-Path "Results\fault_tolerance_verification" $VerificationId
+    $baselinePartPath = Join-Path (Join-Path (Join-Path $verificationRoot "without_fault") $runtimeCfg.RunLabel) "part_files"
+    $faultPartPath = Join-Path (Join-Path (Join-Path $verificationRoot "with_fault") $runtimeCfg.RunLabel) "part_files"
+    $baselineMergedPath = Join-Path (Split-Path -Parent $baselinePartPath) "q1_base.csv"
+    $faultMergedPath = Join-Path (Split-Path -Parent $faultPartPath) "q1_base.csv"
+
+    if ((Test-FinalizedPartFiles -Path $baselinePartPath) -and
+        (Test-FinalizedPartFiles -Path $faultPartPath)) {
+        Write-Host ""
+        Write-Host "Confronto end-to-end output senza guasto vs con guasto..."
+        python .\scripts\compare_fault_tolerance_outputs.py `
+            --baseline-dir $baselinePartPath `
+            --fault-dir $faultPartPath `
+            --report-json $runtimeCfg.ComparisonReportJson `
+            --report-csv $runtimeCfg.ComparisonReportCsv `
+            --baseline-merged-output $baselineMergedPath `
+            --fault-merged-output $faultMergedPath
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[OK] Nessuna perdita, chiave duplicata o differenza di valore rilevata."
+        }
+        else {
+            $comparisonFailureMessage = "Confronto output fallito. Vedi $($runtimeCfg.ComparisonReportJson)"
+            $runFailureMessages += $comparisonFailureMessage
+            Write-Host "[FAIL] $comparisonFailureMessage"
+        }
+    }
+    else {
+        $missingMode = if ($timingMode -eq "without_fault") { "con guasto" } else { "senza guasto" }
+        Write-Host ""
+        Write-Host "Output $timingMode salvato. Per completare il confronto esegui la run $missingMode"
+        Write-Host "con -VerificationId $VerificationId e lo stesso numero di -Runs."
+    }
+}
+elseif ($NoMerge) {
+    Write-Host "Confronto output saltato: -NoMerge misura i tempi ma non dimostra l'equivalenza degli output."
+}
+else {
+    Write-Host "Merge e confronto output saltati a causa di un errore precedente nella run."
 }
 
 if (-not $KeepJob) {
@@ -579,6 +768,10 @@ else {
 
 Write-Host ""
 Write-Host "Run $runIndex/$Runs completata."
+
+if ($runFailureMessages.Count -gt 0) {
+    throw ($runFailureMessages -join " ")
+}
 }
 
 Write-Host ""

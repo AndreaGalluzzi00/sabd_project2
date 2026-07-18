@@ -109,6 +109,10 @@ def resolve_config_path(experiment: str | None) -> Path:
     if experiment:
         return PROJECT_ROOT / "config" / "experiments" / f"{experiment}.yml"
 
+    configured_path = os.getenv("CONFIG_PATH")
+    if configured_path:
+        return Path(configured_path)
+
     return PROJECT_ROOT / "config" / "base.yml"
 
 
