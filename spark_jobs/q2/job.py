@@ -2,15 +2,14 @@
 from __future__ import annotations
 
 import logging
-import heapq
 import sys
-from datetime import datetime, timezone
 
 from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
 
 from common.config import load_config
 from common.logging_utils import configure_logging
+from global_state import build_q2_global_snapshots
 from spark_runtime import (
     await_queries_until_idle,
     build_spark_runtime_config,
@@ -23,31 +22,7 @@ from spark_runtime import (
     write_foreach_batch_stream,
 )
 
-Q2_WINDOW_CHOICES = ("1h", "6h", "global", "cumulative", "all")
-DATASET_START_TS = "2025-01-01 00:00:00"
-DATASET_START_MS = int(
-    datetime.strptime(DATASET_START_TS, "%Y-%m-%d %H:%M:%S")
-    .replace(tzinfo=timezone.utc)
-    .timestamp()
-    * 1000
-)
-TOP_N_FLIGHTS = 20
-
-
-def _format_event_time_ms(event_time_ms: int | None) -> str:
-    if event_time_ms is None:
-        return DATASET_START_TS
-    return datetime.fromtimestamp(
-        event_time_ms / 1000.0,
-        tz=timezone.utc,
-    ).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _next_emit_after(event_time_ms: int, emit_interval_ms: int) -> int:
-    if event_time_ms < DATASET_START_MS:
-        return DATASET_START_MS
-    elapsed = event_time_ms - DATASET_START_MS
-    return DATASET_START_MS + ((elapsed // emit_interval_ms) + 1) * emit_interval_ms
+Q2_WINDOW_CHOICES = ("1h", "6h", "global", "all")
 
 
 def selected_q2_window(value: object) -> str:
@@ -65,207 +40,16 @@ def enabled_q2_windows(
     paths: dict,
 ) -> list[tuple[str, str, str | None, str]]:
     windows = [
-        # Spec Q2 windows: 1 hour, 6 hours, and global.
         ("1h", "1 hour", None, paths["spark_q2_results_path_1h"]),
         ("6h", "6 hours", None, paths["spark_q2_results_path_6h"]),
-        # Start offset 14 days aligns the 365-day bucket to 2025-01-01.
-        ("global", "365 days", "14 days", paths["spark_q2_results_path_global"]),
     ]
     if selected_window == "all":
         return windows
-    if selected_window == "cumulative":
-        return []
     return [window for window in windows if window[0] == selected_window]
 
 
-def cumulative_q2_enabled(selected_window: str) -> bool:
-    return selected_window in {"all", "cumulative"}
-
-
-def _new_airport_state() -> dict:
-    return {
-        "num_flights": 0,
-        "mean_count": 0,
-        "mean": 0.0,
-        "severe_delays": 0,
-        "dep_delay_max": None,
-        "top20": [],
-    }
-
-
-def _update_top20(
-    heap: list[tuple[float, str, int]],
-    dep_delay: float,
-    airline: str,
-    dest_airport_id: int | None,
-) -> None:
-    item = (dep_delay, airline or "", 0 if dest_airport_id is None else int(dest_airport_id))
-    if len(heap) < TOP_N_FLIGHTS:
-        heapq.heappush(heap, item)
-    elif item > heap[0]:
-        heapq.heapreplace(heap, item)
-
-
-def _format_top_delayed(flights: list[tuple[float, str, int]]) -> str:
-    top = sorted(flights, key=lambda row: (-row[0], row[1], row[2]))
-    return "[" + ",".join(
-        f"({carrier},{dest},{delay:.2f})"
-        for delay, carrier, dest in top
-    ) + "]"
-
-
-def cumulative_batch_writer(output_path: str, snapshot_event_step_ms: int):
-    airport_states: dict[int, dict] = {}
-    max_event_time_ms: int | None = None
-    next_emit_event_time_ms = DATASET_START_MS + max(1, int(snapshot_event_step_ms))
-    last_snapshot_event_time_ms: int | None = None
-    dirty_since_snapshot = False
-
-    def snapshot_rows() -> list[tuple]:
-        snapshot_ts = _format_event_time_ms(max_event_time_ms)
-        ranked = [
-            (airport_id, state)
-            for airport_id, state in airport_states.items()
-            if state["num_flights"] >= 30
-        ]
-        ranked.sort(
-            key=lambda item: (
-                -item[1]["severe_delays"],
-                -item[1]["mean"],
-                item[0],
-            )
-        )
-        return [
-            (
-                snapshot_ts,
-                rank,
-                int(airport_id),
-                int(state["num_flights"]),
-                int(state["severe_delays"]),
-                float(state["mean"]),
-                float(state["dep_delay_max"] or 0.0),
-                _format_top_delayed(state["top20"]),
-            )
-            for rank, (airport_id, state) in enumerate(ranked[:10], start=1)
-        ]
-
-    def write(batch_df: DataFrame, batch_id: int) -> None:
-        nonlocal dirty_since_snapshot
-        nonlocal last_snapshot_event_time_ms
-        nonlocal max_event_time_ms
-        nonlocal next_emit_event_time_ms
-
-        saw_eos = False
-        output_rows = []
-
-        rows = batch_df.select(
-            "event_time",
-            "airline",
-            "origin_airport_id",
-            "dest_airport_id",
-            "dep_delay",
-            "cancelled",
-            "diverted",
-        ).orderBy(
-            F.col("event_time").asc_nulls_last()
-        ).toLocalIterator()
-
-        for row in rows:
-            if row.airline == "__EOS__":
-                saw_eos = True
-                continue
-
-            if row.event_time is not None:
-                event_time = int(row.event_time)
-                if max_event_time_ms is None or event_time > max_event_time_ms:
-                    max_event_time_ms = event_time
-
-            cancelled = row.cancelled or 0.0
-            diverted = row.diverted or 0.0
-            if (
-                cancelled >= 0.5
-                or diverted >= 0.5
-                or row.dep_delay is None
-                or row.origin_airport_id is None
-            ):
-                if (
-                    dirty_since_snapshot
-                    and max_event_time_ms is not None
-                    and max_event_time_ms >= next_emit_event_time_ms
-                ):
-                    rows_to_emit = snapshot_rows()
-                    if rows_to_emit:
-                        output_rows.extend(rows_to_emit)
-                        last_snapshot_event_time_ms = max_event_time_ms
-                        dirty_since_snapshot = False
-                    next_emit_event_time_ms = _next_emit_after(
-                        max_event_time_ms,
-                        snapshot_event_step_ms,
-                    )
-                continue
-
-            airport_id = int(row.origin_airport_id)
-            dep_delay = float(row.dep_delay)
-            state = airport_states.setdefault(airport_id, _new_airport_state())
-
-            state["num_flights"] += 1
-            state["mean_count"] += 1
-            state["mean"] += (dep_delay - state["mean"]) / state["mean_count"]
-            state["dep_delay_max"] = (
-                dep_delay
-                if state["dep_delay_max"] is None
-                else max(state["dep_delay_max"], dep_delay)
-            )
-            if dep_delay > 30.0:
-                state["severe_delays"] += 1
-                _update_top20(
-                    state["top20"],
-                    dep_delay,
-                    row.airline,
-                    row.dest_airport_id,
-                )
-            dirty_since_snapshot = True
-
-            if max_event_time_ms is not None and max_event_time_ms >= next_emit_event_time_ms:
-                rows_to_emit = snapshot_rows()
-                if rows_to_emit:
-                    output_rows.extend(rows_to_emit)
-                    last_snapshot_event_time_ms = max_event_time_ms
-                    dirty_since_snapshot = False
-                next_emit_event_time_ms = _next_emit_after(
-                    max_event_time_ms,
-                    snapshot_event_step_ms,
-                )
-
-        if saw_eos and (
-            dirty_since_snapshot
-            or max_event_time_ms != last_snapshot_event_time_ms
-        ):
-            rows_to_emit = snapshot_rows()
-            if rows_to_emit:
-                output_rows.extend(rows_to_emit)
-                last_snapshot_event_time_ms = max_event_time_ms
-            dirty_since_snapshot = False
-
-        if not output_rows:
-            return
-
-        out = batch_df.sparkSession.createDataFrame(
-            output_rows,
-            schema=[
-                "ts",
-                "rank",
-                "origin_airport_id",
-                "num_flights",
-                "severe_delays",
-                "dep_delay_mean",
-                "dep_delay_max",
-                "delayed_flights",
-            ],
-        )
-        out.coalesce(1).write.mode("append").option("header", "false").csv(output_path)
-
-    return write
+def global_q2_enabled(selected_window: str) -> bool:
+    return selected_window in {"all", "global"}
 
 
 def build_stats(
@@ -390,10 +174,8 @@ def main() -> None:
     logger.info("Spark Q2 | Kafka: %s topic: %s", runtime_cfg.kafka_bootstrap, runtime_cfg.kafka_topic)
     logger.info("Spark Q2 | Enabled window(s): %s", selected_window)
 
-    flights = (
-        read_flights_stream(spark, runtime_cfg, "q2")
-        .withWatermark("rowtime", f"{watermark_delay} seconds")
-    )
+    source = read_flights_stream(spark, runtime_cfg, "q2")
+    flights = source.withWatermark("rowtime", f"{watermark_delay} seconds")
 
     windows = enabled_q2_windows(selected_window, paths)
 
@@ -415,19 +197,25 @@ def main() -> None:
         )
         logger.info("Spark Q2 [%s] | Results path: %s", label, output_path)
 
-    if cumulative_q2_enabled(selected_window):
-        output_path = paths["spark_q2_results_path_cumulative"]
-        snapshot_event_step_ms = int(q2_cfg.get("cumulative_snapshot_event_step_ms", 2_700_000))
+    if global_q2_enabled(selected_window):
+        output_path = paths["spark_q2_results_path_global"]
+        snapshots = build_q2_global_snapshots(
+            source,
+            watermark_delay_seconds=watermark_delay,
+        )
         queries.append(
             write_foreach_batch_stream(
-                flights,
-                writer=cumulative_batch_writer(output_path, snapshot_event_step_ms),
-                checkpoint=checkpoint_path(runtime_cfg, "q2", "cumulative"),
-                query_name="spark-q2-cumulative",
+                snapshots,
+                writer=ranked_batch_writer(output_path),
+                checkpoint=checkpoint_path(runtime_cfg, "q2", "global"),
+                query_name="spark-q2-global",
                 runtime_cfg=runtime_cfg,
             )
         )
-        logger.info("Spark Q2 [cumulative] | Results path: %s", output_path)
+        logger.info(
+            "Spark Q2 [global] | Checkpointed daily event-time snapshots -> %s",
+            output_path,
+        )
 
     await_queries_until_idle(
         queries, runtime_cfg, logger,

@@ -790,14 +790,12 @@ function Get-RunSpec {
             q2 = @(
                 "spark_q2_results_host_path_1h",
                 "spark_q2_results_host_path_6h",
-                "spark_q2_results_host_path_global",
-                "spark_q2_results_host_path_cumulative"
+                "spark_q2_results_host_path_global"
             )
             q3 = @(
                 "spark_q3_results_host_path_1d",
                 "spark_q3_results_host_path_7d",
-                "spark_q3_results_host_path_global",
-                "spark_q3_results_host_path_cumulative"
+                "spark_q3_results_host_path_global"
             )
         }
 

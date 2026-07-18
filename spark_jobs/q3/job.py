@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 import math
 import sys
-from datetime import datetime, timezone
 
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
@@ -12,6 +11,7 @@ from pyspark.sql import functions as F
 from common.delay_sketch import DelayDDSketch
 from common.config import load_config
 from common.logging_utils import configure_logging
+from global_state import build_q3_global_snapshots
 from spark_runtime import (
     await_queries_until_idle,
     build_spark_runtime_config,
@@ -27,32 +27,9 @@ from spark_runtime import (
 
 
 AIRLINES = ["AA", "DL", "UA", "WN"]
-Q3_WINDOW_CHOICES = ("1d", "7d", "global", "cumulative", "all")
+Q3_WINDOW_CHOICES = ("1d", "7d", "global", "all")
 Q3_QUANTILE_IMPL_CHOICES = ("ddsketch", "native")
 Q3_ZERO_EPSILON = 1e-9
-DATASET_START_TS = "2025-01-01 00:00:00"
-DATASET_START_MS = int(
-    datetime.strptime(DATASET_START_TS, "%Y-%m-%d %H:%M:%S")
-    .replace(tzinfo=timezone.utc)
-    .timestamp()
-    * 1000
-)
-
-
-def _format_event_time_ms(event_time_ms: int | None) -> str:
-    if event_time_ms is None:
-        return DATASET_START_TS
-    return datetime.fromtimestamp(
-        event_time_ms / 1000.0,
-        tz=timezone.utc,
-    ).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _next_emit_after(event_time_ms: int, snapshot_event_step_ms: int) -> int:
-    if event_time_ms < DATASET_START_MS:
-        return DATASET_START_MS
-    elapsed = event_time_ms - DATASET_START_MS
-    return DATASET_START_MS + ((elapsed // snapshot_event_step_ms) + 1) * snapshot_event_step_ms
 
 
 def selected_q3_window(value: object) -> str:
@@ -86,22 +63,16 @@ def enabled_q3_windows(
     paths: dict,
 ) -> list[tuple[str, str, str | None, str]]:
     windows = [
-        # Spec Q3 windows: 1 day, 7 days, and global.
         ("1d", "1 day", None, paths["spark_q3_results_path_1d"]),
-        # Start offset 6 days aligns weekly buckets to 2025-01-01.
         ("7d", "7 days", "6 days", paths["spark_q3_results_path_7d"]),
-        # Start offset 14 days aligns the 365-day bucket to 2025-01-01.
-        ("global", "365 days", "14 days", paths["spark_q3_results_path_global"]),
     ]
     if selected_window == "all":
         return windows
-    if selected_window == "cumulative":
-        return []
     return [window for window in windows if window[0] == selected_window]
 
 
-def cumulative_q3_enabled(selected_window: str) -> bool:
-    return selected_window in {"all", "cumulative"}
+def global_q3_enabled(selected_window: str) -> bool:
+    return selected_window in {"all", "global"}
 
 
 def build_distribution_native(
@@ -338,123 +309,13 @@ def sketch_bucket_batch_writer(output_path: str, alpha: float):
     return write
 
 
-def cumulative_batch_writer(output_path: str, alpha: float, snapshot_event_step_ms: int):
-    sketches: dict[tuple[str, int], DelayDDSketch] = {}
-    max_event_time_ms: int | None = None
-    next_emit_event_time_ms = DATASET_START_MS + max(1, int(snapshot_event_step_ms))
-    last_snapshot_event_time_ms: int | None = None
-    dirty_since_snapshot = False
-
-    def snapshot_rows() -> list[tuple]:
-        snapshot_ts = _format_event_time_ms(max_event_time_ms)
-        rows = []
-        for (airline, hour), sketch in sorted(sketches.items()):
-            if sketch.count == 0:
-                continue
-            rows.append(
-                (
-                    snapshot_ts,
-                    airline,
-                    int(hour),
-                    int(sketch.count),
-                    float(sketch.min_value),
-                    round(sketch.quantile(0.25), 2),
-                    round(sketch.quantile(0.50), 2),
-                    round(sketch.quantile(0.75), 2),
-                    round(sketch.quantile(0.90), 2),
-                    float(sketch.max_value),
-                )
-            )
-        return rows
-
+def global_batch_writer(output_path: str):
     def write(batch_df: DataFrame, batch_id: int) -> None:
-        nonlocal dirty_since_snapshot
-        nonlocal last_snapshot_event_time_ms
-        nonlocal max_event_time_ms
-        nonlocal next_emit_event_time_ms
-
-        saw_eos = False
-        output_rows = []
-
-        rows = batch_df.select(
-            "event_time",
-            "airline",
-            "crs_dep_time",
-            "dep_delay",
-            "cancelled",
-            "diverted",
-        ).orderBy(
-            F.col("event_time").asc_nulls_last()
-        ).toLocalIterator()
-
-        for row in rows:
-            if row.airline == "__EOS__":
-                saw_eos = True
-                continue
-
-            if row.event_time is not None:
-                event_time = int(row.event_time)
-                if max_event_time_ms is None or event_time > max_event_time_ms:
-                    max_event_time_ms = event_time
-
-            cancelled = row.cancelled or 0.0
-            diverted = row.diverted or 0.0
-            if (
-                row.airline not in AIRLINES
-                or cancelled >= 0.5
-                or diverted >= 0.5
-                or row.dep_delay is None
-                or row.crs_dep_time is None
-            ):
-                if (
-                    dirty_since_snapshot
-                    and max_event_time_ms is not None
-                    and max_event_time_ms >= next_emit_event_time_ms
-                ):
-                    rows_to_emit = snapshot_rows()
-                    if rows_to_emit:
-                        output_rows.extend(rows_to_emit)
-                        last_snapshot_event_time_ms = max_event_time_ms
-                        dirty_since_snapshot = False
-                    next_emit_event_time_ms = _next_emit_after(
-                        max_event_time_ms,
-                        snapshot_event_step_ms,
-                    )
-                continue
-
-            hour = (int(row.crs_dep_time) // 100) % 24
-            key = (row.airline, hour)
-            sketch = sketches.setdefault(key, DelayDDSketch(alpha))
-            sketch.add(float(row.dep_delay))
-            dirty_since_snapshot = True
-
-            if max_event_time_ms is not None and max_event_time_ms >= next_emit_event_time_ms:
-                rows_to_emit = snapshot_rows()
-                if rows_to_emit:
-                    output_rows.extend(rows_to_emit)
-                    last_snapshot_event_time_ms = max_event_time_ms
-                    dirty_since_snapshot = False
-                next_emit_event_time_ms = _next_emit_after(
-                    max_event_time_ms,
-                    snapshot_event_step_ms,
-                )
-
-        if saw_eos and (
-            dirty_since_snapshot
-            or max_event_time_ms != last_snapshot_event_time_ms
-        ):
-            rows_to_emit = snapshot_rows()
-            if rows_to_emit:
-                output_rows.extend(rows_to_emit)
-                last_snapshot_event_time_ms = max_event_time_ms
-            dirty_since_snapshot = False
-
-        if not output_rows:
+        if batch_df.rdd.isEmpty():
             return
 
-        out = batch_df.sparkSession.createDataFrame(
-            output_rows,
-            schema=[
+        (
+            batch_df.select(
                 "ts",
                 "airline",
                 "hour",
@@ -465,9 +326,12 @@ def cumulative_batch_writer(output_path: str, alpha: float, snapshot_event_step_
                 "p75",
                 "p90",
                 "delay_max",
-            ],
+            )
+            .coalesce(1)
+            .write.mode("append")
+            .option("header", "false")
+            .csv(output_path)
         )
-        out.coalesce(1).write.mode("append").option("header", "false").csv(output_path)
 
     return write
 
@@ -490,16 +354,19 @@ def main() -> None:
 
     logger.info("Spark Q3 | Kafka: %s topic: %s", runtime_cfg.kafka_bootstrap, runtime_cfg.kafka_topic)
     logger.info("Spark Q3 | Enabled window(s): %s", selected_window)
-    logger.info("Spark Q3 | Quantile implementation: %s", quantile_impl)
+    logger.info("Spark Q3 | Bounded-window quantile implementation: %s", quantile_impl)
     if quantile_impl == "native":
         logger.info("Spark Q3 | percentile_approx accuracy: %d", accuracy)
     else:
         logger.info("Spark Q3 | DDSketch alpha: %.4f", sketch_alpha)
+    if global_q3_enabled(selected_window):
+        logger.info(
+            "Spark Q3 [global] | DDSketch alpha: %.4f (aligned with Flink)",
+            sketch_alpha,
+        )
 
-    flights = (
-        read_flights_stream(spark, runtime_cfg, "q3")
-        .withWatermark("rowtime", f"{watermark_delay} seconds")
-    )
+    source = read_flights_stream(spark, runtime_cfg, "q3")
+    flights = source.withWatermark("rowtime", f"{watermark_delay} seconds")
 
     windows = enabled_q3_windows(selected_window, paths)
 
@@ -539,23 +406,26 @@ def main() -> None:
             )
         logger.info("Spark Q3 [%s] | Results path: %s", label, output_path)
 
-    if cumulative_q3_enabled(selected_window):
-        output_path = paths["spark_q3_results_path_cumulative"]
-        snapshot_event_step_ms = int(q3_cfg.get("cumulative_snapshot_event_step_ms", 2_700_000))
+    if global_q3_enabled(selected_window):
+        output_path = paths["spark_q3_results_path_global"]
+        snapshots = build_q3_global_snapshots(
+            source,
+            watermark_delay_seconds=watermark_delay,
+            alpha=sketch_alpha,
+        )
         queries.append(
             write_foreach_batch_stream(
-                flights,
-                writer=cumulative_batch_writer(
-                    output_path,
-                    alpha=sketch_alpha,
-                    snapshot_event_step_ms=snapshot_event_step_ms,
-                ),
-                checkpoint=checkpoint_path(runtime_cfg, "q3", "cumulative"),
-                query_name="spark-q3-cumulative",
+                snapshots,
+                writer=global_batch_writer(output_path),
+                checkpoint=checkpoint_path(runtime_cfg, "q3", "global"),
+                query_name="spark-q3-global",
                 runtime_cfg=runtime_cfg,
             )
         )
-        logger.info("Spark Q3 [cumulative] | Results path: %s", output_path)
+        logger.info(
+            "Spark Q3 [global] | Checkpointed daily event-time snapshots -> %s",
+            output_path,
+        )
 
     await_queries_until_idle(
         queries, runtime_cfg, logger,

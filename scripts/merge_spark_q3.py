@@ -23,7 +23,7 @@ from common.config import load_config  # noqa: E402
 
 
 HEADER = ["ts", "airline", "hour", "count", "min", "p25", "p50", "p75", "p90", "max"]
-Q3_WINDOW_CHOICES = ("1d", "7d", "global", "cumulative", "all")
+Q3_WINDOW_CHOICES = ("1d", "7d", "global", "all")
 
 
 @dataclass(frozen=True)
@@ -64,7 +64,6 @@ def load_merge_config() -> list[WindowMergeConfig]:
         make("spark_q3_results_host_path_1d", "spark_q3_merged_output_host_path_1d", "1d"),
         make("spark_q3_results_host_path_7d", "spark_q3_merged_output_host_path_7d", "7d"),
         make("spark_q3_results_host_path_global", "spark_q3_merged_output_host_path_global", "global"),
-        make("spark_q3_results_host_path_cumulative", "spark_q3_merged_output_host_path_cumulative", "cumulative"),
     ]
     if selected_window == "all":
         return configs

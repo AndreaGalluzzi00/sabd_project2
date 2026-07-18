@@ -1,48 +1,8 @@
-# ============================================================
-# SABD Project 2 - Real-time Flight Analysis Stack
-# Kafka (KRaft) + Apache Flink + Kafka UI
-#
-# Infrastruttura:
-#   docker compose up -d
-#
-# Moduli manuali:
-#   docker compose run --rm kafka-init
-#   docker compose run --rm preprocess
-#   docker compose run --rm flink-job-q1
-#   docker compose run --rm flink-job-q2
-#   docker compose run --rm flink-job-q3
-#   docker compose --profile manual up -d spark-job-q1 spark-job-q2 spark-job-q3
-#   docker compose run --rm producer
-#
-# Chiusura pulita dei job (dopo che il producer ha finito):
-#   docker exec flink-jobmanager flink list -r
-#   docker exec flink-jobmanager flink stop --drain -p /opt/flink/savepoints <JOB_ID_Q1>
-#   docker exec flink-jobmanager flink stop --drain -p /opt/flink/savepoints <JOB_ID_Q2>
-#   docker exec flink-jobmanager flink stop --drain -p /opt/flink/savepoints <JOB_ID_Q3>
-#   python scripts/merge_q1.py
-#   python scripts/merge_q2.py
-#   python scripts/merge_q3.py
-#   python scripts/merge_spark_q1.py
-#   python scripts/merge_spark_q2.py
-#   python scripts/merge_spark_q3.py
-#
-# Configurazione applicativa:
-#   config/base.yml
-#
-# Il compose monta ./config dentro i container in /config.
-# I servizi Python/Flink leggono CONFIG_PATH=/config/base.yml.
-# ============================================================
-
 name: sabd_project2
 
 services:
 
 
-#CONTAINER INFRATRUTTURALI
-  # ----------------------------------------------------------
-  # Apache Kafka 3.7 in KRaft mode
-  # Single-node broker + controller
-  # ----------------------------------------------------------
   kafka:
     image: apache/kafka:3.7.0
     hostname: kafka
@@ -83,10 +43,7 @@ services:
     networks:
       - sabd-net
 
-  # ----------------------------------------------------------
-  # Apache Kafka 3.7 - Second broker (broker-only, no controller)
-  # Needed for replication-factor 2 on the flights topic.
-  # ----------------------------------------------------------
+
   kafka2:
     image: apache/kafka:3.7.0
     hostname: kafka2
@@ -120,11 +77,7 @@ services:
     networks:
       - sabd-net
 
-  # ----------------------------------------------------------
-  # Confluent Schema Registry
-  # Manages Avro schemas; producer and Flink avro-confluent
-  # format both resolve schemas from here.
-  # ----------------------------------------------------------
+
   schema-registry:
     image: confluentinc/cp-schema-registry:7.6.0
     hostname: schema-registry
@@ -147,10 +100,7 @@ services:
     networks:
       - sabd-net
 
-  # ----------------------------------------------------------
-  # Schema Init: registers flight.avsc in Schema Registry
-  # Runs once at startup (restart: no).
-  # ----------------------------------------------------------
+
   schema-init:
     image: python:3.11-slim
     container_name: schema-init
@@ -168,9 +118,7 @@ services:
       - sabd-net
     restart: "no"
 
-  # ----------------------------------------------------------
-  # Apache Flink - JobManager
-  # ----------------------------------------------------------
+
   flink-jobmanager:
     build:
       context: .
@@ -205,9 +153,6 @@ services:
     networks:
       - sabd-net
 
-  # ----------------------------------------------------------
-  # Apache Flink - TaskManager
-  # ----------------------------------------------------------
   flink-taskmanager:
     build:
       context: .
@@ -247,10 +192,7 @@ services:
     networks:
       - sabd-net
 
-  # ----------------------------------------------------------
-  # Kafka UI - monitoring/debugging
-  # http://localhost:8080
-  # ----------------------------------------------------------
+
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
@@ -268,13 +210,7 @@ services:
     networks:
       - sabd-net
 
-  # ==========================================================
-  # MODULI MANUALI - profile: manual
-  # ==========================================================
 
-  # ----------------------------------------------------------
-  # [1] Crea il topic flights su Kafka
-  # ----------------------------------------------------------
   kafka-init:
     image: apache/kafka:3.7.0
     container_name: kafka-init
@@ -298,9 +234,7 @@ services:
       - sabd-net
     restart: "no"
 
-  # ----------------------------------------------------------
-  # [2] Preprocessing: CSV -> CSV ordinato per event_time
-  # ----------------------------------------------------------
+
   preprocess:
     build:
       context: .
@@ -317,9 +251,7 @@ services:
       - sabd-net
     restart: "no"
 
-  # ----------------------------------------------------------
-  # [3] Flink Q1: sottomette il job PyFlink al cluster
-  # ----------------------------------------------------------
+
   flink-job-q1:
     build:
       context: .
@@ -352,9 +284,6 @@ services:
       - sabd-net
     restart: "no"
 
-  # ----------------------------------------------------------
-  # [3b] Flink Q2: sottomette il job PyFlink al cluster
-  # ----------------------------------------------------------
   flink-job-q2:
     build:
       context: .
@@ -387,8 +316,6 @@ services:
       - sabd-net
     restart: "no"
 
-  # [3c] Flink Q3: sottomette il job PyFlink al cluster
-  # ----------------------------------------------------------
   flink-job-q3:
     build:
       context: .
@@ -421,11 +348,7 @@ services:
       - sabd-net
     restart: "no"
 
-  # ----------------------------------------------------------
-  # [4] Producer: replay eventi su Kafka
-  # Serializes every event in Confluent Avro format and publishes
-  # directly to Kafka. EOS markers are sent to Kafka as well.
-  # ----------------------------------------------------------
+
   producer:
     build:
       context: .
@@ -447,32 +370,98 @@ services:
       - sabd-net
     restart: "no"
 
-  # ----------------------------------------------------------
-  # [5a] Spark Structured Streaming Q1 (extra)
-  # Long-running local Spark job: start it before the producer with
-  # docker compose --profile manual up -d spark-job-q1
-  # ----------------------------------------------------------
-  spark-job-q1:
+
+  spark-master:
     build:
       context: .
       dockerfile: spark_jobs/Dockerfile
-    platform: linux/amd64
+    image: sabd-spark:${SPARK_IMAGE_VERSION:-3.5.1}
+    platform: ${PLATFORM:-linux/amd64}
+    hostname: spark-master
+    container_name: spark-master
+    profiles: ["manual"]
+    working_dir: /opt/spark/app
+    command: >
+      bash -c "exec /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master"
+    environment:
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: 7077
+      SPARK_MASTER_WEBUI_PORT: 8080
+    ports:
+      - "7077:7077"
+      - "8083:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8080'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks:
+      - sabd-net
+    restart: unless-stopped
+
+  spark-worker:
+    image: sabd-spark:${SPARK_IMAGE_VERSION:-3.5.1}
+    pull_policy: never
+    platform: ${PLATFORM:-linux/amd64}
+    hostname: spark-worker
+    container_name: spark-worker
+    profiles: ["manual"]
+    working_dir: /opt/spark/app
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    command: >
+      bash -c "exec /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077"
+    environment:
+      PYTHONPATH: /opt/spark/app:/opt/spark/app/spark_jobs:/opt/spark/app/common
+      SPARK_WORKER_CORES: 4
+      SPARK_WORKER_MEMORY: 4g
+      SPARK_WORKER_WEBUI_PORT: 8081
+    ports:
+      - "8084:8081"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/8081'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - ./config:/config:ro
+      - ./common:/opt/spark/app/common:ro
+      - ./schema:/opt/spark/app/schema:ro
+      - ./spark_jobs:/opt/spark/app/spark_jobs:ro
+      - ./Results:/opt/spark/results
+      - ./spark-checkpoints:/opt/spark/checkpoints
+    networks:
+      - sabd-net
+    restart: unless-stopped
+
+
+  spark-job-q1:
+    image: sabd-spark:${SPARK_IMAGE_VERSION:-3.5.1}
+    pull_policy: never
+    platform: ${PLATFORM:-linux/amd64}
     container_name: spark-job-q1
     profiles: ["manual"]
     depends_on:
       kafka:
         condition: service_healthy
+      spark-worker:
+        condition: service_healthy
     environment:
       CONFIG_PATH: ${SABD_CONFIG_PATH:-/config/base.yml}
       PYTHONPATH: /opt/spark/app:/opt/spark/app/spark_jobs:/opt/spark/app/common
       SPARK_PACKAGES: org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.spark:spark-avro_2.12:3.5.1
+    ports:
+      - "4040:4040"
     command: >
       bash -c "
         echo 'Preparing Spark Q1 output/checkpoint directories...' &&
         rm -rf /opt/spark/results/spark/q1 /opt/spark/checkpoints/q1 &&
         mkdir -p /opt/spark/results/spark/q1 /opt/spark/checkpoints &&
         echo 'Starting Spark Structured Q1...' &&
-        /opt/spark/bin/spark-submit --master local[4] --packages \"$$SPARK_PACKAGES\" /opt/spark/app/spark_jobs/q1/job.py
+        /opt/spark/bin/spark-submit --master spark://spark-master:7077 --deploy-mode client --total-executor-cores 4 --executor-cores 4 --conf spark.default.parallelism=4 --conf spark.driver.bindAddress=0.0.0.0 --conf spark.driver.host=spark-job-q1 --packages \"$$SPARK_PACKAGES\" /opt/spark/app/spark_jobs/q1/job.py
       "
     volumes:
       - ./config:/config:ro
@@ -485,30 +474,31 @@ services:
       - sabd-net
     restart: "no"
 
-  # ----------------------------------------------------------
-  # [5b] Spark Structured Streaming Q2 (extra)
-  # ----------------------------------------------------------
+
   spark-job-q2:
-    build:
-      context: .
-      dockerfile: spark_jobs/Dockerfile
-    platform: linux/amd64
+    image: sabd-spark:${SPARK_IMAGE_VERSION:-3.5.1}
+    pull_policy: never
+    platform: ${PLATFORM:-linux/amd64}
     container_name: spark-job-q2
     profiles: ["manual"]
     depends_on:
       kafka:
         condition: service_healthy
+      spark-worker:
+        condition: service_healthy
     environment:
       CONFIG_PATH: ${SABD_CONFIG_PATH:-/config/base.yml}
       PYTHONPATH: /opt/spark/app:/opt/spark/app/spark_jobs:/opt/spark/app/common
       SPARK_PACKAGES: org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.spark:spark-avro_2.12:3.5.1
+    ports:
+      - "4040:4040"
     command: >
       bash -c "
         echo 'Preparing Spark Q2 output/checkpoint directories...' &&
         rm -rf /opt/spark/results/spark/q2 /opt/spark/checkpoints/q2 &&
         mkdir -p /opt/spark/results/spark/q2 /opt/spark/checkpoints &&
         echo 'Starting Spark Structured Q2...' &&
-        /opt/spark/bin/spark-submit --master local[4] --packages \"$$SPARK_PACKAGES\" /opt/spark/app/spark_jobs/q2/job.py
+        /opt/spark/bin/spark-submit --master spark://spark-master:7077 --deploy-mode client --total-executor-cores 4 --executor-cores 4 --conf spark.default.parallelism=4 --conf spark.driver.bindAddress=0.0.0.0 --conf spark.driver.host=spark-job-q2 --packages \"$$SPARK_PACKAGES\" /opt/spark/app/spark_jobs/q2/job.py
       "
     volumes:
       - ./config:/config:ro
@@ -521,32 +511,31 @@ services:
       - sabd-net
     restart: "no"
 
-  # ----------------------------------------------------------
-  # [5c] Spark Structured Streaming Q3 (extra)
-  # Uses DDSketch by default for approximate quantiles (native Spark
-  # percentile_approx remains selectable from config).
-  # ----------------------------------------------------------
+
   spark-job-q3:
-    build:
-      context: .
-      dockerfile: spark_jobs/Dockerfile
-    platform: linux/amd64
+    image: sabd-spark:${SPARK_IMAGE_VERSION:-3.5.1}
+    pull_policy: never
+    platform: ${PLATFORM:-linux/amd64}
     container_name: spark-job-q3
     profiles: ["manual"]
     depends_on:
       kafka:
         condition: service_healthy
+      spark-worker:
+        condition: service_healthy
     environment:
       CONFIG_PATH: ${SABD_CONFIG_PATH:-/config/base.yml}
       PYTHONPATH: /opt/spark/app:/opt/spark/app/spark_jobs:/opt/spark/app/common
       SPARK_PACKAGES: org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.spark:spark-avro_2.12:3.5.1
+    ports:
+      - "4040:4040"
     command: >
       bash -c "
         echo 'Preparing Spark Q3 output/checkpoint directories...' &&
         rm -rf /opt/spark/results/spark/q3 /opt/spark/checkpoints/q3 &&
         mkdir -p /opt/spark/results/spark/q3 /opt/spark/checkpoints &&
         echo 'Starting Spark Structured Q3...' &&
-        /opt/spark/bin/spark-submit --master local[4] --packages \"$$SPARK_PACKAGES\" /opt/spark/app/spark_jobs/q3/job.py
+        /opt/spark/bin/spark-submit --master spark://spark-master:7077 --deploy-mode client --total-executor-cores 4 --executor-cores 4 --conf spark.default.parallelism=4 --conf spark.driver.bindAddress=0.0.0.0 --conf spark.driver.host=spark-job-q3 --packages \"$$SPARK_PACKAGES\" /opt/spark/app/spark_jobs/q3/job.py
       "
     volumes:
       - ./config:/config:ro
@@ -559,32 +548,6 @@ services:
       - sabd-net
     restart: "no"
 
-  # ==========================================================
-  # DASHBOARD REAL-TIME (Opzionale 1)
-  # Due backend ALTERNATIVI, attivabili separatamente o insieme:
-  #
-  #   profile dashboard-influx     (time-series nativo)
-  #     Flink Q1 --(topic q1_results)--> Telegraf --> InfluxDB --> Grafana
-  #
-  #   profile dashboard-timescale  (SQL, sink JDBC nativo di Flink)
-  #     Flink Q1 --(JDBC)--> TimescaleDB --> Grafana
-  #
-  # Grafana è condiviso (in entrambi i profili) e provisiona entrambe le
-  # dashboard/datasource: confronto fianco a fianco per la presentazione.
-  #
-  #   docker compose --profile dashboard-influx up -d
-  #   docker compose --profile dashboard-timescale up -d
-  #   docker compose --profile dashboard-influx --profile dashboard-timescale up -d
-  #
-  # Grafana: http://localhost:3000 (admin/admin) · InfluxDB: :8086 (admin/admin12345)
-  # TimescaleDB: :5432 (sabd/sabd). Credenziali SOLO per uso locale/demo.
-  # ==========================================================
-
-  # ----------------------------------------------------------
-  # [D0] Crea i topic dei risultati (Q1/Q2/Q3) consumati da Telegraf.
-  # Topic a bassa voluminosità: 1 partizione (ordine preservato), RF 1.
-  # q1_results resta a 4 partizioni per compatibilità con i run esistenti.
-  # ----------------------------------------------------------
   dashboard-init:
     image: apache/kafka:3.7.0
     container_name: sabd2-dashboard-init
@@ -603,11 +566,7 @@ services:
       - sabd-net
     restart: "no"
 
-  # ----------------------------------------------------------
-  # [D1] InfluxDB 2.x - time-series store delle metriche di query
-  # Retention infinita (0s): l'event-time del replay è nel 2025,
-  # una retention finita scarterebbe i punti perché già "vecchi".
-  # ----------------------------------------------------------
+
   influxdb:
     image: influxdb:2.7
     container_name: sabd2-influxdb
@@ -633,9 +592,7 @@ services:
     networks:
       - sabd-net
 
-  # ----------------------------------------------------------
-  # [D2] Telegraf - consuma q1_results da Kafka e scrive su InfluxDB
-  # ----------------------------------------------------------
+
   telegraf:
     image: telegraf:1.30
     container_name: sabd2-telegraf
@@ -656,11 +613,7 @@ services:
       - sabd-net
     restart: unless-stopped
 
-  # ----------------------------------------------------------
-  # [D3] TimescaleDB - store SQL (Postgres + estensione time-series).
-  # L'init in /docker-entrypoint-initdb.d crea tabella + hypertable al
-  # primo avvio (il sink JDBC di Flink NON crea tabelle).
-  # ----------------------------------------------------------
+
   timescaledb:
     image: timescale/timescaledb:2.15.3-pg16
     container_name: sabd2-timescaledb
@@ -683,12 +636,7 @@ services:
     networks:
       - sabd-net
 
-  # ----------------------------------------------------------
-  # [D4] Grafana - condiviso da entrambi i profili.
-  # Provisiona i due datasource (InfluxDB/Flux + TimescaleDB/SQL) e le due
-  # dashboard. Niente depends_on sui DB: un datasource non raggiungibile dà
-  # solo errore sui pannelli relativi, non blocca l'avvio.
-  # ----------------------------------------------------------
+
   grafana:
     image: grafana/grafana:11.1.0
     container_name: sabd2-grafana

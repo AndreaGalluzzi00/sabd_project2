@@ -170,12 +170,6 @@ def write_foreach_batch_stream(
         .start()
     )
 
-
-# Unified perf schema, shared with scripts/report_perf.py (Flink writer), so
-# Results/perf.csv holds both engines side by side for the report.
-# elapsed_ms = time spent on the SOLE query processing (see await_queries_until_idle);
-# it excludes source offset I/O, WAL commits and the no-input drain that flushes
-# closed windows to the sink.
 _PERF_HEADER = [
     "timestamp_utc", "engine", "implementation", "query", "experiment",
     "parallelism", "total_records", "active_seconds", "elapsed_ms",
@@ -183,19 +177,11 @@ _PERF_HEADER = [
     "busy_pct_avg", "backpressure_pct_avg", "notes",
 ]
 
-# Default host location (./Results is bind-mounted at /opt/spark/results).
 _PERF_OUTPUT = "/opt/spark/results/perf.csv"
 
 
 def _prepare_perf_file(path: Path, header: list[str], logger: logging.Logger) -> bool:
-    """Return True if the CSV header must be (re)written for `path`.
 
-    A perf.csv produced before the elapsed_ms column existed has a narrower
-    header; appending the new, wider rows under it would silently misalign every
-    column. When the on-disk header no longer matches, archive the old file and
-    start a fresh one so no data is lost and the schema stays consistent with the
-    Flink writer.
-    """
     if not path.exists():
         return True
     try:
@@ -222,7 +208,7 @@ def _append_perf_row(output_path: str, row: list[Any], logger: logging.Logger) -
                 writer.writerow(_PERF_HEADER)
             writer.writerow(row)
         logger.info("Spark perf row appended to %s", output_path)
-    except Exception as exc:  # noqa: BLE001 - metrics must never fail the job
+    except Exception as exc:
         logger.warning("Could not write Spark perf row: %s", exc)
 
 
@@ -304,14 +290,6 @@ def await_queries_until_idle(
                     if trigger_ms > 0.0:
                         batch_latencies_ms.append(trigger_ms)
 
-                    # elapsed_ms accumulates the SOLE query-processing time: the
-                    # "addBatch" phase is where Spark executes the query for the
-                    # micro-batch, so summing it over input-bearing batches leaves
-                    # out source offset fetching, WAL commits, planning and the
-                    # inter-batch idle wait. Only batches that ingested real input
-                    # are counted, so the final no-input drain batches that merely
-                    # flush closed windows to the sink are excluded too. Fall back
-                    # to triggerExecution if a runtime omits the addBatch phase.
                     add_batch_ms = float(duration.get("addBatch", 0.0) or 0.0)
                     if add_batch_ms > 0.0:
                         batch_processing_ms.append(add_batch_ms)
@@ -394,7 +372,6 @@ def await_queries_until_idle(
     for query in queries:
         query.awaitTermination(30)
 
-    # ── Emit the aggregate perf row ────────────────────────────────────────────
     total_records = max(input_by_query.values(), default=0)
     wall_span = (last_activity_at - first_activity_at) if first_activity_at else 0.0
     trigger_total_s = sum(batch_latencies_ms) / 1000.0
@@ -407,7 +384,7 @@ def await_queries_until_idle(
 
     try:
         master = SparkSession.getActiveSession().sparkContext.master
-    except Exception:  # noqa: BLE001 - notes are cosmetic, never fail the job
+    except Exception:
         master = "local"
 
     row = [
