@@ -25,6 +25,8 @@ param(
 
     [switch]$NoMerge,
 
+    [int]$PostProducerDrainSeconds = 180,
+
     [int]$MergeTimeoutSeconds = 900
 )
 
@@ -43,6 +45,10 @@ if ($KafkaPartitions -le 0) {
 
 if ($KafkaReplicationFactor -le 0) {
     throw "KafkaReplicationFactor deve essere maggiore di zero."
+}
+
+if ($PostProducerDrainSeconds -lt 0) {
+    throw "PostProducerDrainSeconds deve essere 0 oppure un intero positivo."
 }
 
 if ($Query -eq "all" -and $Experiments.Count -gt 0) {
@@ -207,6 +213,7 @@ foreach ($CurrentQuery in $Queries) {
         Write-Host "Control exp  : $ControlExperiment"
         Write-Host "Kafka topic  : partitions=$KafkaPartitions RF=$KafkaReplicationFactor"
         Write-Host "Flink config : parallelism=1 agg=ONE_PHASE"
+        Write-Host "Drain wait   : $PostProducerDrainSeconds s after producer"
         Write-Host "============================================================"
 
         Reset-FlightsTopic `
@@ -226,6 +233,7 @@ foreach ($CurrentQuery in $Queries) {
             NoResetTopic              = $true
             FlinkParallelismOverride  = 1
             FlinkAggPhaseStrategy     = "ONE_PHASE"
+            PostProducerDrainSeconds  = $PostProducerDrainSeconds
             MergeTimeoutSeconds       = $MergeTimeoutSeconds
         }
 

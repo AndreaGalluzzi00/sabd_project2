@@ -17,17 +17,14 @@ from merge_utils import (
     resolve_project_path,
 )
 
-# Merged CSV header written by merge_q3.py: ts,airline,hour,count,min,...
 COUNT_COLUMN = "count"
 
-# Window label -> config key of its merged output path (same keys as merge_q3).
 WINDOW_PATH_KEYS = {
     "1d": "q3_merged_output_host_path_1d",
     "7d": "q3_merged_output_host_path_7d",
     "global": "q3_merged_output_host_path_global",
-    "cumulative": "q3_merged_output_host_path_cumulative",
 }
-Q3_WINDOW_CHOICES = ("1d", "7d", "global", "cumulative", "all")
+Q3_WINDOW_CHOICES = ("1d", "7d", "global", "all")
 
 DEFAULT_BASELINE = "01_baseline"
 DEFAULT_OUTPUT = PROJECT_ROOT / "Results" / "late_drops_q3.csv"
@@ -86,11 +83,7 @@ def resolve_window_files(experiment: str | None) -> tuple[str, dict[str, Path]]:
     paths = cfg["paths"]
     experiment_name = get_experiment_name(cfg)
     selected_window = selected_q3_window(cfg)
-    path_keys = {
-        label: key
-        for label, key in WINDOW_PATH_KEYS.items()
-        if label != "cumulative"
-    }
+    path_keys = dict(WINDOW_PATH_KEYS)
     if selected_window != "all":
         path_keys = {selected_window: WINDOW_PATH_KEYS[selected_window]}
 
@@ -188,8 +181,7 @@ def append_output_row(
 def main() -> None:
     args = parse_args()
 
-    # Baseline first: resolve_window_files reconfigures CONFIG_PATH, so the
-    # experiment resolution must come last for any downstream config use.
+
     baseline_name, baseline_files = resolve_window_files(args.baseline)
     experiment_name, experiment_files = resolve_window_files(args.experiment)
 
@@ -251,7 +243,7 @@ def main() -> None:
             note = "  <-- NEGATIVE: experiment exceeds baseline, investigate"
             exit_code = 1
         elif window == "global" and late_dropped > 0:
-            # The global window closes only at EOS: nothing should be late.
+            # GlobalWindow.max_timestamp is unbounded: records are never late.
             note = "  <-- unexpected: global should drop ~0"
 
         print(

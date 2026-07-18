@@ -119,7 +119,7 @@ KAFKA_SINK_DDL = """
     )
 """
 
-KAFKA_CUMULATIVE_SINK_DDL = """
+KAFKA_GLOBAL_SINK_DDL = """
     CREATE TABLE {name} (
         ts                TIMESTAMP(3),
         airport_rank      STRING,

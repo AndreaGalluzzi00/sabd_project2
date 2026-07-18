@@ -107,7 +107,12 @@ def read_flights_stream(
         decoded.select("flight.*")
         .withColumn(
             "rowtime",
-            F.to_timestamp(F.from_unixtime(F.col("event_time") / F.lit(1000.0))),
+            F.when(
+                F.col("airline") == F.lit("__EOS__"),
+                F.to_timestamp(F.lit("2200-01-01 00:00:00")),
+            ).otherwise(
+                F.to_timestamp(F.from_unixtime(F.col("event_time") / F.lit(1000.0)))
+            ),
         )
     )
 

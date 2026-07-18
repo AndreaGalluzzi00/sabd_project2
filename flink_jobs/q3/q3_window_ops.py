@@ -7,11 +7,9 @@ from pyflink.common import Row
 from pyflink.common.typeinfo import Types
 from pyflink.datastream.functions import (
     AggregateFunction,
-    KeyedProcessFunction,
     MapFunction,
     ProcessWindowFunction,
 )
-from pyflink.datastream.state import ValueStateDescriptor
 
 from delay_sketch import DelayDDSketch
 
@@ -19,7 +17,7 @@ from delay_sketch import DelayDDSketch
 LATE_DROPS_METRIC = "numLateRecordsDropped"
 DATASET_START_TS = datetime(2025, 1, 1)
 DATASET_START_MS = int(DATASET_START_TS.replace(tzinfo=timezone.utc).timestamp() * 1000)
-AIRLINES: frozenset[str] = frozenset({"AA", "DL", "UA", "WN"})
+GLOBAL_SNAPSHOT_INTERVAL_MS = 86_400_000
 
 
 class Q3LateDropCounter(MapFunction):
@@ -39,20 +37,19 @@ def group_key(airline: str, hour: int) -> str:
     return f"{airline}|{hour:02d}"
 
 
-def _snapshot_ts(max_event_time_ms: int | None) -> datetime:
-    if max_event_time_ms is None:
+def _global_snapshot_ts(current_watermark_ms: int) -> datetime:
+    if current_watermark_ms < DATASET_START_MS:
         return DATASET_START_TS
+
+    snapshot_ms = (
+        DATASET_START_MS
+        + ((current_watermark_ms - DATASET_START_MS) // GLOBAL_SNAPSHOT_INTERVAL_MS)
+        * GLOBAL_SNAPSHOT_INTERVAL_MS
+    )
     return datetime.fromtimestamp(
-        max_event_time_ms / 1000.0,
+        snapshot_ms / 1000.0,
         tz=timezone.utc,
     ).replace(tzinfo=None)
-
-
-def _next_emit_after(event_time_ms: int, snapshot_event_step_ms: int) -> int:
-    if event_time_ms < DATASET_START_MS:
-        return DATASET_START_MS
-    elapsed = event_time_ms - DATASET_START_MS
-    return DATASET_START_MS + ((elapsed // snapshot_event_step_ms) + 1) * snapshot_event_step_ms
 
 
 
@@ -77,156 +74,46 @@ class Q3AggregateFunction(AggregateFunction):
         return acc
 
 
+def _q3_result_row(ts: datetime, key: str, sketch: DelayDDSketch) -> Row:
+    airline, hour_str = key.split("|")
+    return Row(
+        ts,
+        airline,
+        int(hour_str),
+        sketch.count,
+        sketch.min_value,
+        round(sketch.quantile(0.25), 2),
+        round(sketch.quantile(0.50), 2),
+        round(sketch.quantile(0.75), 2),
+        round(sketch.quantile(0.90), 2),
+        sketch.max_value,
+    )
+
+
 class Q3WindowFunction(ProcessWindowFunction):
 
     def process(self, key: str, context: ProcessWindowFunction.Context, elements):
         sketch = next(iter(elements))
-        airline, hour_str = key.split("|")
 
         ts = datetime.fromtimestamp(
             context.window().start / 1000.0, tz=timezone.utc
         ).replace(tzinfo=None)  # naive UTC → java.sql.Timestamp → TIMESTAMP(3)
 
-        yield Row(
-            ts,
-            airline,
-            int(hour_str),
-            sketch.count,
-            sketch.min_value,
-            round(sketch.quantile(0.25), 2),
-            round(sketch.quantile(0.50), 2),
-            round(sketch.quantile(0.75), 2),
-            round(sketch.quantile(0.90), 2),
-            sketch.max_value,
-        )
+        yield _q3_result_row(ts, key, sketch)
 
 
-class Q3CumulativeFunction(KeyedProcessFunction):
-    """Running Q3 state from dataset start, emitted on event-time steps."""
+class Q3GlobalWindowFunction(ProcessWindowFunction):
+    """Emit one cumulative DDSketch snapshot per key and event-time day."""
 
-    def __init__(self, alpha: float, snapshot_event_step_ms: int):
-        self._alpha = alpha
-        self._snapshot_event_step_ms = max(1, int(snapshot_event_step_ms))
-        self._sketches_state = None
-        self._max_event_time_state = None
-        self._next_emit_event_time_state = None
-        self._last_snapshot_event_time_state = None
-        self._dirty_state = None
-
-    def open(self, runtime_context) -> None:
-        self._sketches_state = runtime_context.get_state(
-            ValueStateDescriptor("q3-cumulative-sketches", Types.PICKLED_BYTE_ARRAY())
-        )
-        self._max_event_time_state = runtime_context.get_state(
-            ValueStateDescriptor("q3-cumulative-max-event-time", Types.LONG())
-        )
-        self._next_emit_event_time_state = runtime_context.get_state(
-            ValueStateDescriptor("q3-cumulative-next-emit-event-time", Types.LONG())
-        )
-        self._last_snapshot_event_time_state = runtime_context.get_state(
-            ValueStateDescriptor("q3-cumulative-last-snapshot-event-time", Types.LONG())
-        )
-        self._dirty_state = runtime_context.get_state(
-            ValueStateDescriptor("q3-cumulative-dirty", Types.BOOLEAN())
-        )
-
-    def process_element(self, value, ctx):
-        # value: (event_time_ms, airline, hour, dep_delay, cancelled, diverted)
-        sketches = self._sketches_state.value() or {}
-
-        if value[1] == "__EOS__":
-            max_event_time_ms = self._max_event_time_state.value()
-            if (
-                self._dirty_state.value()
-                or max_event_time_ms != self._last_snapshot_event_time_state.value()
-            ):
-                rows = list(self._snapshot_rows(sketches, max_event_time_ms))
-                for row in rows:
-                    yield row
-                if rows and max_event_time_ms is not None:
-                    self._last_snapshot_event_time_state.update(max_event_time_ms)
-            self._dirty_state.update(False)
+    def process(self, key: str, context: ProcessWindowFunction.Context, elements):
+        sketch = next(iter(elements))
+        if sketch.count == 0:
             return
-
-        max_event_time_ms = self._max_event_time_state.value()
-        event_time = value[0]
-        if event_time is not None:
-            event_time = int(event_time)
-            if max_event_time_ms is None or event_time > max_event_time_ms:
-                max_event_time_ms = event_time
-                self._max_event_time_state.update(event_time)
-
-        if not self._is_relevant(value):
-            yield from self._maybe_emit_snapshot(sketches, max_event_time_ms)
-            return
-
-        airline = value[1]
-        hour = int(value[2])
-        key = (airline, hour)
-        sketch = sketches.get(key)
-        if sketch is None:
-            sketch = DelayDDSketch(self._alpha)
-            sketches[key] = sketch
-
-        sketch.add(float(value[3]))
-        self._sketches_state.update(sketches)
-        self._dirty_state.update(True)
-        yield from self._maybe_emit_snapshot(sketches, max_event_time_ms)
-
-    @staticmethod
-    def _is_relevant(value) -> bool:
-        cancelled = value[4] or 0.0
-        diverted = value[5] or 0.0
-        return (
-            value[1] in AIRLINES
-            and cancelled < 0.5
-            and diverted < 0.5
-            and value[3] is not None
+        yield _q3_result_row(
+            _global_snapshot_ts(context.current_watermark()),
+            key,
+            sketch,
         )
-
-    def _maybe_emit_snapshot(self, sketches: dict[tuple[str, int], DelayDDSketch], max_event_time_ms: int | None):
-        if max_event_time_ms is None or not self._dirty_state.value():
-            return
-
-        next_emit = self._next_emit_event_time_state.value()
-        if next_emit is None:
-            next_emit = DATASET_START_MS + self._snapshot_event_step_ms
-
-        if max_event_time_ms < next_emit:
-            return
-
-        rows = list(self._snapshot_rows(sketches, max_event_time_ms))
-        self._next_emit_event_time_state.update(
-            _next_emit_after(max_event_time_ms, self._snapshot_event_step_ms)
-        )
-
-        if not rows:
-            return
-
-        for row in rows:
-            yield row
-
-        self._last_snapshot_event_time_state.update(max_event_time_ms)
-        self._dirty_state.update(False)
-
-    def _snapshot_rows(self, sketches: dict[tuple[str, int], DelayDDSketch], max_event_time_ms: int | None):
-        ts = _snapshot_ts(max_event_time_ms)
-        for (airline, hour), sketch in sorted(sketches.items()):
-            if sketch.count == 0:
-                continue
-            yield Row(
-                ts,
-                airline,
-                int(hour),
-                sketch.count,
-                sketch.min_value,
-                round(sketch.quantile(0.25), 2),
-                round(sketch.quantile(0.50), 2),
-                round(sketch.quantile(0.75), 2),
-                round(sketch.quantile(0.90), 2),
-                sketch.max_value,
-            )
-
 
 
 Q3_OUTPUT_TYPE = Types.ROW_NAMED(

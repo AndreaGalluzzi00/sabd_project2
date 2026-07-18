@@ -5,20 +5,18 @@ import sys
 from dataclasses import asdict, dataclass
 
 from pyflink.common import Types, WatermarkStrategy
-from pyflink.common.time import Duration
-from pyflink.datastream.window import GlobalWindows
+from pyflink.common.time import Duration, Time
+from pyflink.datastream.window import ContinuousEventTimeTrigger, GlobalWindows
 from pyflink.table import DataTypes, Schema
 
 from common.config import load_config
 from common.logging_utils import configure_logging
 from flink_runtime import FlinkRuntimeConfig, build_flink_runtime_config, create_table_environment
 from global_window_ops import (
-    ContinuousEventTimeTrigger,
     Q2GlobalAggregate,
     Q2GlobalTimestampAssigner,
     Q2GlobalWindowFunction,
     Q2_GLOBAL_OUTPUT_TYPE,
-    DATASET_START_MS,
     is_q2_global_event,
     project_q2_global_event,
 )
@@ -28,7 +26,7 @@ from window_ops import (
     make_topn_sql,
     CSV_SINK_DDL,
     KAFKA_SINK_DDL,
-    KAFKA_CUMULATIVE_SINK_DDL,
+    KAFKA_GLOBAL_SINK_DDL,
     JDBC_SINK_DDL,
 )
 
@@ -48,7 +46,6 @@ class Q2Config(FlinkRuntimeConfig):
     results_path_global: str
     window: str
     watermark_delay_seconds: int
-    cumulative_snapshot_event_step_ms: int
 
     influx_enabled: bool
     influx_topic_1h: str
@@ -97,9 +94,6 @@ def load_q2_config() -> Q2Config:
         results_path_global=cfg["paths"]["q2_results_path_global"],
         window=selected_q2_window(q2_cfg.get("window", "all")),
         watermark_delay_seconds=int(q2_cfg["watermark_delay_seconds"]),
-        cumulative_snapshot_event_step_ms=int(
-            q2_cfg.get("cumulative_snapshot_event_step_ms", 2_700_000)
-        ),
         influx_enabled=bool(influx.get("enabled", False)),
         influx_topic_1h=str(q2_influx.get("topic_1h", "q2_results_1h")),
         influx_topic_6h=str(q2_influx.get("topic_6h", "q2_results_6h")),
@@ -188,12 +182,7 @@ def build_global_window_pipeline(
         .map(project_q2_global_event, output_type=Types.PICKLED_BYTE_ARRAY())
         .key_by(lambda _: "q2-global", key_type=Types.STRING())
         .window(GlobalWindows.create())
-        .trigger(
-            ContinuousEventTimeTrigger(
-                cfg.cumulative_snapshot_event_step_ms,
-                DATASET_START_MS,
-            )
-        )
+        .trigger(ContinuousEventTimeTrigger.of(Time.days(1)))
         .aggregate(
             Q2GlobalAggregate(),
             window_function=Q2GlobalWindowFunction(),
@@ -213,7 +202,7 @@ def build_global_window_pipeline(
 
     if cfg.influx_enabled:
         kafka_sink = f"q2_kafka_{label}"
-        t_env.execute_sql(KAFKA_CUMULATIVE_SINK_DDL.format(
+        t_env.execute_sql(KAFKA_GLOBAL_SINK_DDL.format(
             name=kafka_sink,
             topic=cfg.influx_topic_global,
             bootstrap=cfg.kafka_bootstrap,

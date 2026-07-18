@@ -70,6 +70,7 @@ class ProducerConfig:
     random_seed: int | None
 
     emit_end_of_stream: bool
+    eos_watermark_delay_seconds: int
 
     kafka_acks: str
     kafka_retries: int
@@ -137,6 +138,10 @@ def load_producer_config() -> ProducerConfig:
         random_seed=int(random_seed) if random_seed is not None else None,
 
         emit_end_of_stream=bool(producer_cfg.get("emit_end_of_stream", True)),
+        eos_watermark_delay_seconds=max(
+            int(cfg.get(query, {}).get("watermark_delay_seconds", 0))
+            for query in ("q1", "q2", "q3")
+        ),
 
         kafka_acks=str(producer_cfg["acks"]),
         kafka_retries=int(producer_cfg["retries"]),
@@ -456,15 +461,30 @@ def replay_events(
     )
 
 
-END_OF_STREAM_EVENT_TIME_MS = int(
-    datetime(2200, 1, 1, tzinfo=timezone.utc).timestamp() * 1000
-)
+MILLIS_PER_DAY = 86_400_000
+
+
+def global_window_eos_event_time_ms(
+    last_event_time_ms: int,
+    watermark_delay_seconds: int,
+) -> int:
+    """Place EOS just beyond the next daily watermark boundary.
+
+    A far-future marker would make Flink's native ContinuousEventTimeTrigger
+    fire once per day up to that timestamp. This keeps the final snapshot
+    complete without producing decades of duplicate firings.
+    """
+    next_daily_boundary = (
+        (int(last_event_time_ms) // MILLIS_PER_DAY) + 1
+    ) * MILLIS_PER_DAY
+    return next_daily_boundary + int(watermark_delay_seconds) * 1000 + 1
 
 
 def emit_end_of_stream_markers(
     producer: KafkaProducer,
     cfg: ProducerConfig,
     avro_encoder: ConfluentAvroEncoder,
+    last_event_time_ms: int,
 ) -> None:
 
     partitions = producer.partitions_for(cfg.kafka_topic)
@@ -477,8 +497,13 @@ def emit_end_of_stream_markers(
         return
 
 
+    eos_event_time_ms = global_window_eos_event_time_ms(
+        last_event_time_ms,
+        cfg.eos_watermark_delay_seconds,
+    )
+
     eos_record: dict[str, Any] = {
-        "event_time": END_OF_STREAM_EVENT_TIME_MS,
+        "event_time": eos_event_time_ms,
         "year": 0,
         "month": 0,
         "day_of_month": 0,
@@ -506,9 +531,9 @@ def emit_end_of_stream_markers(
 
     logger.info(
         "End-of-stream markers sent to %d partition(s) (event_time=%s) — "
-        "final event-time windows will flush at the next checkpoint.",
+        "final event-time windows will flush at the next watermark.",
         len(partitions),
-        datetime.fromtimestamp(END_OF_STREAM_EVENT_TIME_MS / 1000, tz=timezone.utc),
+        datetime.fromtimestamp(eos_event_time_ms / 1000, tz=timezone.utc),
     )
 
 
@@ -586,6 +611,7 @@ def main() -> None:
                 producer=producer,
                 cfg=cfg,
                 avro_encoder=avro_encoder,
+                last_event_time_ms=int(df["event_time"].max()),
             )
     finally:
         producer.close()

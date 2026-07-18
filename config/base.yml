@@ -25,19 +25,14 @@ producer:
   flush_interval: 5000
   skip_if_topic_has_messages: false
 
-  # Iniezione di out-of-orderness: non modifica l'event_time, ritarda solo la consegna degli eventi.
   holdback_probability: 0.3
   holdback_delay: 120.0
   random_seed: 42
 
-  # uniform: delay casuale in [0, holdback_delay]
-  # exponential: molti delay piccoli, pochi delay grandi
   holdback_distribution: "exponential"
 
-  # Usato solo con holdback_distribution = "exponential".
   holdback_mean_seconds: 40.0
 
-  # A fine replay invia un marker con event_time nel futuro a ogni partizione: spinge il watermark oltre l'ultima finestra e drena i risultati finali
   emit_end_of_stream: true
   retries: 3
   linger_ms: 20
@@ -50,43 +45,28 @@ flink:
   checkpoint_interval_ms: 10000
   consumer_group: "flink-flight-analysis"
 
-  # Intervallo di emissione periodica del watermark.
-  # A 57600x, 200ms corrispondono a circa 3.2h di event-time
+
   auto_watermark_interval_ms: 200
 
-  # Durata massima del bundle degli operatori Python (python.fn-execution. bundle.time). I watermark vengono applicati dagli operatori Python solo al
-  # confine del bundle: col default (1000 ms ~ 16h event a 57600x) nessun record puo' mai risultare late nelle finestre DataStream di Q3. Gli
-  # esperimenti wm lo abbassano a 10 ms (~576 s event)
+
   python_bundle_time_ms: 1000
 
-  # Marca idle i subtasks source che non ricevono record. Serve quando il parallelismo Flink supera le partizioni Kafka: senza questo timeout i
-  # subtasks senza partizione possono bloccare il watermark globale e impedire la chiusura delle finestre event-time
+
   source_idle_timeout_ms: 5000
 
 
-  # Meccanismo di checkpointing di Flink: ogni checkpoint_interval_ms Flink esegue uno snapshot coerente (barrier-aligned) dello stato di TUTTI gli
-  # operatori + degli offset Kafka. In caso di guasto (crash di un operatore o dell'intero TaskManager) la restart strategy riavvia il job e ne ripristina
-  # lo stato dall'ultimo checkpoint completato; la sorgente Kafka riparte dagli offset salvati -> nessuna perdita ne duplicazione nei risultati.
   checkpointing:
 
     mode: "EXACTLY_ONCE"
-    # Pausa minima tra la fine di un checkpoint e l'inizio del successivo
     min_pause_ms: 5000
-    # Un checkpoint che supera questo tempo viene abortito (non fa fallire il job)
     timeout_ms: 60000
-    # Checkpoint concorrenti: 1 e' obbligatorio con EXACTLY_ONCE allineato
     max_concurrent: 1
-    # Fallimenti di checkpoint consecutivi tollerati prima di far fallire il job
     tolerable_failures: 3
-    # RETAIN_ON_CANCELLATION: conserva l'ultimo checkpoint su disco anche dopo
-    # cancellazione/guasto, cosi' e' riutilizzabile per il recovery manuale
     externalized: true
 
-  # Strategia di riavvio applicata a TUTTI gli operatori in caso di guasto
-  # Senza di essa il job muore invece di ripristinarsi dal checkpoint
   restart:
-    attempts: 10          # tentativi di riavvio prima di dichiarare fallito il job
-    delay_ms: 10000       # attesa tra un tentativo e il successivo (>= riavvio TaskManager)
+    attempts: 10
+    delay_ms: 10000
 
 spark:
   consumer_group: "spark-flight-analysis"
@@ -102,23 +82,17 @@ q1:
   watermark_delay_seconds: 180
 
 q2:
-  # Finestra Q2 da eseguire.
+  # Finestra Q2 da eseguire
   # Specifica: 1h, 6h, global, all
   window: "all"
-  # Ritardo massimo ammesso per eventi in ritardo (event time).
+
   watermark_delay_seconds: 180
-  # Passo (event-time) tra gli snapshot della GlobalWindow "dall'inizio dataset"
-  # (trigger continuo event-time). 2700000 ms = 45 minuti del dataset.
-  cumulative_snapshot_event_step_ms: 2700000
 
 q3:
 
   window: "all"
 
   watermark_delay_seconds: 180
-  # 54000000 ms = 15 ore del dataset
-  cumulative_snapshot_event_step_ms: 54000000
-  # DDSketch: errore relativo massimo garantito sui percentili.
   sketch_alpha: 0.01
 
   spark_quantile_impl: "ddsketch"

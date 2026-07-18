@@ -20,9 +20,7 @@ from merge_utils import PROJECT_ROOT
 DEFAULT_FLINK_URL = "http://localhost:8081"
 DEFAULT_OUTPUT = PROJECT_ROOT / "Results" / "perf.csv"
 
-# Unified schema shared with the Spark writer in spark_runtime.py.
-# elapsed_ms = time spent on the SOLE query processing (see its computation in
-# main()); it deliberately excludes warmup and the post-drain sink-flush tail.
+
 PERF_HEADER = [
     "timestamp_utc", "engine", "implementation", "query", "experiment",
     "parallelism", "total_records", "active_seconds", "elapsed_ms",
@@ -30,7 +28,6 @@ PERF_HEADER = [
     "busy_pct_avg", "backpressure_pct_avg", "notes",
 ]
 
-# Standard task-scope metrics (no commas in the id -> fetchable in one call).
 RATE_OUT = "numRecordsOutPerSecond"
 COUNT_OUT = "numRecordsOut"
 COUNT_IN = "numRecordsIn"
@@ -38,14 +35,7 @@ BUSY = "busyTimeMsPerSecond"
 BACKPRESSURE = "backPressuredTimeMsPerSecond"
 LATENCY_RE = re.compile(r"latency_p(50|95|99)$")
 
-# Ingestion is measured at the Kafka SOURCE OPERATOR, not at the source *vertex*.
-# The source is chained (e.g. "Source: flights -> Calc -> LocalWindowAggregate"),
-# so the vertex-level numRecordsOut is the LAST chained operator's output (window
-# pre-aggregates): it undercounts ingestion AND scales with parallelism (one set
-# of partials per subtask), which fakes a linear throughput speed-up. The
-# operator-scoped "Source....numRecordsOut" counts events read from Kafka, is
-# invariant to parallelism, and matches how the Spark writer counts input rows,
-# so the two engines stay comparable in Results/perf.csv.
+
 SRC_COUNT_RE = re.compile(r"(?i)^Source.*\.numRecordsOut$")
 SRC_RATE_RE = re.compile(r"(?i)^Source.*\.numRecordsOutPerSecond$")
 
@@ -65,11 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-interval", type=float, default=2.0)
     parser.add_argument("--startup-timeout", type=float, default=120.0,
                         help="Give up if the source never emits within this window.")
-    # Flink exposes task metrics over REST only every
-    # metrics.fetcher.update-interval (10s by default), so the source counter
-    # reads "unchanged" for several samples inside one refresh window. End-of-
-    # stream is therefore declared on a wall-clock idle window comfortably above
-    # that interval, not on a raw count of unchanged samples.
+
     parser.add_argument("--idle-seconds", type=float, default=30.0,
                         help="Stop once the source count stays flat this many "
                              "seconds (must exceed Flink's metric fetch interval).")
@@ -86,13 +72,7 @@ def http_get_json(url: str, timeout: float = 10.0):
 
 
 def prepare_perf_output(path: Path, header: list[str]) -> bool:
-    """Return True if the CSV header must be written for `path`.
 
-    A perf.csv produced before the elapsed_ms column existed has a narrower
-    header; appending the new, wider rows under it would silently misalign every
-    column. When the on-disk header no longer matches, archive the old file and
-    start a fresh one so no data is lost and the new schema stays consistent.
-    """
     if not path.exists():
         return True
     try:
@@ -145,9 +125,6 @@ def main() -> None:
     experiment = args.experiment or "base"
     flink_url = args.flink_url.rstrip("/")
 
-    # Attende che un job sia RUNNING: i job PyFlink impiegano alcune decine di
-    # secondi a partire (setup worker Python), e il runner avvia questo tool
-    # subito dopo la submit.
     deadline = time.monotonic() + args.startup_timeout
     job = None
     while time.monotonic() < deadline:
@@ -174,12 +151,6 @@ def main() -> None:
     vertices = [(v["id"], v.get("name", ""), int(v.get("parallelism", 0))) for v in detail.get("vertices", [])]
     parallelism = args.parallelism or max((p for _, _, p in vertices), default=0)
 
-    # Cache the metric-id lists per vertex (they are stable for the job's life),
-    # and pre-select the latency gauges (present only if latency tracking is on).
-    # Flink registers the Kafka source operator metrics a few seconds AFTER the
-    # job turns RUNNING (when the reader starts), so a one-shot discovery at
-    # attach time can miss them and wrongly fall back to the vertex-level counter
-    # (the chained window pre-aggregate). Retry until they appear.
     latency_ids: dict[str, list[str]] = {}
     src_count_id: dict[str, str] = {}
     src_rate_id: dict[str, str] = {}
@@ -205,7 +176,7 @@ def main() -> None:
         print("WARNING: no source-operator metric found; falling back to "
               "vertex-level numRecordsOut.", file=sys.stderr)
 
-    samples: list[tuple[float, float, float, float, float]] = []  # t, src_out_total, src_rate, busy, bp
+    samples: list[tuple[float, float, float, float, float]] = []
     lat_p50: list[float] = []
     lat_p99: list[float] = []
 
@@ -224,7 +195,7 @@ def main() -> None:
 
         for vid, vname, _ in vertices:
             if use_source_operator:
-                # Ingestion from the Kafka source operator (parallelism-invariant).
+
                 cid = src_count_id.get(vid)
                 rid = src_rate_id.get(vid)
                 ids = [BUSY, BACKPRESSURE]
@@ -238,8 +209,7 @@ def main() -> None:
                 if rid:
                     src_rate = max(src_rate, float(m.get(rid, {}).get("sum", 0.0)))
             else:
-                # Fallback (non-Kafka source): vertex-level numRecordsOut with a
-                # heuristic on which vertex is the source.
+
                 m = fetch_metrics(flink_url, jid, vid, [COUNT_IN, COUNT_OUT, RATE_OUT, BUSY, BACKPRESSURE])
                 n_in = m.get(COUNT_IN, {}).get("sum", 0.0)
                 n_out = m.get(COUNT_OUT, {}).get("sum", 0.0)
@@ -267,14 +237,6 @@ def main() -> None:
         if seen_activity:
             samples.append((now, src_out_total, src_rate, busy_max, bp_max))
 
-        # End-of-stream detection. Flink refreshes task metrics over REST only
-        # every metrics.fetcher.update-interval (~10s default), so the source
-        # counter is flat for several samples inside one refresh window; a naive
-        # "unchanged since last sample" test therefore fires during PyFlink
-        # warmup, long before the replay is done. Instead we remember the wall-
-        # clock time the counter last advanced and stop only once it has stayed
-        # flat for idle_seconds (comfortably above the fetch interval) AND the
-        # job has been actively ingesting for at least min_active_seconds.
         if seen_activity and (src_out_total - last_total) >= 1.0:
             last_growth_t = now
         last_total = src_out_total
@@ -290,8 +252,6 @@ def main() -> None:
             print("ERROR: source never emitted within startup timeout.", file=sys.stderr)
             sys.exit(1)
 
-        # Abort on restart/failure: a flat source counter during recovery is not
-        # an end-of-stream signal and would produce a bogus perf.csv row.
         state = http_get_json(f"{flink_url}/jobs/{jid}").get("state")
         if state in {"RESTARTING", "FAILING", "FAILED", "CANCELLING", "CANCELED"}:
             print(
@@ -316,8 +276,8 @@ def main() -> None:
     total_records = max(last_total_v - first_total, last_total_v)
     thr_avg = total_records / active_seconds
     thr_max = max((s[2] for s in samples), default=0.0)
-    busy_avg = sum(s[3] for s in samples) / len(samples) / 10.0     # ms/s -> %
-    bp_avg = sum(s[4] for s in samples) / len(samples) / 10.0       # ms/s -> %
+    busy_avg = sum(s[3] for s in samples) / len(samples) / 10.0
+    bp_avg = sum(s[4] for s in samples) / len(samples) / 10.0
 
 
     elapsed_ms = round(max(last_growth_t - first_active_t, 0.0) * 1000.0, 1)

@@ -7,7 +7,11 @@ from dataclasses import asdict, dataclass
 from pyflink.common import Types, WatermarkStrategy
 from pyflink.common.time import Duration, Time
 from pyflink.datastream import OutputTag
-from pyflink.datastream.window import TumblingEventTimeWindows
+from pyflink.datastream.window import (
+    ContinuousEventTimeTrigger,
+    GlobalWindows,
+    TumblingEventTimeWindows,
+)
 from pyflink.table import DataTypes, Schema, StreamTableEnvironment
 
 from common.config import load_config
@@ -23,7 +27,7 @@ from q3_window_ops import (
     KAFKA_SINK_DDL,
     Q3_OUTPUT_TYPE,
     Q3AggregateFunction,
-    Q3CumulativeFunction,
+    Q3GlobalWindowFunction,
     Q3LateDropCounter,
     Q3WindowFunction,
     group_key,
@@ -35,7 +39,8 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 AIRLINES: frozenset[str] = frozenset({"AA", "DL", "UA", "WN"})
-Q3_WINDOW_CHOICES = ("1d", "7d", "global", "cumulative", "all")
+Q3_WINDOW_CHOICES = ("1d", "7d", "global", "all")
+FINAL_WINDOW_DRAIN_EVENT_TIME_MS = 7_258_118_400_000
 
 
 def hour_band(crs_dep_time: int) -> int:
@@ -48,24 +53,20 @@ class Q3Config(FlinkRuntimeConfig):
     results_path_1d: str
     results_path_7d: str
     results_path_global: str
-    results_path_cumulative: str
     window: str
     watermark_delay_seconds: int
-    cumulative_snapshot_event_step_ms: int
     sketch_alpha: float
 
     influx_enabled: bool
     influx_topic_1d: str
     influx_topic_7d: str
     influx_topic_global: str
-    influx_topic_cumulative: str
 
     timescale_enabled: bool
     timescale_url: str
     timescale_table_1d: str
     timescale_table_7d: str
     timescale_table_global: str
-    timescale_table_cumulative: str
     timescale_username: str
     timescale_password: str
 
@@ -101,24 +102,18 @@ def load_q3_config() -> Q3Config:
         results_path_1d=cfg["paths"]["q3_results_path_1d"],
         results_path_7d=cfg["paths"]["q3_results_path_7d"],
         results_path_global=cfg["paths"]["q3_results_path_global"],
-        results_path_cumulative=cfg["paths"]["q3_results_path_cumulative"],
         window=selected_q3_window(q3_cfg.get("window", "all")),
         watermark_delay_seconds=int(q3_cfg["watermark_delay_seconds"]),
-        cumulative_snapshot_event_step_ms=int(
-            q3_cfg.get("cumulative_snapshot_event_step_ms", 2_700_000)
-        ),
         sketch_alpha=float(q3_cfg.get("sketch_alpha", 0.01)),
         influx_enabled=bool(influx.get("enabled", False)),
         influx_topic_1d=str(q3_influx.get("topic_1d", "q3_results_1d")),
         influx_topic_7d=str(q3_influx.get("topic_7d", "q3_results_7d")),
         influx_topic_global=str(q3_influx.get("topic_global", "q3_results_global")),
-        influx_topic_cumulative=str(q3_influx.get("topic_cumulative", "q3_results_cumulative")),
         timescale_enabled=bool(timescale.get("enabled", False)),
         timescale_url=str(timescale.get("url", "")),
         timescale_table_1d=str(q3_timescale.get("table_1d", "q3_results_1d")),
         timescale_table_7d=str(q3_timescale.get("table_7d", "q3_results_7d")),
         timescale_table_global=str(q3_timescale.get("table_global", "q3_results_global")),
-        timescale_table_cumulative=str(q3_timescale.get("table_cumulative", "q3_results_cumulative")),
         timescale_username=str(timescale.get("username", "")),
         timescale_password=str(timescale.get("password", "")),
     )
@@ -148,6 +143,13 @@ def register_q3_flights_source(t_env: StreamTableEnvironment, cfg: Q3Config) -> 
 
 class FlightTimestampAssigner:
     def extract_timestamp(self, value, record_timestamp: int) -> int:
+        if value[1] == "__EOS__":
+            return FINAL_WINDOW_DRAIN_EVENT_TIME_MS
+        return value[0]
+
+
+class GlobalFlightTimestampAssigner:
+    def extract_timestamp(self, value, record_timestamp: int) -> int:
         return value[0]
 
 
@@ -165,41 +167,24 @@ def enabled_q3_windows(
     cfg: Q3Config,
 ) -> list[tuple[str, TumblingEventTimeWindows, str, str, str]]:
     windows = [
-        # Spec Q3 windows: 1 day, 7 days, and global.
+        # Independent event-time windows from the specification.
         ("1d", TumblingEventTimeWindows.of(Time.days(1)),
          cfg.results_path_1d, cfg.influx_topic_1d, cfg.timescale_table_1d),
         # Offset 6 days aligns weekly buckets to 2025-01-01.
         ("7d", TumblingEventTimeWindows.of(Time.days(7), Time.days(6)),
          cfg.results_path_7d, cfg.influx_topic_7d, cfg.timescale_table_7d),
-        # Offset 14 days aligns the 365-day bucket to 2025-01-01.
-        ("global", TumblingEventTimeWindows.of(Time.days(365), Time.days(14)),
-         cfg.results_path_global, cfg.influx_topic_global, cfg.timescale_table_global),
     ]
     if cfg.window == "all":
         return windows
-    if cfg.window == "cumulative":
-        return []
     return [window for window in windows if window[0] == cfg.window]
 
 
-def cumulative_q3_enabled(cfg: Q3Config) -> bool:
-    return cfg.window in {"all", "cumulative"}
+def global_window_enabled(cfg: Q3Config) -> bool:
+    return cfg.window in {"all", "global"}
 
 
 def _project_q3_event(value):
     return (value[0], value[1], hour_band(value[2]), float(value[3]))
-
-
-def _project_q3_cumulative_event(value):
-    return (
-        value[0],
-        value[1],
-        hour_band(value[2] or 0),
-        value[3],
-        value[4],
-        value[5],
-    )
-
 
 
 def build_window_pipeline(
@@ -305,29 +290,28 @@ def build_window_pipeline(
 
 
 
-def build_cumulative_pipeline(
-    decoded_ds,
+def build_global_window_pipeline(
+    keyed_stream,
     t_env: StreamTableEnvironment,
     stmt_set,
     cfg: Q3Config,
 ) -> None:
-    label = "cumulative"
+    label = "global"
 
     result_ds = (
-        decoded_ds
-        .map(_project_q3_cumulative_event, output_type=Types.PICKLED_BYTE_ARRAY())
-        .key_by(lambda _: "q3-cumulative", key_type=Types.STRING())
-        .process(
-            Q3CumulativeFunction(
-                alpha=cfg.sketch_alpha,
-                snapshot_event_step_ms=cfg.cumulative_snapshot_event_step_ms,
-            ),
+        keyed_stream
+        .window(GlobalWindows.create())
+        .trigger(ContinuousEventTimeTrigger.of(Time.days(1)))
+        .aggregate(
+            Q3AggregateFunction(cfg.sketch_alpha),
+            window_function=Q3GlobalWindowFunction(),
+            accumulator_type=Types.PICKLED_BYTE_ARRAY(),
             output_type=Q3_OUTPUT_TYPE,
         )
-        .name("Q3CumulativeDDSketch")
+        .name("Q3GlobalWindow")
     )
 
-    view = "q3_cumulative"
+    view = "q3_global"
     table = t_env.from_data_stream(
         result_ds,
         Schema.new_builder()
@@ -346,15 +330,15 @@ def build_cumulative_pipeline(
     t_env.create_temporary_view(view, table)
 
     csv_sink = f"q3_csv_{label}"
-    t_env.execute_sql(CSV_SINK_DDL.format(name=csv_sink, path=cfg.results_path_cumulative))
+    t_env.execute_sql(CSV_SINK_DDL.format(name=csv_sink, path=cfg.results_path_global))
     stmt_set.add_insert_sql(f"INSERT INTO {csv_sink} SELECT * FROM {view}")
-    logger.info("Q3 [%s] | CSV sink -> %s", label, cfg.results_path_cumulative)
+    logger.info("Q3 [%s] | GlobalWindow CSV sink -> %s", label, cfg.results_path_global)
 
     if cfg.influx_enabled:
         kafka_sink = f"q3_kafka_{label}"
         t_env.execute_sql(KAFKA_SINK_DDL.format(
             name=kafka_sink,
-            topic=cfg.influx_topic_cumulative,
+            topic=cfg.influx_topic_global,
             bootstrap=cfg.kafka_bootstrap,
         ))
         stmt_set.add_insert_sql(f"""
@@ -363,19 +347,19 @@ def build_cumulative_pipeline(
                    delay_min, p25, p50, p75, p90, delay_max
             FROM {view}
         """)
-        logger.info("Q3 [%s] | InfluxDB sink -> Kafka topic '%s'", label, cfg.influx_topic_cumulative)
+        logger.info("Q3 [%s] | InfluxDB sink -> Kafka topic '%s'", label, cfg.influx_topic_global)
 
     if cfg.timescale_enabled:
         jdbc_sink = f"q3_jdbc_{label}"
         t_env.execute_sql(JDBC_SINK_DDL.format(
             name=jdbc_sink,
             url=cfg.timescale_url,
-            table=cfg.timescale_table_cumulative,
+            table=cfg.timescale_table_global,
             username=cfg.timescale_username,
             password=cfg.timescale_password,
         ))
         stmt_set.add_insert_sql(f"INSERT INTO {jdbc_sink} SELECT * FROM {view}")
-        logger.info("Q3 [%s] | TimescaleDB sink -> table '%s'", label, cfg.timescale_table_cumulative)
+        logger.info("Q3 [%s] | TimescaleDB sink -> table '%s'", label, cfg.timescale_table_global)
 
 
 def main() -> None:
@@ -398,14 +382,23 @@ def main() -> None:
         cfg.schema_registry_subject,
     )
 
-    decoded_ds = t_env.to_data_stream(t_env.from_path("q3_flights_source"))
+    raw_decoded_ds = t_env.to_data_stream(t_env.from_path("q3_flights_source"))
 
     watermark_strategy = (
         WatermarkStrategy
         .for_bounded_out_of_orderness(Duration.of_seconds(cfg.watermark_delay_seconds))
         .with_timestamp_assigner(FlightTimestampAssigner())
     )
-    decoded_ds = decoded_ds.assign_timestamps_and_watermarks(watermark_strategy)
+    decoded_ds = raw_decoded_ds.assign_timestamps_and_watermarks(watermark_strategy)
+
+    global_watermark_strategy = (
+        WatermarkStrategy
+        .for_bounded_out_of_orderness(Duration.of_seconds(cfg.watermark_delay_seconds))
+        .with_timestamp_assigner(GlobalFlightTimestampAssigner())
+    )
+    global_decoded_ds = raw_decoded_ds.assign_timestamps_and_watermarks(
+        global_watermark_strategy
+    )
 
     flights_ds = (
         decoded_ds
@@ -420,6 +413,17 @@ def main() -> None:
     keyed_stream = flights_ds.key_by(
         lambda v: group_key(v[1], v[2]),
         key_type=Types.STRING(),
+    )
+
+    global_keyed_stream = (
+        global_decoded_ds
+        .filter(_is_q3_relevant)
+        .map(_project_q3_event, output_type=Types.PICKLED_BYTE_ARRAY())
+        .name("Q3GlobalEvents[python]")
+        .key_by(
+            lambda v: group_key(v[1], v[2]),
+            key_type=Types.STRING(),
+        )
     )
 
 
@@ -440,9 +444,9 @@ def main() -> None:
             cfg=cfg,
         )
 
-    if cumulative_q3_enabled(cfg):
-        build_cumulative_pipeline(
-            decoded_ds=decoded_ds,
+    if global_window_enabled(cfg):
+        build_global_window_pipeline(
+            keyed_stream=global_keyed_stream,
             t_env=t_env,
             stmt_set=stmt_set,
             cfg=cfg,
@@ -451,7 +455,7 @@ def main() -> None:
     if not (cfg.influx_enabled or cfg.timescale_enabled):
         logger.info("Q3 | Dashboard sinks disabled (CSV-only run).")
 
-    pipeline_count = len(windows) + (1 if cumulative_q3_enabled(cfg) else 0)
+    pipeline_count = len(windows) + (1 if global_window_enabled(cfg) else 0)
     logger.info("Q3 | Submitting job (%d enabled pipeline(s)) ...", pipeline_count)
     stmt_set.execute()
     logger.info("Q3 | Job submitted successfully.")

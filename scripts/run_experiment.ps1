@@ -63,6 +63,7 @@ OPZIONI UTILI
     -NoCleanResults        Non cancella i part-file precedenti.
     -NoCleanDashboard      Non svuota InfluxDB/TimescaleDB prima della run.
     -NoMerge               Non crea il CSV finale.
+    -PostProducerDrainSeconds Attesa prudenziale dopo il producer, prima di merge/metriche.
     -MergeTimeoutSeconds   Timeout per attendere part-file stabili. Default: 900.
     -SparkTimeoutSeconds   Timeout per attendere la fine di Spark. Default: 1200.
     -KeepFlinkJob          Non cancella il job Flink a fine run.
@@ -97,11 +98,7 @@ param(
 
     [switch]$NoPreprocess,
     [switch]$NoResetTopic,
-    # Skip the producer entirely: the job runs against a Kafka topic that must
-    # already be pre-loaded (backlog). Turns the run COMPUTE-BOUND — the job
-    # drains an existing backlog at engine speed instead of consuming at the
-    # producer's pace — so elapsed_ms reflects pure processing/drain time. Used
-    # by run_partition_matrix.ps1 (pre-load once, then measure the drain).
+
     [switch]$NoProducer,
     [switch]$NoCleanResults,
     [switch]$NoMerge,
@@ -118,6 +115,8 @@ param(
 
     [ValidateSet("", "AUTO", "ONE_PHASE", "TWO_PHASE")]
     [string]$FlinkAggPhaseStrategy = "",
+
+    [int]$PostProducerDrainSeconds = 0,
 
     [int]$MergeTimeoutSeconds = 900,
 
@@ -924,6 +923,10 @@ if ($SparkTimeoutSeconds -le 0) {
     throw "SparkTimeoutSeconds deve essere maggiore di zero."
 }
 
+if ($PostProducerDrainSeconds -lt 0) {
+    throw "PostProducerDrainSeconds deve essere 0 oppure un intero positivo."
+}
+
 if ($FlinkParallelismOverride -lt 0) {
     throw "FlinkParallelismOverride deve essere 0 oppure un intero positivo."
 }
@@ -1149,6 +1152,16 @@ else {
             -e CONFIG_PATH=$SubmitCfgContainer `
             producer
     }
+}
+
+if (
+    $Engine -eq "flink" `
+    -and -not $NoProducer `
+    -and $PostProducerDrainSeconds -gt 0
+) {
+    Write-Host ""
+    Write-Host "Waiting $PostProducerDrainSeconds s after producer completion before merge and late-drop collection..."
+    Start-Sleep -Seconds $PostProducerDrainSeconds
 }
 
 if ($null -ne $PerfProcess) {
