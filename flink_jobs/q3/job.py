@@ -4,8 +4,8 @@ from __future__ import annotations
 import sys
 from dataclasses import asdict, dataclass
 
-from pyflink.common import Types, WatermarkStrategy
-from pyflink.common.time import Duration, Time
+from pyflink.common import Types
+from pyflink.common.time import Time
 from pyflink.datastream import OutputTag
 from pyflink.datastream.window import (
     ContinuousEventTimeTrigger,
@@ -119,20 +119,50 @@ def load_q3_config() -> Q3Config:
     )
 
 
-def register_q3_flights_source(t_env: StreamTableEnvironment, cfg: Q3Config) -> None:
+def sql_watermark_interval(seconds: int) -> str:
+    if seconds < 0:
+        raise ValueError("watermark_delay_seconds must be >= 0")
+    if seconds == 0:
+        return "INTERVAL '0' SECOND"
+    if seconds % 3600 == 0:
+        return f"INTERVAL '{seconds // 3600}' HOUR"
+    if seconds % 60 == 0:
+        return f"INTERVAL '{seconds // 60}' MINUTE"
+    return f"INTERVAL '{seconds}' SECOND"
+
+
+def register_q3_flights_source(
+    t_env: StreamTableEnvironment,
+    cfg: Q3Config,
+    *,
+    table_name: str,
+    consumer_group: str,
+    bounded_windows: bool,
+) -> None:
+    watermark_interval = sql_watermark_interval(cfg.watermark_delay_seconds)
+    if bounded_windows:
+        rowtime_expression = (
+            "CASE WHEN airline = '__EOS__' "
+            f"THEN {FINAL_WINDOW_DRAIN_EVENT_TIME_MS} ELSE event_time END"
+        )
+    else:
+        rowtime_expression = "event_time"
+
     t_env.execute_sql(f"""
-        CREATE TABLE q3_flights_source (
+        CREATE TABLE {table_name} (
             event_time   BIGINT,
             airline      STRING,
             crs_dep_time INT,
             dep_delay    DOUBLE,
             cancelled    DOUBLE,
-            diverted     DOUBLE
+            diverted     DOUBLE,
+            rowtime      AS TO_TIMESTAMP_LTZ({rowtime_expression}, 3),
+            WATERMARK FOR rowtime AS rowtime - {watermark_interval}
         ) WITH (
             'connector'                              = 'kafka',
             'topic'                                  = '{cfg.kafka_topic}',
             'properties.bootstrap.servers'           = '{cfg.kafka_bootstrap}',
-            'properties.group.id'                    = '{cfg.kafka_consumer_group}',
+            'properties.group.id'                    = '{consumer_group}',
             'scan.startup.mode'                      = 'earliest-offset',
             'format'                                 = 'avro-confluent',
             'avro-confluent.schema-registry.url'     = '{cfg.schema_registry_url}',
@@ -141,20 +171,12 @@ def register_q3_flights_source(t_env: StreamTableEnvironment, cfg: Q3Config) -> 
     """)
 
 
-class FlightTimestampAssigner:
-    def extract_timestamp(self, value, record_timestamp: int) -> int:
-        if value[1] == "__EOS__":
-            return FINAL_WINDOW_DRAIN_EVENT_TIME_MS
-        return value[0]
-
-
-class GlobalFlightTimestampAssigner:
-    def extract_timestamp(self, value, record_timestamp: int) -> int:
-        return value[0]
-
-
 def _is_q3_relevant(value) -> bool:
-    _, airline, _, dep_delay, cancelled, diverted = value
+
+    airline = value[1]
+    dep_delay = value[3]
+    cancelled = value[4]
+    diverted = value[5]
     return (
         airline in AIRLINES
         and (cancelled or 0.0) < 0.5
@@ -167,10 +189,8 @@ def enabled_q3_windows(
     cfg: Q3Config,
 ) -> list[tuple[str, TumblingEventTimeWindows, str, str, str]]:
     windows = [
-        # Independent event-time windows from the specification.
         ("1d", TumblingEventTimeWindows.of(Time.days(1)),
          cfg.results_path_1d, cfg.influx_topic_1d, cfg.timescale_table_1d),
-        # Offset 6 days aligns weekly buckets to 2025-01-01.
         ("7d", TumblingEventTimeWindows.of(Time.days(7), Time.days(6)),
          cfg.results_path_7d, cfg.influx_topic_7d, cfg.timescale_table_7d),
     ]
@@ -211,16 +231,11 @@ def build_window_pipeline(
             accumulator_type=Types.PICKLED_BYTE_ARRAY(),
             output_type=Q3_OUTPUT_TYPE,
         )
-        # Nome esplicito senza virgole: gli operatori window anonimi hanno un
-        # nome con virgole che rende numLateRecordsDropped non interrogabile
-        # via REST (scripts/report_late_drops.py).
+
         .name(f"Q3Window[{label}]")
     )
 
 
-    # Il branch del side output termina su un sink blackhole aggiunto allo
-    # StatementSet: senza un sink Table il ramo DataStream non verrebbe eseguito
-    # da stmt_set.execute(). Il conteggio avviene come side-effect nella map.
     late_ds = (
         result_ds
         .get_side_output(late_tag)
@@ -267,7 +282,6 @@ def build_window_pipeline(
             topic=influx_topic,
             bootstrap=cfg.kafka_bootstrap,
         ))
-        # hour → STRING: Telegraf usa solo stringhe come tag InfluxDB.
         stmt_set.add_insert_sql(f"""
             INSERT INTO {kafka_sink}
             SELECT ts, airline, CAST(`hour` AS STRING), num_flights,
@@ -375,59 +389,72 @@ def main() -> None:
     env = create_stream_execution_environment(cfg)
     t_env = StreamTableEnvironment.create(env)
 
-    register_q3_flights_source(t_env, cfg)
+    windows = enabled_q3_windows(cfg)
+    global_enabled = global_window_enabled(cfg)
+
+    keyed_stream = None
+    if windows:
+        bounded_source = "q3_bounded_flights_source"
+        bounded_group = (
+            f"{cfg.kafka_consumer_group}-bounded"
+            if global_enabled
+            else cfg.kafka_consumer_group
+        )
+        register_q3_flights_source(
+            t_env,
+            cfg,
+            table_name=bounded_source,
+            consumer_group=bounded_group,
+            bounded_windows=True,
+        )
+        bounded_decoded_ds = t_env.to_data_stream(t_env.from_path(bounded_source))
+        keyed_stream = (
+            bounded_decoded_ds
+            .filter(_is_q3_relevant)
+            .map(_project_q3_event, output_type=Types.PICKLED_BYTE_ARRAY())
+            .name("Q3Events[python]")
+            .key_by(
+                lambda v: group_key(v[1], v[2]),
+                key_type=Types.STRING(),
+            )
+        )
+
+    global_keyed_stream = None
+    if global_enabled:
+        global_source = "q3_global_flights_source"
+        global_group = (
+            f"{cfg.kafka_consumer_group}-global"
+            if windows
+            else cfg.kafka_consumer_group
+        )
+        register_q3_flights_source(
+            t_env,
+            cfg,
+            table_name=global_source,
+            consumer_group=global_group,
+            bounded_windows=False,
+        )
+        global_decoded_ds = t_env.to_data_stream(t_env.from_path(global_source))
+        global_keyed_stream = (
+            global_decoded_ds
+            .filter(_is_q3_relevant)
+            .map(_project_q3_event, output_type=Types.PICKLED_BYTE_ARRAY())
+            .name("Q3GlobalEvents[python]")
+            .key_by(
+                lambda v: group_key(v[1], v[2]),
+                key_type=Types.STRING(),
+            )
+        )
+
+    logger.info(
+        "Q3 | Source watermark: Kafka partition-aware (%s)",
+        "bounded + global" if windows and global_enabled else cfg.window,
+    )
     logger.info(
         "Q3 | Source format: avro-confluent via Schema Registry %s subject %s",
         cfg.schema_registry_url,
         cfg.schema_registry_subject,
     )
-
-    raw_decoded_ds = t_env.to_data_stream(t_env.from_path("q3_flights_source"))
-
-    watermark_strategy = (
-        WatermarkStrategy
-        .for_bounded_out_of_orderness(Duration.of_seconds(cfg.watermark_delay_seconds))
-        .with_timestamp_assigner(FlightTimestampAssigner())
-    )
-    decoded_ds = raw_decoded_ds.assign_timestamps_and_watermarks(watermark_strategy)
-
-    global_watermark_strategy = (
-        WatermarkStrategy
-        .for_bounded_out_of_orderness(Duration.of_seconds(cfg.watermark_delay_seconds))
-        .with_timestamp_assigner(GlobalFlightTimestampAssigner())
-    )
-    global_decoded_ds = raw_decoded_ds.assign_timestamps_and_watermarks(
-        global_watermark_strategy
-    )
-
-    flights_ds = (
-        decoded_ds
-        .filter(_is_q3_relevant)
-        .map(
-            _project_q3_event,
-            output_type=Types.PICKLED_BYTE_ARRAY(),
-        )
-        .name("Q3Events[python]")
-    )
-
-    keyed_stream = flights_ds.key_by(
-        lambda v: group_key(v[1], v[2]),
-        key_type=Types.STRING(),
-    )
-
-    global_keyed_stream = (
-        global_decoded_ds
-        .filter(_is_q3_relevant)
-        .map(_project_q3_event, output_type=Types.PICKLED_BYTE_ARRAY())
-        .name("Q3GlobalEvents[python]")
-        .key_by(
-            lambda v: group_key(v[1], v[2]),
-            key_type=Types.STRING(),
-        )
-    )
-
-
-    windows = enabled_q3_windows(cfg)
 
     stmt_set = t_env.create_statement_set()
 
@@ -444,7 +471,7 @@ def main() -> None:
             cfg=cfg,
         )
 
-    if global_window_enabled(cfg):
+    if global_enabled:
         build_global_window_pipeline(
             keyed_stream=global_keyed_stream,
             t_env=t_env,
@@ -455,7 +482,7 @@ def main() -> None:
     if not (cfg.influx_enabled or cfg.timescale_enabled):
         logger.info("Q3 | Dashboard sinks disabled (CSV-only run).")
 
-    pipeline_count = len(windows) + (1 if global_window_enabled(cfg) else 0)
+    pipeline_count = len(windows) + (1 if global_enabled else 0)
     logger.info("Q3 | Submitting job (%d enabled pipeline(s)) ...", pipeline_count)
     stmt_set.execute()
     logger.info("Q3 | Job submitted successfully.")

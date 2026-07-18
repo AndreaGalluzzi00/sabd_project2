@@ -50,6 +50,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--experiment", "--exp", "-e", dest="experiment", default=None,
                         help="Experiment name for the row (default: base).")
     parser.add_argument("--parallelism", type=int, default=0, help="Parallelism for the row (0 = read from job).")
+    parser.add_argument(
+        "--expected-records",
+        type=int,
+        default=0,
+        help=(
+            "Do not declare the Kafka source drained before its cumulative "
+            "output reaches this value (0 = rely on the idle heuristic only)."
+        ),
+    )
     parser.add_argument("--flink-url", default=DEFAULT_FLINK_URL)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--sample-interval", type=float, default=2.0)
@@ -63,6 +72,15 @@ def parse_args() -> argparse.Namespace:
                         help="Never stop before this much real ingestion; keeps "
                              "the PyFlink warmup plateau from ending the run.")
     parser.add_argument("--job-id", default=None, help="Force a specific job id.")
+    parser.add_argument(
+        "--elapsed-from-source-start",
+        action="store_true",
+        help=(
+            "Use the Flink source vertex start timestamp as elapsed-time origin. "
+            "Useful for a pre-loaded backlog that may start draining before the "
+            "monitor completes metric discovery."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -150,6 +168,15 @@ def main() -> None:
     detail = http_get_json(f"{flink_url}/jobs/{jid}")
     vertices = [(v["id"], v.get("name", ""), int(v.get("parallelism", 0))) for v in detail.get("vertices", [])]
     parallelism = args.parallelism or max((p for _, _, p in vertices), default=0)
+    source_start_ms = min(
+        (
+            int(v.get("start-time", 0))
+            for v in detail.get("vertices", [])
+            if "source" in v.get("name", "").lower()
+            and int(v.get("start-time", 0)) > 0
+        ),
+        default=0,
+    )
 
     latency_ids: dict[str, list[str]] = {}
     src_count_id: dict[str, str] = {}
@@ -233,6 +260,12 @@ def main() -> None:
         if src_out_total > 0.0 and not seen_activity:
             seen_activity = True
             first_active_t = now
+            if args.elapsed_from_source_start and source_start_ms > 0:
+                elapsed_before_first_sample = max(
+                    time.time() - source_start_ms / 1000.0,
+                    0.0,
+                )
+                first_active_t = now - elapsed_before_first_sample
             last_growth_t = now
         if seen_activity:
             samples.append((now, src_out_total, src_rate, busy_max, bp_max))
@@ -244,9 +277,18 @@ def main() -> None:
         if seen_activity:
             active_for = now - first_active_t
             flat_for = now - last_growth_t
-            if active_for >= args.min_active_seconds and flat_for >= args.idle_seconds:
+            expected_reached = (
+                args.expected_records <= 0
+                or src_out_total >= args.expected_records
+            )
+            if (
+                expected_reached
+                and active_for >= args.min_active_seconds
+                and flat_for >= args.idle_seconds
+            ):
                 print(f"Source drained: flat {flat_for:.0f}s after "
-                      f"{active_for:.0f}s of ingestion; stopping.")
+                      f"{active_for:.0f}s of ingestion; "
+                      f"records={src_out_total:.0f}; stopping.")
                 break
         if not seen_activity and (now - started) > args.startup_timeout:
             print("ERROR: source never emitted within startup timeout.", file=sys.stderr)
@@ -270,9 +312,9 @@ def main() -> None:
         sys.exit(1)
 
     active = [s for s in samples if s[2] > 0.0 or s[1] > 0.0]
-    first_t, first_total = active[0][0], active[0][1]
-    last_t, last_total_v = active[-1][0], active[-1][1]
-    active_seconds = max(last_t - first_t, 1e-6)
+    first_total = active[0][1]
+    last_total_v = active[-1][1]
+    active_seconds = max(last_growth_t - first_active_t, 1e-6)
     total_records = max(last_total_v - first_total, last_total_v)
     thr_avg = total_records / active_seconds
     thr_max = max((s[2] for s in samples), default=0.0)
@@ -285,7 +327,12 @@ def main() -> None:
     lat_avg = (sum(lat_p50) / len(lat_p50)) if lat_p50 else ""
     lat_max = (max(lat_p99) if lat_p99 else "")
     thr_note = "throughput=kafka source ingestion" if use_source_operator else "throughput=vertex numRecordsOut (fallback)"
-    notes = thr_note
+    elapsed_note = (
+        "elapsed_origin=source_vertex_start"
+        if args.elapsed_from_source_start and source_start_ms > 0
+        else "elapsed_origin=first_observed_activity"
+    )
+    notes = f"{thr_note}; {elapsed_note}"
 
     row = [
         datetime.now(timezone.utc).isoformat(timespec="seconds"),

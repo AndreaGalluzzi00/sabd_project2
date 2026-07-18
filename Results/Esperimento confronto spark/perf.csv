@@ -1,5 +1,4 @@
-timestamp_utc,engine,implementation,query,experiment,parallelism,total_records,active_seconds,elapsed_ms,throughput_rec_s_avg,throughput_rec_s_max,busy_pct_avg,backpressure_pct_avg,notes, impl
-2026-07-08T20:38:00+00:00,spark,structured,q1,p4_n4,4,2229457,8.0,6625.0,280082.5,280047.4,,,"spark local[4], trigger=5 seconds",
-2026-07-08T20:39:40+00:00,spark,structured,q2,p4_n4,4,2229457,13.2,11790.0,168859.9,168859.9,,,"spark local[4], trigger=5 seconds",
-2026-07-08T20:41:20+00:00,spark,structured,q3,p4_n4,4,2229457,10.7,9176.0,208828.9,208809.3,,,"spark local[4], trigger=5 seconds", PercentileApprox
-2026-07-08T21:57:31+00:00,spark,structured,q3,p4_n4,4,2229457,12.1,10563.0,184680.0,184680.0,,,"spark local[4], trigger=5 seconds", DDSketch
+timestamp_utc,engine,implementation,query,experiment,parallelism,total_records,active_seconds,elapsed_ms,throughput_rec_s_avg,throughput_rec_s_max,busy_pct_avg,backpressure_pct_avg,notes
+2026-07-18T19:55:38+00:00,spark,structured,q1,k4_p4_tm2,4,2229457,9.4,8154.0,236924.2,236924.2,,,"spark spark://spark-master:7077, trigger=5 seconds"
+2026-07-18T19:58:00+00:00,spark,structured,q2,k4_p4_tm2,4,2229457,14.1,12753.0,158297.1,158285.9,,,"spark spark://spark-master:7077, trigger=5 seconds"
+2026-07-18T19:59:56+00:00,spark,structured,q3,k4_p4_tm2,4,2229457,11.7,10399.0,189886.5,189870.3,,,"spark spark://spark-master:7077, trigger=5 seconds"

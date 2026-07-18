@@ -1,22 +1,24 @@
 <#
 run_spark_backlog_p4n4.ps1
 
-Runs Spark Structured Streaming on the same p4_n4 backlog precondition used by
-the Flink partition-matrix comparison:
-  1. start Kafka/Kafka2 and Schema Registry;
+Runs Spark Structured Streaming with the same fixed-backlog protocol used by
+the Flink k4_p4_tm2 comparison (Kafka=4, total parallelism=4, two workers):
+  1. start Kafka/Kafka2, Schema Registry, Spark master and both Spark workers;
   2. recreate flights with 4 partitions and replication factor 2;
-  3. preload the topic once with config/experiments/p4_n4.yml;
-  4. run Spark q1/q2/q3 with -NoResetTopic so every query reads the same backlog.
+  3. preload the topic once with config/experiments/k4_p4_tm2.yml;
+  4. run Spark q1/q2/q3 with -NoResetTopic and -NoProducer so every query
+     drains the same preloaded backlog without a concurrent producer.
 
 Usage, from the project root:
+  powershell -ExecutionPolicy Bypass -File .\scripts\run_spark_backlog_p4n4.ps1 -Merge
   powershell -ExecutionPolicy Bypass -File .\scripts\run_spark_backlog_p4n4.ps1
-  powershell -ExecutionPolicy Bypass -File .\scripts\run_spark_backlog_p4n4.ps1 -Queries q1,q3
+  powershell -ExecutionPolicy Bypass -File .\scripts\run_spark_backlog_p4n4.ps1 -Queries q1,q3 -Merge
 #>
 param(
     [ValidateSet("q1", "q2", "q3")]
     [string[]]$Queries = @("q1", "q2", "q3"),
 
-    [string]$Experiment = "p4_n4",
+    [string]$Experiment = "k4_p4_tm2",
 
     [int]$Partitions = 4,
 
@@ -124,16 +126,20 @@ function Assert-NoRunningOneShotContainers {
 
 function Start-SparkComparisonInfrastructure {
     Write-Host ""
-    Write-Host "Starting Kafka, Schema Registry and Spark prerequisites..."
+    Write-Host "Starting Kafka, Schema Registry and Spark 2x2 cluster..."
 
     Invoke-Checked {
-        docker compose up -d `
-            kafka kafka2 schema-registry schema-init
+        docker compose --profile manual up -d --build `
+            kafka kafka2 schema-registry schema-init `
+            spark-master spark-worker spark-worker-2
     }
 
     Wait-ContainerHealthy -Name "kafka"
     Wait-ContainerHealthy -Name "kafka2"
     Wait-ContainerHealthy -Name "schema-registry"
+    Wait-ContainerHealthy -Name "spark-master"
+    Wait-ContainerHealthy -Name "spark-worker"
+    Wait-ContainerHealthy -Name "spark-worker-2"
     Wait-KafkaApi
 }
 
@@ -191,6 +197,7 @@ function Run-SparkQuery {
         Query = $Query
         Engine = "spark"
         NoResetTopic = $true
+        NoProducer = $true
         NoPreprocess = $true
     }
 

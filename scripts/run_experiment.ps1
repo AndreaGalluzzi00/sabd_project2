@@ -63,7 +63,7 @@ OPZIONI UTILI
     -NoCleanResults        Non cancella i part-file precedenti.
     -NoCleanDashboard      Non svuota InfluxDB/TimescaleDB prima della run.
     -NoMerge               Non crea il CSV finale.
-    -PostProducerDrainSeconds Attesa prudenziale dopo il producer, prima di merge/metriche.
+    -PostProducerDrainSeconds Attesa prudenziale dopo il drain, prima del merge.
     -MergeTimeoutSeconds   Timeout per attendere part-file stabili. Default: 900.
     -SparkTimeoutSeconds   Timeout per attendere la fine di Spark. Default: 1200.
     -KeepFlinkJob          Non cancella il job Flink a fine run.
@@ -117,6 +117,8 @@ param(
     [string]$FlinkAggPhaseStrategy = "",
 
     [int]$PostProducerDrainSeconds = 0,
+
+    [int64]$ExpectedSourceRecords = 0,
 
     [int]$MergeTimeoutSeconds = 900,
 
@@ -306,7 +308,10 @@ function Start-DashboardStack {
         [bool]$EnableInflux,
 
         [Parameter(Mandatory = $true)]
-        [bool]$EnableTimescale
+        [bool]$EnableTimescale,
+
+        [Parameter(Mandatory = $true)]
+        [pscustomobject]$FlinkDeployment
     )
 
     $ProfileArgs = Get-DashboardProfileArgs `
@@ -317,7 +322,9 @@ function Start-DashboardStack {
     Write-Host "Starting infrastructure/dashboard profiles..."
     Write-Host ("Profiles: " + ($ProfileArgs -join " "))
 
-    Start-ExperimentInfrastructure -Engine "flink"
+    Start-ExperimentInfrastructure `
+        -Engine "flink" `
+        -FlinkDeployment $FlinkDeployment
 
     $DashboardServices = @()
 
@@ -343,18 +350,42 @@ function Start-ExperimentInfrastructure {
     param(
         [Parameter(Mandatory = $true)]
         [ValidateSet("flink", "spark")]
-        [string]$Engine
+        [string]$Engine,
+
+        [pscustomobject]$FlinkDeployment
     )
 
     Write-Host ""
 
     if ($Engine -eq "flink") {
+        if ($null -eq $FlinkDeployment) {
+            throw "FlinkDeployment e' obbligatorio quando Engine=flink."
+        }
+
         Write-Host "Starting Kafka, Schema Registry and Flink infrastructure..."
 
-        Invoke-Checked {
-            docker compose up -d `
-                kafka kafka2 schema-registry schema-init flink-jobmanager flink-taskmanager
+        $PreviousSlots = $env:FLINK_TASKMANAGER_SLOTS
+        try {
+            $env:FLINK_TASKMANAGER_SLOTS = [string]$FlinkDeployment.slots_per_taskmanager
+
+            Invoke-Checked {
+                docker compose up -d `
+                    --scale "flink-taskmanager=$($FlinkDeployment.taskmanagers)" `
+                    kafka kafka2 schema-registry schema-init flink-jobmanager flink-taskmanager
+            }
         }
+        finally {
+            if ($null -eq $PreviousSlots) {
+                Remove-Item Env:\FLINK_TASKMANAGER_SLOTS -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:FLINK_TASKMANAGER_SLOTS = $PreviousSlots
+            }
+        }
+
+        Wait-FlinkTaskManagerCapacity `
+            -ExpectedTaskManagers ([int]$FlinkDeployment.taskmanagers) `
+            -ExpectedSlotsPerTaskManager ([int]$FlinkDeployment.slots_per_taskmanager)
 
         return
     }
@@ -921,8 +952,148 @@ if ($SparkTimeoutSeconds -le 0) {
     throw "SparkTimeoutSeconds deve essere maggiore di zero."
 }
 
+function Get-FlinkDeploymentConfig {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ConfigPathHost
+    )
+
+    $PreviousConfigPath = $env:CONFIG_PATH
+
+    try {
+        $env:CONFIG_PATH = $ConfigPathHost
+        $PythonCode = @'
+import json
+from common.config import load_config
+
+cfg = load_config()
+deployment = cfg.get('deployment', {}).get('flink', {})
+print(json.dumps({
+    'taskmanagers': int(deployment.get('taskmanagers', 1)),
+    'slots_per_taskmanager': int(deployment.get('slots_per_taskmanager', 8)),
+    'parallelism': int(cfg['flink']['parallelism']),
+}))
+'@
+        $RawConfig = python -c $PythonCode
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to read Flink deployment from config: $ConfigPathHost"
+        }
+
+        $Deployment = $RawConfig | ConvertFrom-Json
+    }
+    finally {
+        if ($null -eq $PreviousConfigPath) {
+            Remove-Item Env:\CONFIG_PATH -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:CONFIG_PATH = $PreviousConfigPath
+        }
+    }
+
+    if ($Deployment.taskmanagers -le 0) {
+        throw "deployment.flink.taskmanagers deve essere maggiore di zero."
+    }
+
+    if ($Deployment.slots_per_taskmanager -le 0) {
+        throw "deployment.flink.slots_per_taskmanager deve essere maggiore di zero."
+    }
+
+    $Capacity = [int]$Deployment.taskmanagers * [int]$Deployment.slots_per_taskmanager
+    if ($Capacity -lt [int]$Deployment.parallelism) {
+        throw (
+            "Capacita' Flink insufficiente: $($Deployment.taskmanagers) TaskManager x " +
+            "$($Deployment.slots_per_taskmanager) slot = $Capacity slot, " +
+            "ma parallelism=$($Deployment.parallelism)."
+        )
+    }
+
+    return $Deployment
+}
+
+function Wait-FlinkTaskManagerCapacity {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ExpectedTaskManagers,
+
+        [Parameter(Mandatory = $true)]
+        [int]$ExpectedSlotsPerTaskManager,
+
+        [int]$TimeoutSeconds = 120
+    )
+
+    $ExpectedTotalSlots = $ExpectedTaskManagers * $ExpectedSlotsPerTaskManager
+    $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+
+    while ((Get-Date) -lt $Deadline) {
+        try {
+            $Overview = Invoke-RestMethod `
+                -Uri "http://localhost:8081/taskmanagers" `
+                -Method Get `
+                -TimeoutSec 10
+            $TaskManagers = @($Overview.taskmanagers)
+            $Registered = $TaskManagers.Count
+            $TotalSlots = [int](
+                ($TaskManagers | Measure-Object -Property slotsNumber -Sum).Sum
+            )
+
+            $AllReplicaSlotsMatch = @(
+                $TaskManagers |
+                    Where-Object { [int]$_.slotsNumber -ne $ExpectedSlotsPerTaskManager }
+            ).Count -eq 0
+
+            if (
+                $Registered -eq $ExpectedTaskManagers `
+                -and $TotalSlots -eq $ExpectedTotalSlots `
+                -and $AllReplicaSlotsMatch
+            ) {
+                Write-Host (
+                    "Flink capacity ready: $Registered TaskManager, " +
+                    "$ExpectedSlotsPerTaskManager slot/TM, $TotalSlots slot totali."
+                )
+                return
+            }
+        }
+        catch {
+            # JobManager/TM ancora in avvio: riprova fino al timeout.
+        }
+
+        Start-Sleep -Seconds 2
+    }
+
+    throw (
+        "Flink capacity non pronta entro ${TimeoutSeconds}s: attesi " +
+        "$ExpectedTaskManagers TaskManager x $ExpectedSlotsPerTaskManager slot."
+    )
+}
+
+function Wait-SingleRunningFlinkJobId {
+    param([int]$TimeoutSeconds = 180)
+
+    $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $Deadline) {
+        $JobIds = @(Get-RunningFlinkJobIds)
+
+        if ($JobIds.Count -eq 1) {
+            return $JobIds[0]
+        }
+
+        if ($JobIds.Count -gt 1) {
+            throw "Attesi un solo job Flink RUNNING, trovati: $($JobIds -join ', ')."
+        }
+
+        Start-Sleep -Seconds 2
+    }
+
+    throw "Nessun job Flink RUNNING entro ${TimeoutSeconds}s dal submit."
+}
+
 if ($PostProducerDrainSeconds -lt 0) {
     throw "PostProducerDrainSeconds deve essere 0 oppure un intero positivo."
+}
+
+if ($ExpectedSourceRecords -lt 0) {
+    throw "ExpectedSourceRecords deve essere 0 oppure un intero positivo."
 }
 
 if ($FlinkParallelismOverride -lt 0) {
@@ -983,6 +1154,12 @@ $RuntimeCfg = New-ExperimentRuntimeConfig `
 
 $SubmitCfgHost = $RuntimeCfg.HostPath
 $SubmitCfgContainer = $RuntimeCfg.ContainerPath
+$FlinkDeployment = if ($Engine -eq "flink") {
+    Get-FlinkDeploymentConfig -ConfigPathHost $SubmitCfgHost
+}
+else {
+    $null
+}
 $RuntimeConsumerGroup = if ($Engine -eq "spark") {
     $RuntimeCfg.SparkConsumerGroup
 }
@@ -993,10 +1170,6 @@ else {
 $ResultsHostPaths = Get-ResultsHostPaths `
     -ConfigPathHost $CfgHost `
     -PathKeys $RunSpec.PathKeys
-
-Initialize-ResultsDirectories `
-    -ResultsHostPaths $ResultsHostPaths `
-    -Clean:(-not $NoCleanResults)
 
 Write-Host ""
 Write-Host "========================================"
@@ -1018,6 +1191,13 @@ else {
 if ($FlinkParallelismOverride -gt 0) {
     Write-Host "Flink parallelism   : $FlinkParallelismOverride (runtime override)"
 }
+if ($Engine -eq "flink") {
+    Write-Host (
+        "Flink deployment    : $($FlinkDeployment.taskmanagers) TaskManager x " +
+        "$($FlinkDeployment.slots_per_taskmanager) slot/TM " +
+        "(parallelism=$($FlinkDeployment.parallelism))"
+    )
+}
 if (-not [string]::IsNullOrWhiteSpace($FlinkAggPhaseStrategy)) {
     Write-Host "Flink agg strategy  : $FlinkAggPhaseStrategy (runtime override)"
 }
@@ -1027,7 +1207,8 @@ Write-Host ""
 if ($DashboardEnabled) {
     Start-DashboardStack `
         -EnableInflux $EnableInflux `
-        -EnableTimescale $EnableTimescale
+        -EnableTimescale $EnableTimescale `
+        -FlinkDeployment $FlinkDeployment
 
     if ($EnableInflux -and -not $NoResetTopic) {
         Stop-TelegrafDashboardBridge
@@ -1042,12 +1223,20 @@ if ($DashboardEnabled) {
     }
 }
 else {
-    Start-ExperimentInfrastructure -Engine $Engine
+    Start-ExperimentInfrastructure `
+        -Engine $Engine `
+        -FlinkDeployment $FlinkDeployment
 }
 
 if ($Engine -eq "flink") {
     Clear-RunningFlinkJobs
 }
+
+# Pulisci soltanto dopo aver fermato eventuali job precedenti: un job lasciato
+# attivo con -KeepFlinkJob non deve poter riscrivere nei path appena svuotati.
+Initialize-ResultsDirectories `
+    -ResultsHostPaths $ResultsHostPaths `
+    -Clean:(-not $NoCleanResults)
 
 if (-not $NoResetTopic) {
     Write-Host "Reset Kafka topic flights..."
@@ -1093,15 +1282,19 @@ else {
     Write-Host "Preprocessing skipped."
 }
 
+$FlinkJobId = $null
 if ($Engine -eq "flink") {
     Write-Host ""
     Write-Host "Submitting Flink $Query job ($Implementation)..."
 
     Invoke-Checked {
-        docker compose run --rm --build `
+        docker compose run --rm --no-deps --build `
             -e CONFIG_PATH=$SubmitCfgContainer `
             $RunSpec.Service
     }
+
+    $FlinkJobId = Wait-SingleRunningFlinkJobId
+    Write-Host "Flink job RUNNING: $FlinkJobId"
 }
 else {
     Write-Host ""
@@ -1127,8 +1320,18 @@ if ($Engine -eq "flink" -and -not $NoPerf) {
         "--query", $Query,
         "--implementation", $Implementation,
         "--exp", $Label,
-        "--parallelism", "0"
+        "--parallelism", "0",
+        "--job-id", $FlinkJobId
     )
+
+    if ($ExpectedSourceRecords -gt 0) {
+        $PerfArgs += @("--expected-records", [string]$ExpectedSourceRecords)
+        Write-Host "Expected source records: $ExpectedSourceRecords"
+    }
+
+    if ($NoProducer) {
+        $PerfArgs += "--elapsed-from-source-start"
+    }
 
     $PerfProcess = Start-Process -FilePath "python" -ArgumentList $PerfArgs `
         -NoNewWindow -PassThru `
@@ -1152,31 +1355,56 @@ else {
     }
 }
 
-if (
-    $Engine -eq "flink" `
-    -and -not $NoProducer `
-    -and $PostProducerDrainSeconds -gt 0
-) {
-    Write-Host ""
-    Write-Host "Waiting $PostProducerDrainSeconds s after producer completion before merge and late-drop collection..."
-    Start-Sleep -Seconds $PostProducerDrainSeconds
-}
-
 if ($null -ne $PerfProcess) {
     Write-Host ""
     Write-Host "Waiting for perf monitor to finish (job drain + idle)..."
 
-    if (-not $PerfProcess.WaitForExit(600000)) {
+    $PerfTimedOut = -not $PerfProcess.WaitForExit(600000)
+    if ($PerfTimedOut) {
         Write-Warning "Perf monitor still running after 600s; killing it."
         try { $PerfProcess.Kill() } catch { }
     }
 
+    # Windows PowerShell puo' lasciare ExitCode non valorizzato dopo il solo
+    # overload WaitForExit(timeout). La seconda attesa sincronizza davvero lo
+    # stato del Process e completa anche i redirect asincroni di stdout/stderr.
+    $PerfProcess.WaitForExit()
+    $PerfProcess.Refresh()
+    $PerfExitCode = $PerfProcess.ExitCode
+
+    $PerfReportedSuccess = $false
     foreach ($LogPath in @($PerfLog, "$PerfLog.err")) {
         if ($LogPath -and (Test-Path $LogPath)) {
-            Get-Content $LogPath | Where-Object { $_ } | ForEach-Object { Write-Host $_ }
+            $LogLines = @(Get-Content $LogPath | Where-Object { $_ })
+            if ($LogPath -eq $PerfLog -and @($LogLines | Where-Object { $_ -like "Appended to *" }).Count -gt 0) {
+                $PerfReportedSuccess = $true
+            }
+            $LogLines | ForEach-Object { Write-Host $_ }
             Remove-Item $LogPath -ErrorAction SilentlyContinue
         }
     }
+
+    if ($PerfTimedOut) {
+        throw "Perf monitor timeout: run non valida, merge annullato."
+    }
+
+    if ($null -eq $PerfExitCode -and $PerfReportedSuccess) {
+        Write-Warning "ExitCode del perf monitor non disponibile; riga perf confermata dal monitor."
+    }
+    elseif ($null -eq $PerfExitCode) {
+        throw "ExitCode del perf monitor non disponibile e output di successo assente: merge annullato."
+    }
+    elseif ($PerfExitCode -ne 0) {
+        throw "Perf monitor fallito con exit code ${PerfExitCode}: merge annullato."
+    }
+
+}
+
+if ($Engine -eq "flink" -and $PostProducerDrainSeconds -gt 0) {
+    $DrainLabel = if ($NoProducer) { "source drain" } else { "producer/source drain" }
+    Write-Host ""
+    Write-Host "Waiting $PostProducerDrainSeconds s after $DrainLabel before merge and cancellation..."
+    Start-Sleep -Seconds $PostProducerDrainSeconds
 }
 
 Write-Host ""

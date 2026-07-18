@@ -1,0 +1,16 @@
+timestamp_utc,engine,implementation,query,experiment,parallelism,total_records,active_seconds,elapsed_ms,throughput_rec_s_avg,throughput_rec_s_max,busy_pct_avg,backpressure_pct_avg,notes
+2026-07-18T16:52:33+00:00,flink,table,q1,k4_p1_tm1,1,2229457,7.8,7829.2,284763.0,37157.6,30.3,0.0,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-18T16:55:00+00:00,flink,table,q2,k4_p1_tm1,1,2229457,10.8,10765.0,207102.5,37157.6,47.4,10.2,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-18T17:04:44+00:00,flink,table,q1,k4_p2_tm1,2,2229457,8.0,7965.8,279878.2,37157.6,23.5,0.0,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-18T17:07:08+00:00,flink,table,q2,k4_p2_tm1,2,2229457,8.2,8157.9,273287.5,37157.6,40.3,5.3,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-18T17:15:37+00:00,flink,table,q1,k4_p4_tm1,4,2229457,4.2,4219.1,528422.6,37157.6,28.6,0.0,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-18T17:18:01+00:00,flink,table,q2,k4_p4_tm1,4,2229457,7.2,7216.6,308936.3,37157.6,41.4,13.9,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-18T17:25:52+00:00,flink,table,q1,k4_p2_tm2,2,2229457,8.6,8577.4,259921.6,37157.6,40.2,0.0,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-18T17:28:17+00:00,flink,table,q2,k4_p2_tm2,2,2229457,8.5,8467.9,263282.8,37157.6,42.8,7.9,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-18T17:36:50+00:00,flink,table,q1,k4_p4_tm2,4,2229457,4.7,4669.9,477413.5,37157.6,42.1,0.0,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-18T17:39:15+00:00,flink,table,q2,k4_p4_tm2,4,2229457,8.0,8049.6,276966.1,37157.6,39.3,16.0,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-18T18:58:22+00:00,flink,table,q3,k4_p1_tm1,1,2229457,196.4,196446.6,11348.9,11900.0,95.8,45.4,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-18T19:04:22+00:00,flink,table,q3,k4_p2_tm1,2,2229457,103.3,103292.0,21584.0,23126.3,92.6,50.5,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-18T19:09:37+00:00,flink,table,q3,k4_p4_tm1,4,2229457,58.7,58742.6,37953.0,37157.6,88.6,50.6,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-18T19:15:40+00:00,flink,table,q3,k4_p2_tm2,2,2229457,107.5,107456.2,20747.6,23176.3,92.6,50.1,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-18T19:21:01+00:00,flink,table,q3,k4_p4_tm2,4,2229457,64.7,64667.4,34475.7,37157.6,88.7,53.6,throughput=kafka source ingestion; elapsed_origin=source_vertex_start

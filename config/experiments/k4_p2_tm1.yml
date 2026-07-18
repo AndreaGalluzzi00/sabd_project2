@@ -1,0 +1,9 @@
+extends: "perf_cb2.yml"
+
+experiment:
+  name: "k4_p2_tm1"
+
+deployment:
+  flink:
+    taskmanagers: 1
+    slots_per_taskmanager: 2

@@ -16,6 +16,13 @@ schema_registry:
   url: "http://schema-registry:8081"
   subject: "flights-value"
 
+# Deployment locale letto dai runner host. "parallelism" resta invece il
+# parallelismo globale del job Flink, non il parallelismo per TaskManager.
+deployment:
+  flink:
+    taskmanagers: 1
+    slots_per_taskmanager: 8
+
 preprocessing:
   numeric_missing_policy: "null"  # "null" oppure "zero"
 

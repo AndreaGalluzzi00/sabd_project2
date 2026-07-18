@@ -18,7 +18,7 @@ FLUSSO
        l'elaborazione e dopo il primo checkpoint);
     5. attende via REST che il job sia RUNNING e che i checkpoint completati
        siano >= -CheckpointsBeforeFault; registra il baseline (numRestarts=0);
-    6. GUASTO: docker kill flink-taskmanager -> il job lascia lo stato RUNNING;
+    6. GUASTO: uccide l'unica replica del servizio flink-taskmanager;
     7. riavvia il TaskManager (docker start) e ne attende la registrazione;
     8. attende che il job torni RUNNING e che 'latest.restored' del checkpoint
        sia valorizzato (prova del ripristino dello stato dall'ultimo checkpoint)
@@ -351,9 +351,22 @@ Write-Host "========================================================"
 Write-Host ""
 
 Write-Host "Avvio cluster Flink (jobmanager + taskmanager)..."
-Invoke-Checked {
-    docker compose up -d `
-        kafka kafka2 schema-registry schema-init flink-jobmanager flink-taskmanager
+$previousTaskManagerSlots = $env:FLINK_TASKMANAGER_SLOTS
+try {
+    $env:FLINK_TASKMANAGER_SLOTS = "8"
+    Invoke-Checked {
+        docker compose up -d `
+            --scale "flink-taskmanager=1" `
+            kafka kafka2 schema-registry schema-init flink-jobmanager flink-taskmanager
+    }
+}
+finally {
+    if ($null -eq $previousTaskManagerSlots) {
+        Remove-Item Env:\FLINK_TASKMANAGER_SLOTS -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:FLINK_TASKMANAGER_SLOTS = $previousTaskManagerSlots
+    }
 }
 
 # Attende la REST del JobManager.
@@ -368,6 +381,41 @@ while ((Get-Date) -lt $deadline) {
         Start-Sleep -Seconds 2
     }
 }
+
+Write-Host "Attendo la registrazione di 1 TaskManager con 8 slot..."
+$deadline = (Get-Date).AddSeconds(120)
+$faultTaskManagerReady = $false
+while ((Get-Date) -lt $deadline) {
+    try {
+        $taskManagerOverview = Get-FlinkJson -Path "/taskmanagers"
+        $registeredTaskManagers = @($taskManagerOverview.taskmanagers)
+        if (
+            $registeredTaskManagers.Count -eq 1 `
+            -and [int]$registeredTaskManagers[0].slotsNumber -eq 8
+        ) {
+            $faultTaskManagerReady = $true
+            break
+        }
+    }
+    catch { }
+    Start-Sleep -Seconds 2
+}
+if (-not $faultTaskManagerReady) {
+    throw "TaskManager fault-tolerance non registrato con 8 slot entro 120s."
+}
+
+$faultTaskManagerIds = @(
+    docker compose ps -q flink-taskmanager |
+        Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+)
+if ($LASTEXITCODE -ne 0 -or $faultTaskManagerIds.Count -ne 1) {
+    throw (
+        "La verifica fault tolerance richiede esattamente un TaskManager running; " +
+        "trovati $($faultTaskManagerIds.Count)."
+    )
+}
+$faultTaskManagerId = $faultTaskManagerIds[0]
+Write-Host "TaskManager target del guasto: $faultTaskManagerId"
 
 # Cancella eventuali job precedenti per partire pulito.
 $existing = Get-RunningJob
@@ -407,7 +455,7 @@ else {
 Write-Host ""
 Write-Host "Sottometto il job Q1 al cluster..."
 Invoke-Checked {
-    docker compose run --rm --build -e CONFIG_PATH=$cfgContainer "flink-job-$Query"
+    docker compose run --rm --no-deps --build -e CONFIG_PATH=$cfgContainer "flink-job-$Query"
 }
 
 # Attende che il job sia RUNNING.
@@ -491,9 +539,9 @@ if ($NoFault) {
 else {
     # ── GUASTO: kill del TaskManager ────────────────────────────────────────
     Write-Host ""
-    Write-Host ">>> GUASTO: docker kill flink-taskmanager  ($(Get-Date -Format 'HH:mm:ss'))"
+    Write-Host ">>> GUASTO: docker kill $faultTaskManagerId  ($(Get-Date -Format 'HH:mm:ss'))"
     $faultInjectedAtMs = Get-StopwatchElapsedMs -Stopwatch $executionStopwatch
-    Invoke-Checked { docker kill flink-taskmanager }
+    Invoke-Checked { docker kill $faultTaskManagerId }
 
     # Osserva il job lasciare lo stato RUNNING.
     Write-Host "Attendo che il job rilevi il guasto (uscita da RUNNING)..."
@@ -514,8 +562,8 @@ else {
     }
 
     # ── Riavvio del TaskManager ─────────────────────────────────────────────
-    Write-Host ">>> Riavvio del TaskManager: docker start flink-taskmanager"
-    Invoke-Checked { docker start flink-taskmanager }
+    Write-Host ">>> Riavvio del TaskManager: docker start $faultTaskManagerId"
+    Invoke-Checked { docker start $faultTaskManagerId }
 
     Write-Host "Attendo la ri-registrazione del TaskManager..."
     $deadline = (Get-Date).AddSeconds(120)

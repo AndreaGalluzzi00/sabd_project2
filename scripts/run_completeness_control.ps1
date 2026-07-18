@@ -86,11 +86,11 @@ function Wait-KafkaApi {
 
 function Start-ControlInfrastructure {
     Write-Host ""
-    Write-Host "Starting Kafka, Schema Registry and Flink infrastructure..."
+    Write-Host "Starting Kafka and Schema Registry infrastructure..."
 
     Invoke-Checked {
         docker compose up -d `
-            kafka kafka2 schema-registry schema-init flink-jobmanager flink-taskmanager
+            kafka kafka2 schema-registry schema-init
     }
 
     Wait-KafkaApi
@@ -154,6 +154,11 @@ experiment:
 flink:
   parallelism: 1
   table_optimizer_agg_phase_strategy: "ONE_PHASE"
+
+deployment:
+  flink:
+    taskmanagers: 1
+    slots_per_taskmanager: 1
 "@
 
     Set-Content -Path $ControlPath -Value $Content -Encoding UTF8
