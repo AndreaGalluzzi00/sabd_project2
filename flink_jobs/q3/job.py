@@ -384,7 +384,10 @@ def main() -> None:
     logger.info("Q3 | Parallelism: %d", cfg.parallelism)
     logger.info("Q3 | Enabled window(s): %s", cfg.window)
     logger.info("Q3 | Watermark delay: %d s (event time)", cfg.watermark_delay_seconds)
-    logger.info("Q3 | DDSketch alpha: %g (errore relativo max sui percentili)", cfg.sketch_alpha)
+    logger.info(
+        "Q3 | DDSketch DataDog alpha: %g (errore relativo sui percentili)",
+        cfg.sketch_alpha,
+    )
 
     env = create_stream_execution_environment(cfg)
     t_env = StreamTableEnvironment.create(env)

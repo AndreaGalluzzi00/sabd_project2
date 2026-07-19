@@ -10,7 +10,7 @@ from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.streaming.state import GroupStateTimeout
 
-from common.delay_sketch import DelayDDSketch
+from common.q3_sketch import Q3DDSketch
 from spark_runtime import not_cancelled, not_diverted
 
 
@@ -45,6 +45,7 @@ Q3_GLOBAL_OUTPUT_SCHEMA = """
 """
 
 GLOBAL_STATE_SCHEMA = "payload binary, next_snapshot_ms long"
+Q3_WINDOW_STATE_SCHEMA = "payload binary"
 
 
 def _snapshot_ts(timestamp_ms: int) -> str:
@@ -274,7 +275,7 @@ def build_q2_global_snapshots(
 
 def _new_q3_state(alpha: float) -> dict:
     return {
-        "committed": DelayDDSketch(alpha),
+        "committed": Q3DDSketch(alpha),
         "pending": {},
     }
 
@@ -283,7 +284,7 @@ def _q3_result(
     timestamp_ms: int,
     airline: str,
     hour: int,
-    sketch: DelayDDSketch,
+    sketch: Q3DDSketch,
 ) -> dict:
     return {
         "ts": _snapshot_ts(timestamp_ms),
@@ -315,8 +316,8 @@ def q3_state_function(alpha: float):
             stored = _new_q3_state(alpha)
             next_snapshot_ms = DATASET_START_MS + GLOBAL_SNAPSHOT_INTERVAL_MS
 
-        committed: DelayDDSketch = stored["committed"]
-        pending: dict[int, DelayDDSketch] = stored["pending"]
+        committed: Q3DDSketch = stored["committed"]
+        pending: dict[int, Q3DDSketch] = stored["pending"]
 
         for pdf in pdf_iter:
             for row in pdf.itertuples(index=False):
@@ -328,7 +329,7 @@ def q3_state_function(alpha: float):
                 if bucket_end < int(next_snapshot_ms):
                     target = committed
                 else:
-                    target = pending.setdefault(bucket_end, DelayDDSketch(alpha))
+                    target = pending.setdefault(bucket_end, Q3DDSketch(alpha))
                 target.add(float(row.dep_delay))
 
         output_rows = []
@@ -408,6 +409,169 @@ def build_q3_global_snapshots(
         q3_state_function(alpha),
         outputStructType=Q3_GLOBAL_OUTPUT_SCHEMA,
         stateStructType=GLOBAL_STATE_SCHEMA,
+        outputMode="Append",
+        timeoutConf=GroupStateTimeout.EventTimeTimeout,
+    )
+
+
+def _q3_window_start_ms(
+    event_time_ms: int,
+    window_duration_ms: int,
+    window_offset_ms: int,
+) -> int:
+    return (
+        ((event_time_ms - window_offset_ms) // window_duration_ms)
+        * window_duration_ms
+        + window_offset_ms
+    )
+
+
+def q3_window_state_function(
+    alpha: float,
+    window_duration_ms: int,
+    window_offset_ms: int,
+):
+    """Build a Spark state function for one bounded Q3 window definition."""
+
+    def update(
+        key: tuple,
+        pdf_iter: Iterator[pd.DataFrame],
+        state,
+    ) -> Iterator[pd.DataFrame]:
+        airline = str(key[0])
+        hour = int(key[1])
+
+        if state.exists:
+            (payload,) = state.get
+            windows: dict[int, Q3DDSketch] = pickle.loads(bytes(payload))
+        else:
+            windows = {}
+
+        current_watermark_ms = int(state.getCurrentWatermarkMs())
+
+        for pdf in pdf_iter:
+            for row in pdf.itertuples(index=False):
+                if row.airline == EOS_AIRLINE or airline == EOS_AIRLINE:
+                    continue
+
+                event_time_ms = int(row.event_time)
+                window_start_ms = _q3_window_start_ms(
+                    event_time_ms,
+                    window_duration_ms,
+                    window_offset_ms,
+                )
+                window_max_timestamp_ms = (
+                    window_start_ms + window_duration_ms - 1
+                )
+                # applyInPandasWithState uses the watermark for timeouts but
+                # does not own a built-in window operator that can discard a
+                # group recreated solely by an already-late record.  Lateness
+                # is determined by the window end, not by the row timestamp:
+                # a row older than the watermark still belongs to an open
+                # window until that entire window has expired.
+                if (
+                    current_watermark_ms >= 0
+                    and window_max_timestamp_ms <= current_watermark_ms
+                ):
+                    continue
+
+                sketch = windows.setdefault(
+                    window_start_ms,
+                    Q3DDSketch(alpha),
+                )
+                sketch.add(float(row.dep_delay))
+
+        output_rows = []
+        closed_windows = sorted(
+            window_start_ms
+            for window_start_ms in windows
+            if window_start_ms + window_duration_ms - 1
+            <= current_watermark_ms
+        )
+        for window_start_ms in closed_windows:
+            sketch = windows.pop(window_start_ms)
+            if sketch.count > 0:
+                output_rows.append(
+                    _q3_result(window_start_ms, airline, hour, sketch)
+                )
+
+        if airline != EOS_AIRLINE and windows:
+            state.update((
+                bytearray(
+                    pickle.dumps(windows, protocol=pickle.HIGHEST_PROTOCOL)
+                ),
+            ))
+            next_window_max_timestamp_ms = (
+                min(windows) + window_duration_ms - 1
+            )
+            state.setTimeoutTimestamp(int(next_window_max_timestamp_ms))
+        elif state.exists:
+            state.remove()
+
+        if output_rows:
+            yield pd.DataFrame(output_rows)
+
+    return update
+
+
+def build_q3_window_snapshots(
+    flights: DataFrame,
+    *,
+    watermark_delay_seconds: int,
+    alpha: float,
+    window_duration_ms: int,
+    window_offset_ms: int = 0,
+) -> DataFrame:
+    """Compute Q3 windows with distributed, checkpointed Python state."""
+
+    if window_duration_ms <= 0:
+        raise ValueError("window_duration_ms must be positive")
+    if not 0 <= window_offset_ms < window_duration_ms:
+        raise ValueError(
+            "window_offset_ms must be in [0, window_duration_ms)"
+        )
+
+    is_eos = F.col("airline") == F.lit(EOS_AIRLINE)
+    is_real = (
+        F.col("airline").isin("AA", "DL", "UA", "WN")
+        & not_cancelled()
+        & not_diverted()
+        & F.col("dep_delay").isNotNull()
+        & F.col("crs_dep_time").isNotNull()
+    )
+
+    relevant = (
+        flights.withWatermark(
+            "rowtime",
+            f"{watermark_delay_seconds} seconds",
+        )
+        .filter(is_real | is_eos)
+        .withColumn(
+            "hour",
+            F.when(is_eos, F.lit(-1)).otherwise(
+                F.pmod(
+                    F.floor(F.col("crs_dep_time") / F.lit(100)),
+                    F.lit(24),
+                ).cast("int")
+            ),
+        )
+        .select(
+            "airline",
+            "hour",
+            "rowtime",
+            "event_time",
+            "dep_delay",
+        )
+    )
+
+    return relevant.groupBy("airline", "hour").applyInPandasWithState(
+        q3_window_state_function(
+            alpha,
+            window_duration_ms,
+            window_offset_ms,
+        ),
+        outputStructType=Q3_GLOBAL_OUTPUT_SCHEMA,
+        stateStructType=Q3_WINDOW_STATE_SCHEMA,
         outputMode="Append",
         timeoutConf=GroupStateTimeout.EventTimeTimeout,
     )

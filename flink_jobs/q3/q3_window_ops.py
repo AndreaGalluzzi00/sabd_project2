@@ -11,7 +11,7 @@ from pyflink.datastream.functions import (
     ProcessWindowFunction,
 )
 
-from delay_sketch import DelayDDSketch
+from common.q3_sketch import Q3DDSketch
 
 
 LATE_DROPS_METRIC = "numLateRecordsDropped"
@@ -58,23 +58,23 @@ class Q3AggregateFunction(AggregateFunction):
     def __init__(self, alpha: float):
         self._alpha = alpha
 
-    def create_accumulator(self) -> DelayDDSketch:
-        return DelayDDSketch(self._alpha)
+    def create_accumulator(self) -> Q3DDSketch:
+        return Q3DDSketch(self._alpha)
 
-    def add(self, value, acc: DelayDDSketch) -> DelayDDSketch:
+    def add(self, value, acc: Q3DDSketch) -> Q3DDSketch:
         # value: (event_time_ms, airline, hour, dep_delay)
         acc.add(value[3])
         return acc
 
-    def get_result(self, acc: DelayDDSketch) -> DelayDDSketch:
+    def get_result(self, acc: Q3DDSketch) -> Q3DDSketch:
         return acc
 
-    def merge(self, acc: DelayDDSketch, other: DelayDDSketch) -> DelayDDSketch:
+    def merge(self, acc: Q3DDSketch, other: Q3DDSketch) -> Q3DDSketch:
         acc.merge(other)
         return acc
 
 
-def _q3_result_row(ts: datetime, key: str, sketch: DelayDDSketch) -> Row:
+def _q3_result_row(ts: datetime, key: str, sketch: Q3DDSketch) -> Row:
     airline, hour_str = key.split("|")
     return Row(
         ts,

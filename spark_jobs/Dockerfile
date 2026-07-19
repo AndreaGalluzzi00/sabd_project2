@@ -6,7 +6,8 @@ RUN pip install --no-cache-dir \
     PyYAML \
     "numpy==1.24.4" \
     "pandas==2.0.3" \
-    "pyarrow==12.0.1"
+    "pyarrow==12.0.1" \
+    "ddsketch==3.0.1"
 RUN mkdir -p /tmp/.ivy2 /tmp/spark-events && chmod -R 777 /tmp/.ivy2 /tmp/spark-events
 
 USER root

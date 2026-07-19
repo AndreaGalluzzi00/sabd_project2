@@ -100,10 +100,6 @@ q3:
   watermark_delay_seconds: 180
   sketch_alpha: 0.01
 
-  spark_quantile_impl: "ddsketch"
-  spark_percentile_accuracy: 10000
-
-
 dashboard:
   influx:
     enabled: true

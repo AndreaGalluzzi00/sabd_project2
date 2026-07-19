@@ -9,8 +9,8 @@ timestamp_utc,engine,implementation,query,experiment,parallelism,total_records,a
 2026-07-18T17:28:17+00:00,flink,table,q2,k4_p2_tm2,2,2229457,8.5,8467.9,263282.8,37157.6,42.8,7.9,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
 2026-07-18T17:36:50+00:00,flink,table,q1,k4_p4_tm2,4,2229457,4.7,4669.9,477413.5,37157.6,42.1,0.0,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
 2026-07-18T17:39:15+00:00,flink,table,q2,k4_p4_tm2,4,2229457,8.0,8049.6,276966.1,37157.6,39.3,16.0,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
-2026-07-18T18:58:22+00:00,flink,table,q3,k4_p1_tm1,1,2229457,196.4,196446.6,11348.9,11900.0,95.8,45.4,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
-2026-07-18T19:04:22+00:00,flink,table,q3,k4_p2_tm1,2,2229457,103.3,103292.0,21584.0,23126.3,92.6,50.5,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
-2026-07-18T19:09:37+00:00,flink,table,q3,k4_p4_tm1,4,2229457,58.7,58742.6,37953.0,37157.6,88.6,50.6,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
-2026-07-18T19:15:40+00:00,flink,table,q3,k4_p2_tm2,2,2229457,107.5,107456.2,20747.6,23176.3,92.6,50.1,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
-2026-07-18T19:21:01+00:00,flink,table,q3,k4_p4_tm2,4,2229457,64.7,64667.4,34475.7,37157.6,88.7,53.6,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-19T16:41:27+00:00,flink,table,q3,k4_p1_tm1,1,2229457,214.7,214721.2,10383.0,10833.3,95.9,48.7,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-19T16:47:36+00:00,flink,table,q3,k4_p2_tm1,2,2229457,112.4,112431.0,19829.6,21566.7,92.8,54.1,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-19T16:52:55+00:00,flink,table,q3,k4_p4_tm1,4,2229457,61.3,61287.2,36377.2,37157.6,90.2,52.4,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-19T16:59:05+00:00,flink,table,q3,k4_p2_tm2,2,2229457,113.5,113493.7,19643.9,21533.3,93.0,52.9,throughput=kafka source ingestion; elapsed_origin=source_vertex_start
+2026-07-19T17:04:32+00:00,flink,table,q3,k4_p4_tm2,4,2229457,69.7,69655.5,32006.9,36661.9,89.1,54.8,throughput=kafka source ingestion; elapsed_origin=source_vertex_start

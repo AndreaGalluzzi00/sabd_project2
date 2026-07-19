@@ -1,4 +1,4 @@
 timestamp_utc,engine,implementation,query,experiment,parallelism,total_records,active_seconds,elapsed_ms,throughput_rec_s_avg,throughput_rec_s_max,busy_pct_avg,backpressure_pct_avg,notes
 2026-07-18T19:55:38+00:00,spark,structured,q1,k4_p4_tm2,4,2229457,9.4,8154.0,236924.2,236924.2,,,"spark spark://spark-master:7077, trigger=5 seconds"
 2026-07-18T19:58:00+00:00,spark,structured,q2,k4_p4_tm2,4,2229457,14.1,12753.0,158297.1,158285.9,,,"spark spark://spark-master:7077, trigger=5 seconds"
-2026-07-18T19:59:56+00:00,spark,structured,q3,k4_p4_tm2,4,2229457,11.7,10399.0,189886.5,189870.3,,,"spark spark://spark-master:7077, trigger=5 seconds"
+2026-07-19T17:20:51+00:00,spark,structured,q3,k4_p4_tm2,4,2229457,14.6,13339.0,152285.3,152285.3,,,"spark spark://spark-master:7077, trigger=5 seconds"
