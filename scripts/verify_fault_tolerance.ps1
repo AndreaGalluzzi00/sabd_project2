@@ -11,15 +11,15 @@ offset Kafka salvati, senza perdita ne duplicazione dei risultati.
 Va lanciato dalla root del progetto (dove sta docker-compose.yml).
 
 FLUSSO
-    1. avvia il cluster Flink (jobmanager + taskmanager);
+    1. avvia il cluster Flink (JobManager + un TaskManager);
     2. resetta il topic Kafka e (opzionale) esegue il preprocessing;
     3. sottomette il job Q1 al cluster (flink run -d);
     4. avvia il producer RALLENTATO in background (cosi' il guasto cade durante
        l'elaborazione e dopo il primo checkpoint);
     5. attende via REST che il job sia RUNNING e che i checkpoint completati
        siano >= -CheckpointsBeforeFault; registra il baseline (numRestarts=0);
-    6. GUASTO: uccide l'unica replica del servizio flink-taskmanager;
-    7. riavvia il TaskManager (docker start) e ne attende la registrazione;
+    6. GUASTO: uccide l'unico TaskManager;
+    7. riavvia il TaskManager e ne attende la registrazione;
     8. attende che il job torni RUNNING e che 'latest.restored' del checkpoint
        sia valorizzato (prova del ripristino dello stato dall'ultimo checkpoint)
        e che numRestarts sia >= 1;
@@ -28,7 +28,6 @@ FLUSSO
    10. salva l'output in una directory isolata e, quando esiste la run gemella
        con lo stesso VerificationId, confronta part-file grezzi, duplicati,
        chiavi, valori e hash canonico.
-
     La prova end-to-end e' PASS se: (a) il job ha ripristinato lo stato da
     checkpoint; (b) numRestarts e' aumentato; (c) gli output con e senza guasto
     sono identici; (d) nessuno dei due output contiene chiavi duplicate.
@@ -51,6 +50,10 @@ USO
     .\scripts\verify_fault_tolerance.ps1 -Runs 5 -NoPreprocess -NoMerge
     .\scripts\verify_fault_tolerance.ps1 -Runs 5 -NoFault -NoPreprocess -NoMerge
 
+    # Riprende una serie interrotta dal run 4, mantenendo Runs come ultimo
+    # indice della serie (in questo esempio esegue i run 4 e 5).
+    .\scripts\verify_fault_tolerance.ps1 -StartRun 4 -Runs 5 -NoPreprocess
+
     # Verifica end-to-end di exactly-once (eseguire entrambe con lo stesso id).
     # Ogni run usa part-file isolati; quando esistono entrambi gli scenari lo
     # script confronta anche duplicati, chiavi, valori e hash canonico.
@@ -64,7 +67,9 @@ OPZIONI
                              collocare. Default 57600.
     -CheckpointsBeforeFault  Checkpoint completati da attendere prima del guasto.
                              Default 1.
-    -Runs                    Numero di ripetizioni dello scenario. Default 1.
+    -Runs                    Ultimo indice della serie da eseguire. Default 1.
+    -StartRun                Primo indice da eseguire o rieseguire. Default 1;
+                             Runs resta l'ultimo indice della serie.
     -NoPreprocess            Non rilancia il preprocessing.
     -NoResetTopic            Non resetta il topic Kafka flights.
     -NoFault                 Non inietta il guasto (produce un output baseline).
@@ -84,6 +89,8 @@ param(
     [int]$CheckpointsBeforeFault = 1,
     [ValidateRange(1, 1000)]
     [int]$Runs = 1,
+    [ValidateRange(1, 1000)]
+    [int]$StartRun = 1,
 
     [switch]$NoPreprocess,
     [switch]$NoResetTopic,
@@ -261,6 +268,9 @@ extends: "../base.yml"
 
 flink:
   consumer_group: "flink-fault-$runId"
+  # La verifica exactly-once non deve confondere il recovery con la scelta
+  # temporale di escludere una partizione Kafka inattiva dal watermark.
+  source_idle_timeout_ms: 0
 
 producer:
   acceleration_factor: $Acceleration
@@ -296,7 +306,10 @@ dashboard:
 function Write-TimingCsvRow {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][pscustomobject]$Row
+        [Parameter(Mandatory = $true)][pscustomobject]$Row,
+        [Parameter(Mandatory = $true)][int]$RunNumber,
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [Parameter(Mandatory = $true)][string]$Verification
     )
 
     if ([string]::IsNullOrWhiteSpace($Path)) {
@@ -306,6 +319,35 @@ function Write-TimingCsvRow {
     $parent = Split-Path -Parent $Path
     if (-not [string]::IsNullOrWhiteSpace($parent)) {
         New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    }
+
+    # Una run rieseguita sostituisce la propria misura: non deve aggiungere
+    # un'osservazione duplicata allo stesso esperimento. Il CSV storico tiene
+    # indice e verification id nel campo notes, che usiamo senza cambiarne lo
+    # schema.
+    if (Test-Path -LiteralPath $Path) {
+        $existingRows = @(Import-Csv -LiteralPath $Path)
+        $runPattern = "(^|;\s*)run=$RunNumber/\d+;"
+        $verificationMarker = "verification_id=$Verification;"
+        $keptRows = @(
+            $existingRows | Where-Object {
+                -not (
+                    $_.mode -eq $Mode -and
+                    $_.notes -match $runPattern -and
+                    $_.notes.Contains($verificationMarker)
+                )
+            }
+        )
+
+        if ($keptRows.Count -ne $existingRows.Count) {
+            if ($keptRows.Count -gt 0) {
+                $keptRows | Export-Csv -LiteralPath $Path -NoTypeInformation -Encoding UTF8
+            }
+            else {
+                Remove-Item -LiteralPath $Path -Force
+            }
+            Write-Host "Misura precedente sostituita: mode=$Mode, run=$RunNumber, verification_id=$Verification."
+        }
     }
 
     $Row | Export-Csv -Path $Path -NoTypeInformation -Append -Encoding UTF8
@@ -323,8 +365,14 @@ function Get-StopwatchElapsedMs {
 
 Assert-ProjectRoot
 
+$TaskManagerSlots = 4
+
 if ($VerificationId -notmatch '^[A-Za-z0-9._-]+$') {
     throw "-VerificationId puo' contenere soltanto lettere, numeri, punto, trattino e underscore."
+}
+
+if ($StartRun -gt $Runs) {
+    throw "-StartRun ($StartRun) non puo' essere maggiore di -Runs ($Runs)."
 }
 
 if ($Runs -gt 1 -and $KeepJob) {
@@ -335,7 +383,7 @@ if ($Runs -gt 1 -and $NoResetTopic) {
     Write-Warning "-NoResetTopic con -Runs > 1 puo' rendere le run non confrontabili perche' il topic Kafka non viene svuotato tra una ripetizione e l'altra."
 }
 
-for ($runIndex = 1; $runIndex -le $Runs; $runIndex++) {
+for ($runIndex = $StartRun; $runIndex -le $Runs; $runIndex++) {
 
 $timingMode = if ($NoFault) { "without_fault" } else { "with_fault" }
 
@@ -350,10 +398,10 @@ Write-Host " Modalita'            : $(if ($NoFault) { 'BASELINE (nessun guasto)'
 Write-Host "========================================================"
 Write-Host ""
 
-Write-Host "Avvio cluster Flink (jobmanager + taskmanager)..."
+Write-Host "Avvio cluster Flink (JobManager + un TaskManager)..."
 $previousTaskManagerSlots = $env:FLINK_TASKMANAGER_SLOTS
 try {
-    $env:FLINK_TASKMANAGER_SLOTS = "8"
+    $env:FLINK_TASKMANAGER_SLOTS = [string]$TaskManagerSlots
     Invoke-Checked {
         docker compose up -d `
             --scale "flink-taskmanager=1" `
@@ -382,7 +430,7 @@ while ((Get-Date) -lt $deadline) {
     }
 }
 
-Write-Host "Attendo la registrazione di 1 TaskManager con 8 slot..."
+Write-Host "Attendo la registrazione del TaskManager..."
 $deadline = (Get-Date).AddSeconds(120)
 $faultTaskManagerReady = $false
 while ((Get-Date) -lt $deadline) {
@@ -391,7 +439,7 @@ while ((Get-Date) -lt $deadline) {
         $registeredTaskManagers = @($taskManagerOverview.taskmanagers)
         if (
             $registeredTaskManagers.Count -eq 1 `
-            -and [int]$registeredTaskManagers[0].slotsNumber -eq 8
+            -and [int]$registeredTaskManagers[0].slotsNumber -eq $TaskManagerSlots
         ) {
             $faultTaskManagerReady = $true
             break
@@ -401,7 +449,7 @@ while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 2
 }
 if (-not $faultTaskManagerReady) {
-    throw "TaskManager fault-tolerance non registrato con 8 slot entro 120s."
+    throw "TaskManager della verifica non registrato entro 120s."
 }
 
 $faultTaskManagerIds = @(
@@ -410,7 +458,7 @@ $faultTaskManagerIds = @(
 )
 if ($LASTEXITCODE -ne 0 -or $faultTaskManagerIds.Count -ne 1) {
     throw (
-        "La verifica fault tolerance richiede esattamente un TaskManager running; " +
+        "La verifica del checkpoint richiede esattamente un TaskManager running; " +
         "trovati $($faultTaskManagerIds.Count)."
     )
 }
@@ -568,7 +616,7 @@ else {
     Write-Host "Attendo la ri-registrazione del TaskManager..."
     $deadline = (Get-Date).AddSeconds(120)
     while ((Get-Date) -lt $deadline) {
-        if ((Get-RegisteredTaskManagers) -ge 1) {
+        if ((Get-RegisteredTaskManagers) -eq 1) {
             Write-Host "TaskManager registrato."
             break
         }
@@ -740,9 +788,14 @@ $timingRow = [pscustomobject][ordered]@{
     producer_timed_out = $producerTimedOut
     producer_exit_code = $producerExitCode
     verification_pass = $faultPass
-    notes = "run=$runIndex/$Runs; verification_id=$VerificationId; output=$($runtimeCfg.RunOutputHostPath); execution=producer_start_to_post_eos_checkpoint_and_final_window_consolidation; excludes docker_setup, topic_reset, preprocessing, job_submit, merge, comparison, cleanup"
+    notes = "run=$runIndex/$Runs; verification_id=$VerificationId; output=$($runtimeCfg.RunOutputHostPath); source_idle_timeout_ms=0; execution=producer_start_to_post_eos_checkpoint_and_final_window_consolidation; excludes docker_setup, topic_reset, preprocessing, job_submit, merge, comparison, cleanup"
 }
-Write-TimingCsvRow -Path $TimingCsv -Row $timingRow
+Write-TimingCsvRow `
+    -Path $TimingCsv `
+    -Row $timingRow `
+    -RunNumber $runIndex `
+    -Mode $timingMode `
+    -Verification $VerificationId
 Write-Host "Tempi appendati in $TimingCsv"
 
 if ((-not $NoMerge) -and $producerSucceeded -and ($runFailureMessages.Count -eq 0)) {
@@ -812,6 +865,11 @@ if (-not $KeepJob) {
 }
 else {
     Write-Host "Job lasciato in esecuzione (-KeepJob)."
+}
+
+# La configurazione runtime e' usa-e-getta e non deve accumularsi tra le run.
+if ($null -ne $runtimeCfg -and (Test-Path -LiteralPath $runtimeCfg.HostPath)) {
+    Remove-Item -LiteralPath $runtimeCfg.HostPath -Force
 }
 
 Write-Host ""

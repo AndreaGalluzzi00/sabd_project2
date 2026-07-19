@@ -1,0 +1,3 @@
+scenario,runs,tempo_totale_medio_s,producer_medio_s,recovery_medio_s,rilevamento_guasto_medio_s,ripristino_dopo_rilevamento_medio_s
+senza_guasto,10,209.3631,185.0145,,,
+con_guasto,10,209.7431,184.9887,51.3648,40.2665,11.0983

@@ -152,7 +152,7 @@ deployment = cfg.get('deployment', {}).get('flink', {})
 print(json.dumps({
     'parallelism': int(cfg['flink']['parallelism']),
     'taskmanagers': int(deployment.get('taskmanagers', 1)),
-    'slots_per_taskmanager': int(deployment.get('slots_per_taskmanager', 8)),
+    'slots_per_taskmanager': int(deployment.get('slots_per_taskmanager', 4)),
 }))
 '@
         $RawConfig = python -c $PythonCode

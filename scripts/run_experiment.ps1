@@ -970,7 +970,7 @@ cfg = load_config()
 deployment = cfg.get('deployment', {}).get('flink', {})
 print(json.dumps({
     'taskmanagers': int(deployment.get('taskmanagers', 1)),
-    'slots_per_taskmanager': int(deployment.get('slots_per_taskmanager', 8)),
+    'slots_per_taskmanager': int(deployment.get('slots_per_taskmanager', 4)),
     'parallelism': int(cfg['flink']['parallelism']),
 }))
 '@
